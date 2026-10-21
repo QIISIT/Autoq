@@ -69,7 +69,9 @@ public:
     Qt::Orientations expandingDirections() const override { return {}; }
     bool hasHeightForWidth() const override { return true; }
     int heightForWidth(int w) const override { return doLayout(QRect(0, 0, w, 0), true); }
-    void setGeometry(const QRect& r) override { QLayout::setGeometry(r); doLayout(r, false); }
+    void setGeometry(const QRect& r) override { QLayout::setGeometry(r); if (!frozen_) doLayout(r, false); }
+    // пока виджеты плавно едут на новые места — раскладка их не двигает
+    void setFrozen(bool on) { frozen_ = on; if (!on) doLayout(geometry(), false); }
     QSize sizeHint() const override { return minimumSize(); }
     QSize minimumSize() const override;
     void clear();
@@ -77,6 +79,7 @@ private:
     int doLayout(const QRect& r, bool testOnly) const;
     QList<QLayoutItem*> items_;
     int h_, v_;
+    bool frozen_ = false;
 };
 
 // Большая кнопка Старт/Стоп с плашкой клавиши

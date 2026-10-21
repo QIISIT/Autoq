@@ -558,6 +558,15 @@ QString Theme::normalizeAnim(const QString& id) {
     return animations().contains(id) ? id : QString("slide");
 }
 
+QList<int> Theme::animSpeedChoices() { return {25, 50, 75, 100, 150, 200, 300}; }
+
+QString Theme::animSpeedLabel(int percent) {
+    const QString x = "×" + I18n::locale().toString(percent / 100.0, 'g', 3);
+    if (percent < 100) return T("%1 — медленнее").arg(x);
+    if (percent > 100) return T("%1 — быстрее").arg(x);
+    return T("%1 — обычная").arg(x);
+}
+
 QString Theme::animLabel(const QString& id) {
     const QString v = normalizeAnim(id);
     if (v == "none") return T("Без анимаций");
@@ -803,6 +812,7 @@ Theme::Appearance Theme::loadAppearance() {
     a.iconStyle = AqIcons::normalizeIconStyle(s->value("iconStyle", "gloss").toString());
     a.variant = normalizeVariant(s->value("uiVariant", "studio").toString());
     a.anim = normalizeAnim(s->value("animStyle", "slide").toString());
+    a.animSpeed = qBound(25, s->value("animSpeed", 100).toInt(), 400);
     a.radius = qBound(-1, s->value("uiRadius", -1).toInt(), 24);
     a.density = qBound(0, s->value("uiDensity", 1).toInt(), 2);
     a.displayFont = qBound(-1, s->value("uiDisplayFont", -1).toInt(), 2);
@@ -820,6 +830,7 @@ void Theme::saveAppearance(const Appearance& a) {
     s->setValue("iconStyle", AqIcons::normalizeIconStyle(a.iconStyle));
     s->setValue("uiVariant", normalizeVariant(a.variant));
     s->setValue("animStyle", normalizeAnim(a.anim));
+    s->setValue("animSpeed", a.animSpeed);
     s->setValue("uiRadius", a.radius);
     s->setValue("uiDensity", a.density);
     s->setValue("uiDisplayFont", a.displayFont);

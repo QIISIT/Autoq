@@ -27,6 +27,9 @@ private:
     QList<QPushButton*> variantCards_;
     QList<ThemePreview*> previews_;
     QList<QPushButton*> animCards_;
+    QList<class AnimDemo*> demos_;
+    class QSlider* speedSlider_ = nullptr;
+    QLabel* speedVal_ = nullptr;
     QPushButton* next_;
     QPushButton* back_;
     QLabel* stepTitle_;

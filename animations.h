@@ -16,6 +16,8 @@ class QTimer;
 namespace Anim {
     QString style();                      // none / fade / slide / cascade
     bool enabled();
+    qreal speed();                        // множитель скорости (Оформление → Скорость анимаций): 1 — обычно
+    int ms(int base);                     // длительность с учётом скорости
     // change() меняет содержимое area; cards — что выезжает по очереди (каскад)
     void transition(QWidget* area, const std::function<void()>& change,
                     const QList<QWidget*>& cards = {}, const QString& styleOverride = QString());
@@ -41,14 +43,30 @@ private:
 };
 
 // Маленькая «живая» демонстрация анимации — для выбора при первом запуске
+// Играет, только пока над ней курсор (или над карточкой-родителем, setHoverHost);
+// иначе стоит на последнем кадре — так видно одну анимацию, а не все сразу
 class AnimDemo : public QWidget {
 public:
     explicit AnimDemo(const QString& style, QWidget* parent = nullptr);
     QSize sizeHint() const override { return QSize(220, 120); }
+    void setHoverHost(QWidget* host);     // наведение на него тоже запускает показ
+    void setSpeedOverride(int percent) { speedOverride_ = percent; }   // 0 — как в настройках
+    void replay();                        // сыграть один раз с начала
 protected:
     void paintEvent(QPaintEvent*) override;
     void timerEvent(QTimerEvent*) override;
+    bool eventFilter(QObject* o, QEvent* e) override;
+    void enterEvent(QEnterEvent*) override;
+    void leaveEvent(QEvent*) override;
 private:
+    void setPlaying(bool on);
+    qreal speedNow() const;
     QString style_;
-    qint64 start_ = 0;
+    qreal t_ = 2200;                      // «виртуальное» время цикла, мс (2200 — стоп на готовом кадре)
+    qint64 last_ = 0;
+    bool hover_ = false;
+    bool once_ = false;                   // replay(): один цикл без наведения
+    int timer_ = 0;
+    int speedOverride_ = 0;
+    QPointer<QWidget> host_;
 };

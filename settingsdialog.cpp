@@ -345,6 +345,26 @@ QWidget* SettingsDialog::buildAppearancePage() {
     lay->addLayout(animRow);
     animInfo_ = lbl(QString(), "small");
     lay->addWidget(animInfo_);
+    // скорость анимаций: ползунок + маленький образец (играет при наведении и при смене)
+    {
+        auto* sp = new QHBoxLayout();
+        sp->setSpacing(10);
+        sp->addWidget(lbl(T("Скорость анимаций"), "muted"));
+        animSpeed_ = new QSlider(Qt::Horizontal);
+        animSpeed_->setRange(0, Theme::animSpeedChoices().size() - 1);
+        animSpeed_->setPageStep(1);
+        animSpeed_->setToolTip(T("Медленнее ← → быстрее: экраны, карточки, сообщения, добавление действий"));
+        animSpeed_->setAccessibleName(T("Скорость анимаций"));
+        sp->addWidget(animSpeed_, 1);
+        animSpeedVal_ = lbl(QString(), "small");
+        animSpeedVal_->setMinimumWidth(130);
+        sp->addWidget(animSpeedVal_);
+        animDemo_ = new AnimDemo(Theme::current().anim);
+        animDemo_->setFixedSize(150, 84);
+        animDemo_->setToolTip(T("Наведи — покажется анимация с выбранной скоростью"));
+        sp->addWidget(animDemo_);
+        lay->addLayout(sp);
+    }
 
     // --- редактор интерфейса
     lay->addWidget(lbl(T("Редактор интерфейса"), "fieldLabel"));
@@ -471,6 +491,15 @@ QWidget* SettingsDialog::buildAppearancePage() {
         Theme::Appearance a = Theme::current();
         a.anim = Theme::animations().value(i, "slide");
         apply(a);
+        rebuildAnimDemo();
+    });
+    connect(animSpeed_, &QSlider::valueChanged, this, [this](int v) {
+        Theme::Appearance a = Theme::current();
+        a.animSpeed = Theme::animSpeedChoices().value(v, 100);
+        Theme::saveAppearance(a);
+        Theme::apply(*qApp, a);          // только скорость — перерисовывать окно не нужно
+        animSpeedVal_->setText(Theme::animSpeedLabel(a.animSpeed));
+        if (animDemo_) animDemo_->replay();
     });
     // пока тянут ползунок — только число; применяем, когда отпустили (стиль всего окна — не мгновенно)
     connect(radiusSlider_, &QSlider::valueChanged, this, [this](int v) {
@@ -538,6 +567,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
         a.bgDark = Theme::defaultBg(true);
         a.bgLight = Theme::defaultBg(false);
         a.anim = Theme::current().anim;
+        a.animSpeed = Theme::current().animSpeed;
         apply(a);
     });
     rebuildCardOrder();
@@ -586,10 +616,33 @@ void SettingsDialog::rebuildCardOrder() {
     }
 }
 
+void SettingsDialog::rebuildAnimDemo() {
+    if (!animDemo_) return;
+    // у образца стиль задаётся при создании — меняем образец целиком
+    auto* fresh = new AnimDemo(Theme::current().anim);
+    fresh->setFixedSize(animDemo_->size());
+    fresh->setToolTip(animDemo_->toolTip());
+    if (QLayout* l = animDemo_->parentWidget() ? animDemo_->parentWidget()->layout() : nullptr) {
+        if (QLayoutItem* old = l->replaceWidget(animDemo_, fresh, Qt::FindChildrenRecursively)) delete old;
+    }
+    animDemo_->deleteLater();
+    animDemo_ = fresh;
+    animDemo_->replay();
+}
+
 void SettingsDialog::refreshEditor() {
     if (!radiusSlider_) return;
     const Theme::Appearance& a = Theme::current();
     loadingEditor_ = true;
+    if (animSpeed_) {
+        const QList<int> ch = Theme::animSpeedChoices();
+        int best = 0;
+        for (int i = 0; i < ch.size(); ++i) if (qAbs(ch[i] - a.animSpeed) < qAbs(ch[best] - a.animSpeed)) best = i;
+        QSignalBlocker bs(animSpeed_);
+        animSpeed_->setValue(best);
+        animSpeedVal_->setText(Theme::animSpeedLabel(a.animSpeed));
+        animSpeed_->setEnabled(a.anim != "none");
+    }
     {
         QSignalBlocker b(radiusSlider_);
         radiusSlider_->setValue(Theme::cardRadiusFor(a));

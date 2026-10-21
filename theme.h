@@ -19,6 +19,7 @@ namespace Theme {
         QString iconStyle = "gloss";   // стиль значков игр (AqIcons::iconStyles)
         QString variant = "studio";    // стиль интерфейса: studio / glass / sharp
         QString anim = "slide";        // анимации: none / fade / slide / cascade
+        int animSpeed = 100;           // скорость анимаций, %: 50 — вдвое медленнее, 200 — вдвое быстрее
         // редактор интерфейса (-1 — как у стиля)
         int radius = -1;               // скругление карточек 0–24 px
         int density = 1;               // 0 — компактно, 1 — обычно, 2 — просторно
@@ -54,6 +55,8 @@ namespace Theme {
     QString animLabel(const QString& id);
     QString animNote(const QString& id);
     QString normalizeAnim(const QString& id);
+    QList<int> animSpeedChoices();              // 50, 75, 100, 150, 200, 300 — шаги ползунка
+    QString animSpeedLabel(int percent);        // «×1,5 — быстрее»
 
     // --- размер интерфейса (меняется после перезапуска) ---
     QList<int> guiScaleChoices();               // 90, 100, 110, 125, 150, 175, 200

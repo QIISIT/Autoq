@@ -15,6 +15,11 @@
 #include <QVBoxLayout>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QPropertyAnimation>
+#include <QVariantAnimation>
+#include <QGraphicsOpacityEffect>
+#include <QParallelAnimationGroup>
+#include "animations.h"
 
 // Кнопка постоянного размера: min-height из стиля (QSS) её не сжимает
 class SizedButton : public QPushButton {
@@ -64,6 +69,7 @@ void ActionsEditor::rebuild() {
     // не пересобирать прямо из обработчика кнопки внутри ряда — откладываем удаление
     flow_->clear();
     slots_.clear();
+    units_.clear();
     add_ = nullptr;
     builtCount_ = actions_.size();
     builtMode_ = mode_;
@@ -144,6 +150,7 @@ void ActionsEditor::rebuild() {
         }
         flow_->addWidget(unit);
         slots_ << ui;
+        units_ << unit;
 
         connect(ui.type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, i](int idx) {
             if (loading_ || i >= actions_.size()) return;
@@ -179,8 +186,13 @@ void ActionsEditor::rebuild() {
             connect(ui.remove, &QToolButton::clicked, this, [this, i]() {
                 QTimer::singleShot(0, this, [this, i]() {
                     if (actions_.size() <= 1 || i >= actions_.size()) return;
+                    const Snapshot before = snapshot();
+                    const QPixmap pm = units_.value(i) ? units_[i]->grab() : QPixmap();
                     actions_.removeAt(i);
+                    setUpdatesEnabled(false);       // без промежуточного кадра «всё в куче»
                     rebuild();
+                    animateFrom(before, i, -1, pm);
+                    setUpdatesEnabled(true);
                     edited();
                 });
             });
@@ -205,8 +217,12 @@ void ActionsEditor::rebuild() {
                     for (const ActionStep& x : actions_) used = used || (!x.mouse && x.key == k);
                     if (!used) { a.key = k; break; }
                 }
+                const Snapshot before = snapshot();
                 actions_ << a;
+                setUpdatesEnabled(false);
                 rebuild();
+                animateFrom(before, -1, actions_.size() - 1, QPixmap());
+                setUpdatesEnabled(true);
                 edited();
             });
         });
@@ -215,6 +231,101 @@ void ActionsEditor::rebuild() {
     refreshIcons();
     updateValues();
     updateGeometry();
+}
+
+ActionsEditor::Snapshot ActionsEditor::snapshot() const {
+    Snapshot sn;
+    for (QWidget* u : units_) sn.units << u->geometry();
+    if (add_) sn.add = add_->geometry();
+    sn.height = height();
+    return sn;
+}
+
+void ActionsEditor::animateFrom(const Snapshot& before, int removed, int added, const QPixmap& removedPm) {
+    if (!Anim::enabled() || !isVisible() || width() < 50) return;
+    const int dur = Anim::ms(230);
+    // новые виджеты Qt показывает только на следующем шаге — показываем сразу, чтобы
+    // раскладка их учла (кадр «в куче» не виден: обновление окна выключено)
+    for (QWidget* u : units_) if (u->isHidden()) u->show();
+    if (add_ && add_->isHidden()) add_->show();
+    // новые места считаем сразу, не дожидаясь раскладки
+    const int newH = heightForWidth(width());
+    flow_->setGeometry(QRect(0, 0, width(), newH));
+    flow_->setFrozen(true);
+    QTimer::singleShot(dur + 30, this, [this]() { flow_->setFrozen(false); });
+    auto move = [dur](QWidget* w, const QPoint& from) {
+        const QPoint to = w->pos();
+        if (from == to) return;
+        w->move(from);
+        auto* a = new QPropertyAnimation(w, "pos", w);
+        a->setDuration(dur);
+        a->setStartValue(from);
+        a->setEndValue(to);
+        a->setEasingCurve(QEasingCurve::OutCubic);
+        a->start(QAbstractAnimation::DeleteWhenStopped);
+    };
+    for (int j = 0; j < units_.size(); ++j) {
+        QWidget* u = units_[j];
+        if (j == added) {                       // новое действие — проявляется и чуть подъезжает
+            auto* eff = new QGraphicsOpacityEffect(u);
+            eff->setOpacity(0);
+            u->setGraphicsEffect(eff);
+            auto* f = new QPropertyAnimation(eff, "opacity", u);
+            f->setDuration(dur);
+            f->setStartValue(0.0);
+            f->setEndValue(1.0);
+            connect(f, &QPropertyAnimation::finished, u, [u]() { u->setGraphicsEffect(nullptr); });
+            f->start(QAbstractAnimation::DeleteWhenStopped);
+            // из места кнопки «добавить»
+            move(u, before.add.isValid() ? before.add.topLeft() : u->pos() + QPoint(0, 12));
+            continue;
+        }
+        const int old = (removed >= 0 && j >= removed) ? j + 1 : j;
+        if (old < before.units.size()) move(u, before.units[old].topLeft());
+    }
+    if (add_ && before.add.isValid()) move(add_, before.add.topLeft());
+    // убранное действие тает на своём месте
+    if (removed >= 0 && removed < before.units.size() && !removedPm.isNull()) {
+        auto* ghost = new QLabel(this);
+        ghost->setPixmap(removedPm);
+        ghost->setGeometry(before.units[removed]);
+        ghost->setAttribute(Qt::WA_TransparentForMouseEvents);
+        auto* eff = new QGraphicsOpacityEffect(ghost);
+        ghost->setGraphicsEffect(eff);
+        ghost->show();
+        ghost->raise();
+        auto* f = new QPropertyAnimation(eff, "opacity", ghost);
+        f->setDuration(dur * 3 / 4);
+        f->setStartValue(1.0);
+        f->setEndValue(0.0);
+        auto* m = new QPropertyAnimation(ghost, "pos", ghost);
+        m->setDuration(dur * 3 / 4);
+        m->setStartValue(ghost->pos());
+        m->setEndValue(ghost->pos() + QPoint(0, 10));
+        auto* g = new QParallelAnimationGroup(ghost);
+        g->addAnimation(f);
+        g->addAnimation(m);
+        connect(g, &QParallelAnimationGroup::finished, ghost, &QObject::deleteLater);
+        g->start(QAbstractAnimation::DeleteWhenStopped);
+    }
+    // высота карточки — постепенно (иначе карточки ниже прыгают)
+    if (before.height > 0 && before.height != newH) {
+        if (heightAnim_) heightAnim_->stop();
+        heightAnim_ = new QVariantAnimation(this);
+        heightAnim_->setDuration(dur);
+        heightAnim_->setStartValue(before.height);
+        heightAnim_->setEndValue(newH);
+        heightAnim_->setEasingCurve(QEasingCurve::OutCubic);
+        setFixedHeight(before.height);
+        connect(heightAnim_, &QVariantAnimation::valueChanged, this, [this](const QVariant& v) { setFixedHeight(v.toInt()); });
+        connect(heightAnim_, &QVariantAnimation::finished, this, [this]() {
+            setMinimumHeight(0);
+            setMaximumHeight(QWIDGETSIZE_MAX);
+            updateGeometry();
+            heightAnim_ = nullptr;
+        });
+        heightAnim_->start(QAbstractAnimation::DeleteWhenStopped);
+    }
 }
 
 void ActionsEditor::updateValues() {

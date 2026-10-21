@@ -14,6 +14,8 @@
 #include <QTimerEvent>
 #include <QBasicTimer>
 #include <QtMath>
+#include <cmath>
+#include <QEnterEvent>
 
 namespace {
 qreal easeOut(qreal t) { t = qBound<qreal>(0, t, 1); return 1 - (1 - t) * (1 - t) * (1 - t); }
@@ -29,6 +31,7 @@ public:
         setAttribute(Qt::WA_NoSystemBackground);
         setGeometry(area->rect());
         total_ = style == "cascade" ? 260 + 70 * qMax(0, int(pieces.size()) - 1) : 240;
+        speed_ = Anim::speed();
         clock_.start();
         timer_.start(15, this);
         raise();
@@ -37,13 +40,13 @@ public:
 protected:
     void timerEvent(QTimerEvent* e) override {
         if (e->timerId() != timer_.timerId()) return;
-        if (clock_.elapsed() >= total_) { timer_.stop(); hide(); deleteLater(); return; }
+        if (clock_.elapsed() * speed_ >= total_) { timer_.stop(); hide(); deleteLater(); return; }
         update();
     }
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::SmoothPixmapTransform);
-        const qreal ms = clock_.elapsed();
+        const qreal ms = clock_.elapsed() * speed_;       // время с учётом скорости анимаций
         if (style_ == "cascade") {
             const qreal e = easeOut(ms / 160.0);
             p.setOpacity(1 - e);
@@ -76,6 +79,7 @@ private:
     QList<Piece> pieces_;
     QString style_;
     int total_ = 240;
+    qreal speed_ = 1;
     QElapsedTimer clock_;
     QBasicTimer timer_;
 };
@@ -83,6 +87,8 @@ private:
 
 QString Anim::style() { return Theme::normalizeAnim(Theme::current().anim); }
 bool Anim::enabled() { return style() != "none"; }
+qreal Anim::speed() { return qBound(25, Theme::current().animSpeed, 400) / 100.0; }
+int Anim::ms(int base) { return qMax(1, qRound(base / speed())); }
 
 void Anim::transition(QWidget* area, const std::function<void()>& change, const QList<QWidget*>& cards,
                       const QString& styleOverride) {
@@ -121,7 +127,7 @@ void Anim::appear(QWidget* w, const QString& styleOverride) {
     if (!w || st == "none") return;
     if (w->isWindow()) {
         auto* a = new QPropertyAnimation(w, "windowOpacity", w);
-        a->setDuration(170);
+        a->setDuration(Anim::ms(170));
         a->setStartValue(0.0);
         a->setEndValue(1.0);
         a->start(QAbstractAnimation::DeleteWhenStopped);
@@ -131,14 +137,14 @@ void Anim::appear(QWidget* w, const QString& styleOverride) {
     eff->setOpacity(0);
     w->setGraphicsEffect(eff);
     auto* fade = new QPropertyAnimation(eff, "opacity", w);
-    fade->setDuration(220);
+    fade->setDuration(Anim::ms(220));
     fade->setStartValue(0.0);
     fade->setEndValue(1.0);
     QObject::connect(fade, &QPropertyAnimation::finished, w, [w]() { w->setGraphicsEffect(nullptr); });
     fade->start(QAbstractAnimation::DeleteWhenStopped);
     if (st != "fade") {
         auto* move = new QPropertyAnimation(w, "pos", w);
-        move->setDuration(st == "cascade" ? 300 : 240);
+        move->setDuration(Anim::ms(st == "cascade" ? 300 : 240));
         move->setStartValue(w->pos() + QPoint(0, 14));
         move->setEndValue(w->pos());
         move->setEasingCurve(st == "cascade" ? QEasingCurve::OutBack : QEasingCurve::OutCubic);
@@ -162,7 +168,7 @@ Toast::Toast(QWidget* host) : QFrame(host), host_(host) {
         auto* eff = new QGraphicsOpacityEffect(this);
         setGraphicsEffect(eff);
         auto* a = new QPropertyAnimation(eff, "opacity", this);
-        a->setDuration(220);
+        a->setDuration(Anim::ms(220));
         a->setStartValue(1.0);
         a->setEndValue(0.0);
         connect(a, &QPropertyAnimation::finished, this, &QObject::deleteLater);
@@ -208,11 +214,61 @@ void Toast::show(QWidget* host, const QString& text, int ms) {
 // ===========================================================================
 AnimDemo::AnimDemo(const QString& style, QWidget* parent) : QWidget(parent), style_(style) {
     setMinimumSize(200, 110);
-    start_ = QDateTime::currentMSecsSinceEpoch();
-    startTimer(16);
+    setMouseTracking(true);
 }
 
-void AnimDemo::timerEvent(QTimerEvent*) { update(); }
+void AnimDemo::setHoverHost(QWidget* host) {
+    host_ = host;
+    if (host) host->installEventFilter(this);
+}
+
+qreal AnimDemo::speedNow() const {
+    return speedOverride_ > 0 ? speedOverride_ / 100.0 : Anim::speed();
+}
+
+void AnimDemo::setPlaying(bool on) {
+    if (on && !timer_) {
+        last_ = QDateTime::currentMSecsSinceEpoch();
+        if (t_ >= 2200) t_ = 0;          // с начала
+        timer_ = startTimer(16);
+    } else if (!on && timer_ && !once_) {
+        killTimer(timer_);
+        timer_ = 0;
+        t_ = 2200;                        // готовый кадр
+        update();
+    }
+}
+
+void AnimDemo::replay() {
+    once_ = true;
+    t_ = 0;
+    if (timer_) { killTimer(timer_); timer_ = 0; }
+    setPlaying(true);
+}
+
+bool AnimDemo::eventFilter(QObject* o, QEvent* e) {
+    if (e->type() == QEvent::Enter) { hover_ = true; setPlaying(true); }
+    else if (e->type() == QEvent::Leave) { hover_ = false; setPlaying(false); }
+    return QWidget::eventFilter(o, e);
+}
+
+void AnimDemo::enterEvent(QEnterEvent*) { hover_ = true; setPlaying(true); }
+void AnimDemo::leaveEvent(QEvent*) {
+    if (host_ && host_->underMouse()) return;   // курсор ещё на карточке
+    hover_ = false;
+    setPlaying(false);
+}
+
+void AnimDemo::timerEvent(QTimerEvent*) {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    t_ += (now - last_) * speedNow();
+    last_ = now;
+    if (t_ >= 2200) {
+        if (hover_) t_ = std::fmod(t_, 2200.0);    // пока навели — по кругу
+        else { once_ = false; t_ = 2200; killTimer(timer_); timer_ = 0; }
+    }
+    update();
+}
 
 void AnimDemo::paintEvent(QPaintEvent*) {
     const auto& t = Theme::t();
@@ -223,8 +279,9 @@ void AnimDemo::paintEvent(QPaintEvent*) {
     p.setPen(QPen(t.cardBorder, 1));
     p.setBrush(t.bg);
     p.drawRoundedRect(r, rr, rr);
-    // цикл 2,2 с: 0–0,7 появление, держим, 1,9–2,2 исчезновение
-    const qint64 ms = (QDateTime::currentMSecsSinceEpoch() - start_) % 2200;
+    // цикл 2,2 с: 0–0,7 появление, держим, 1,9–2,2 исчезновение; без наведения — готовый кадр
+    const bool still = t_ >= 2200;
+    const qreal ms = still ? 1500 : t_;
     const qreal fadeOut = ms > 1900 ? 1 - (ms - 1900) / 300.0 : 1.0;
     const qreal w = (r.width() - 40) / 3.0;
     for (int i = 0; i < 3; ++i) {

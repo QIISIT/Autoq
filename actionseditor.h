@@ -36,6 +36,11 @@ private:
         QSpinBox* after = nullptr;
         QToolButton* remove = nullptr;
     };
+    // Плавно: ряды доезжают на новые места, новое действие проявляется, убранное —
+    // тает на своём месте, высота меняется постепенно (раньше всё перескакивало)
+    struct Snapshot { QList<QRect> units; QRect add; int height = 0; };
+    Snapshot snapshot() const;
+    void animateFrom(const Snapshot& before, int removed, int added, const QPixmap& removedPm);
     void rebuild();
     void updateValues();
     void edited();
@@ -43,6 +48,8 @@ private:
     GameMode mode_ = GameMode::Sequence;
     FlowLayout* flow_;
     QList<SlotUi> slots_;
+    QList<QWidget*> units_;                 // действие + пауза/«+» после него
+    class QVariantAnimation* heightAnim_ = nullptr;
     QPushButton* add_ = nullptr;
     int builtCount_ = -1;
     GameMode builtMode_ = GameMode::Sequence;

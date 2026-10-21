@@ -15,6 +15,8 @@
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QScrollArea>
+#include <QSlider>
+#include <QSignalBlocker>
 
 static QLabel* lbl(const QString& text, const char* obj) {
     auto* l = new QLabel(text);
@@ -114,14 +116,43 @@ OnboardingPage::OnboardingPage(QWidget* parent) : QWidget(parent) {
             auto* demo = new AnimDemo(id);
             demo->setMinimumSize(180, 110);
             auto* card = choiceCard(demo, Theme::animLabel(id), Theme::animNote(id));
+            demo->setHoverHost(card);          // показ — только пока навели на карточку
             card->setMinimumHeight(196);
             card->setProperty("anim", id);
-            connect(card, &QPushButton::clicked, this, [this, id]() { chooseAnim(id); });
+            connect(card, &QPushButton::clicked, this, [this, id, demo]() { chooseAnim(id); demo->replay(); });
             animCards_ << card;
+            demos_ << demo;
             g->addWidget(card, i / 2, i % 2);
             ++i;
         }
-        g->setRowStretch(2, 1);
+        // скорость: медленнее — лучше видно, что происходит
+        auto* speedRow = new QHBoxLayout();
+        speedRow->setSpacing(12);
+        speedRow->addWidget(lbl(T("Скорость анимаций"), "fieldLabel"));
+        speedSlider_ = new QSlider(Qt::Horizontal);
+        speedSlider_->setRange(0, Theme::animSpeedChoices().size() - 1);
+        speedSlider_->setPageStep(1);
+        speedSlider_->setToolTip(T("Медленнее ← → быстрее. Наведи на карточку — увидишь анимацию с этой скоростью"));
+        speedSlider_->setAccessibleName(T("Скорость анимаций"));
+        speedSlider_->setMaximumWidth(320);
+        speedRow->addWidget(speedSlider_, 1);
+        speedVal_ = lbl(QString(), "muted");
+        speedVal_->setMinimumWidth(150);
+        speedRow->addWidget(speedVal_);
+        speedRow->addStretch(1);
+        g->addLayout(speedRow, 2, 0, 1, 2);
+        g->addWidget(lbl(T("Наведи курсор на карточку — анимация покажется."), "faint"), 3, 0, 1, 2);
+        g->setRowStretch(4, 1);
+        connect(speedSlider_, &QSlider::valueChanged, this, [this](int v) {
+            Theme::Appearance a = Theme::current();
+            a.animSpeed = Theme::animSpeedChoices().value(v, 100);
+            Theme::apply(*qApp, a);
+            Theme::saveAppearance(a);
+            refresh();
+            // сразу показать, как это выглядит, — на выбранной анимации (или на «Сдвиге»)
+            const int idx = qMax(0, Theme::animations().indexOf(anim_.isEmpty() ? QString("slide") : anim_));
+            if (AnimDemo* d = demos_.value(idx)) d->replay();
+        });
         steps_->addWidget(page);
     }
     auto* scroll = new QScrollArea();
@@ -205,6 +236,16 @@ void OnboardingPage::refresh() {
         // образец — в цветах стиля, но со светлой/тёмной темой как сейчас
         Theme::Appearance a = Theme::variantPreset(Theme::variants().value(i));
         previews_[i]->setAppearance(a);
+    }
+    if (speedSlider_) {
+        const int sp = Theme::current().animSpeed;
+        int best = 0;
+        const QList<int> ch = Theme::animSpeedChoices();
+        for (int i = 0; i < ch.size(); ++i) if (qAbs(ch[i] - sp) < qAbs(ch[best] - sp)) best = i;
+        QSignalBlocker b(speedSlider_);
+        speedSlider_->setValue(best);
+        speedVal_->setText(Theme::animSpeedLabel(sp));
+        speedSlider_->setEnabled(anim_ != "none");
     }
     back_->setVisible(step_ > 0);
     next_->setText(step_ == 0 ? T("Дальше") : T("Готово — выбрать игру"));

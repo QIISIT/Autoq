@@ -45,6 +45,7 @@ private:
     void rebuildBgRow();
     void rebuildCardOrder();
     void refreshEditor();
+    void rebuildAnimDemo();
     QList<QToolButton*> makeSwatches(const QStringList& colors, QButtonGroup& group, QHBoxLayout* row);
 
     // --- оверлей ---
@@ -79,6 +80,9 @@ private:
     QList<class ThemePreview*> variantPreviews_;
     Segmented* animSeg_ = nullptr;
     QLabel* animInfo_ = nullptr;
+    QSlider* animSpeed_ = nullptr;
+    QLabel* animSpeedVal_ = nullptr;
+    class AnimDemo* animDemo_ = nullptr;
     QSlider* radiusSlider_ = nullptr;
     QLabel* radiusVal_ = nullptr;
     Segmented* densitySeg_ = nullptr;
