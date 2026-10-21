@@ -47,6 +47,20 @@ signals:
     void hint(const QString& text);     // пояснение, почему клавиша не подошла
 
 protected:
+    // Tab и Shift+Tab Qt забирает под переход фокуса (и запись срывалась) — пока
+    // ждём сочетание, это обычная клавиша
+    bool event(QEvent* e) override {
+        if (capturing_ && (e->type() == QEvent::KeyPress || e->type() == QEvent::ShortcutOverride)) {
+            auto* ke = static_cast<QKeyEvent*>(e);
+            if (ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab) {
+                e->accept();
+                if (e->type() == QEvent::KeyPress) keyPressEvent(ke);
+                return true;
+            }
+        }
+        return QPushButton::event(e);
+    }
+    bool focusNextPrevChild(bool next) override { return capturing_ ? false : QPushButton::focusNextPrevChild(next); }
     void keyPressEvent(QKeyEvent* e) override {
         if (!capturing_) { QPushButton::keyPressEvent(e); return; }
         e->accept();

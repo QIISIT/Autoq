@@ -163,6 +163,7 @@ const KeyDef* Keys::byWinVK(unsigned int vk) {
 }
 
 const KeyDef* Keys::fromKeyEvent(int qtKey, bool keypad, unsigned int nativeVirtualKey) {
+    if (qtKey == Qt::Key_Backtab) qtKey = Qt::Key_Tab;     // Shift+Tab приходит отдельной клавишей
     if (const KeyDef* k = byQtKey(qtKey, keypad)) return k;
 #ifdef _WIN32
     // На Windows виртуальный код не зависит от раскладки (VK 'F' и в русской)

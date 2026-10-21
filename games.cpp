@@ -591,9 +591,11 @@ void Games::setStartKey(const QString& gameId, const HotkeySpec& sp) {
     s->sync();
 }
 
+// «Используется» (кружок в списке): только такую категорию можно запустить —
+// кнопкой, клавишей, из трея. Новая категория — сразу используется.
 bool Games::armed(const QString& gameId) {
     auto s = AppSettings::open();
-    return s->value(gkey(gameId, "armed"), false).toBool();
+    return s->value(gkey(gameId, "armed"), true).toBool();
 }
 
 void Games::setArmed(const QString& gameId, bool on) {
@@ -752,5 +754,17 @@ void Games::migrate() {
         s->setValue("version", 2);
     }
     ensureList(*s);
+    // 1.13: кружок — «используется» (по умолчанию да). Раньше пустой кружок значил
+    // «работает, только когда открыта»: открытая игра остаётся рабочей, остальные —
+    // как были
+    if (s->value("armedVersion", 1).toInt() < 2) {
+        const QString cur = s->value("currentGame").toString();
+        for (const QString& id : s->value("games/order").toStringList()) {
+            const QString k = gkey(id, "armed");
+            if (id == cur) s->setValue(k, true);
+            else if (!s->contains(k)) s->setValue(k, false);
+        }
+        s->setValue("armedVersion", 2);
+    }
     s->sync();
 }

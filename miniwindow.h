@@ -31,7 +31,7 @@ public:
     void setState(const GameState& st, GameMode mode, int minInterval);
     void setProfiles(const QStringList& names, const QString& active, bool dirty);
     void setHotkey(const QString& keyName, const QString& display);
-    void setRunning(bool running, const QString& hotkey, bool pending = false);
+    void setRunning(bool running, const QString& hotkey, bool pending = false, bool unused = false);
     void setCount(const QString& count, const QString& caption);
     void setWindowStatus(int state, const QString& text, const QString& process); // 0 нет, 1 ок, 2 предупреждение, 3 ждём
     void setCaptureSeconds(int sec);
@@ -111,6 +111,7 @@ private:
     bool profileDirty_ = false;
     bool running_ = false;
     bool pending_ = false;
+    bool unused_ = false;
     QString hotkeyDisplay_;
     GameMode mode_ = GameMode::Sequence;
 };

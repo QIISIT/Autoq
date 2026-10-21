@@ -327,7 +327,7 @@ void MiniWindow::refreshTheme() {
                             .arg(t.redHi.name()));
     startBtn_->refreshIcon();
     setWindowStatus(winState_, winText_->text(), winProc_->text());
-    setRunning(running_, hotkeyDisplay_, pending_);
+    setRunning(running_, hotkeyDisplay_, pending_, unused_);
     dot_->update();
 }
 
@@ -384,12 +384,13 @@ void MiniWindow::setHotkey(const QString& keyName, const QString& display) {
     hotkeyPick_->setCurrent(keyName, display);
 }
 
-void MiniWindow::setRunning(bool running, const QString& hotkey, bool pending) {
+void MiniWindow::setRunning(bool running, const QString& hotkey, bool pending, bool unused) {
     running_ = running;
     pending_ = pending;
+    unused_ = unused;
     if (!hotkey.isEmpty()) hotkeyDisplay_ = hotkey;
-    startBtn_->setState(running, hotkeyDisplay_, pending);
-    pillText_->setText(pending ? T("Выбери окно") : running ? T("Работает") : T("Остановлен"));
+    startBtn_->setState(running, hotkeyDisplay_, pending, unused);
+    pillText_->setText(pending ? T("Выбери окно") : running ? T("Работает") : unused ? T("Не используется") : T("Остановлен"));
     pill_->setProperty("state", running || pending ? "run" : "idle");
     Theme::repolish(pill_);
     pillText_->setStyleSheet(QString("color: %1; font-weight: 600; font-size: 12px; background: transparent;")

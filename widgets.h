@@ -85,7 +85,8 @@ class StartButton : public QPushButton {
 public:
     explicit StartButton(QWidget* parent = nullptr);
     // pending — ждём, пока выберут окно игры (обратный отсчёт), потом старт
-    void setState(bool running, const QString& hotkey, bool pending = false);
+    // unused — категория не используется: кнопка её включает
+    void setState(bool running, const QString& hotkey, bool pending = false, bool unused = false);
     void refreshIcon();
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override { return sizeHint(); }
@@ -95,6 +96,7 @@ private:
     QLabel* chip_;
     bool running_ = false;
     bool pending_ = false;
+    bool unused_ = false;
 };
 
 // Надпись, которая сокращается многоточием, если не влезает
@@ -167,14 +169,14 @@ private:
 };
 
 // Строка списка игр: значок (с клавишей запуска), название, режим / «работает»,
-// справа кружок «активна»: клавиша запуска работает, даже когда открыта другая игра
+// справа кружок «используется»: закрашен — категорию можно запустить, пустой — нельзя никак
 class GameListDelegate : public QStyledItemDelegate {
 public:
     enum Roles { IdRole = Qt::UserRole, SubRole, TileRole, TileActiveRole, ArmedRole, RunningRole, KeyRole };
     using QStyledItemDelegate::QStyledItemDelegate;
     void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& idx) const override;
     QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return QSize(200, 54); }
-    static QRect circleRect(const QRect& itemRect);    // где кружок «активна»
+    static QRect circleRect(const QRect& itemRect);    // где кружок «используется»
 };
 
 // Карточки в ряд, которые сами перестраиваются в 2 или 1 колонку, когда окно узкое

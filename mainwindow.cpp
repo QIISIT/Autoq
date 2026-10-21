@@ -308,7 +308,7 @@ QWidget* MainWindow::buildSidebar() {
     gameList_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     gameList_->setAccessibleName(T("Мои игры"));
     gameList_->setContextMenuPolicy(Qt::CustomContextMenu);
-    gameList_->setToolTip(T("Кружок справа — «активна»: клавиша запуска работает, даже когда открыта другая игра.\nПравая кнопка мыши — запустить, клавиши, изменить, удалить."));
+    gameList_->setToolTip(T("Кружок справа — «используется»: закрашен — категорию можно запустить (кнопкой, клавишей, из трея), даже когда открыта другая. Пустой — запустить нельзя никак.\nПравая кнопка мыши — запустить, клавиши, изменить, удалить."));
     gameList_->viewport()->installEventFilter(this);
     lay->addWidget(gameList_, 1);
     emptyHint_ = mkLabel(T("Здесь будут твои игры.\nДобавь первую — кнопкой ниже\nили выбери из готовых справа."), "faint");
@@ -484,7 +484,7 @@ QFrame* MainWindow::buildSpeedCard() {
     lay->addLayout(rate);
     slider_ = new QSlider(Qt::Horizontal);
     slider_->setRange(0, 1000);
-    slider_->setToolTip(T("Быстрее ← → медленнее (щёлкни в любое место полосы)"));
+    slider_->setToolTip(T("Медленнее ← → быстрее (щёлкни в любое место полосы)"));
     slider_->setAccessibleName(T("Интервал"));
     lay->addWidget(slider_);
 
@@ -661,10 +661,10 @@ QFrame* MainWindow::buildProfileCard() {
     auto* ar = new QHBoxLayout();
     ar->setSpacing(8);
     armedSwitch_ = new ToggleSwitch();
-    armedSwitch_->setAccessibleName(T("Активна: клавиша работает всегда"));
-    armedSwitch_->setToolTip(T("Клавиша запуска этой игры работает, даже когда в AutoQ открыта другая игра.\nТо же — кружок справа от названия в списке."));
+    armedSwitch_->setAccessibleName(T("Используется: категорию можно запустить"));
+    armedSwitch_->setToolTip(T("Включено — категорию можно запустить кнопкой, клавишей или из трея, даже когда в AutoQ открыта другая.\nВыключено — не запускается никак.\nТо же — кружок справа от названия в списке."));
     ar->addWidget(armedSwitch_);
-    auto* arl = mkLabel(T("Работает, даже когда открыта другая игра"), "muted");
+    auto* arl = mkLabel(T("Используется — можно запускать"), "muted");
     arl->setWordWrap(true);
     arl->setToolTip(armedSwitch_->toolTip());
     ar->addWidget(arl, 1);
@@ -711,7 +711,7 @@ void MainWindow::connectSignals() {
     });
     connect(overlayBtn_, &QToolButton::customContextMenuRequested, this, &MainWindow::openOverlaySettings);
     connect(settingsBtn_, &QToolButton::clicked, this, &MainWindow::openSettings);
-    connect(startBtn_, &QPushButton::clicked, this, &MainWindow::toggleRunning);
+    connect(startBtn_, &QPushButton::clicked, this, &MainWindow::startPressed);
     connect(onboarding_, &OnboardingPage::appearanceChanged, this, &MainWindow::appearanceChanged);
     connect(onboarding_, &OnboardingPage::finished, this, &MainWindow::finishOnboarding);
 
@@ -761,9 +761,9 @@ void MainWindow::connectSignals() {
     });
     connect(slider_, &QSlider::valueChanged, this, [this](int v) {
         if (loading_) return;
-        // логарифмическая шкала: от минимума игры до 5 секунд
+        // логарифмическая шкала: слева 5 секунд, справа — минимум игры (вправо — быстрее)
         const double lo = game_.minIntervalMs, hi = 5000.0;
-        cur_.intervalMs = qBound(game_.minIntervalMs, int(qRound(lo * qPow(hi / lo, v / 1000.0))), 60000);
+        cur_.intervalMs = qBound(game_.minIntervalMs, int(qRound(lo * qPow(hi / lo, (1000 - v) / 1000.0))), 60000);
         syncSpeedBox();
         commit();
     });
@@ -835,7 +835,7 @@ void MainWindow::connectSignals() {
 
 // Мини-окно управляет тем же состоянием, что и главное
 void MainWindow::connectMini() {
-    connect(mini_, &MiniWindow::toggleRequested, this, &MainWindow::toggleRunning);
+    connect(mini_, &MiniWindow::toggleRequested, this, &MainWindow::startPressed);
     connect(mini_, &MiniWindow::expandRequested, this, &MainWindow::showMain);
     connect(mini_, &MiniWindow::gameChosen, this, [this](const QString& id) {
         QTimer::singleShot(0, this, [this, id]() { selectGame(id); });
@@ -1031,7 +1031,8 @@ void MainWindow::updateGameItems() {
         QString tip = it->text();
         const HotkeySpec key = id == game_.id ? hotkeySpec_ : Games::startKey(id);
         tip += "\n" + T("Старт / стоп: %1").arg(key.display());
-        if (Games::armed(id)) tip += "\n" + T("● Активна — клавиша работает, даже когда открыта другая игра");
+        tip += "\n" + (Games::armed(id) ? T("● Используется — можно запустить, даже когда открыта другая")
+                                       : T("○ Не используется — запустить нельзя (нажми кружок)"));
         it->setToolTip(tip);
     }
     gameList_->viewport()->update();
@@ -1207,6 +1208,10 @@ void MainWindow::removeGameById(const QString& id) {
 void MainWindow::setArmed(const QString& id, bool on, bool announce) {
     if (id.isEmpty()) return;
     Games::setArmed(id, on);
+    if (!on) {                           // не используется — и работать не может
+        if (id == game_.id) cancelPending();
+        if (isRunning(id)) stopGame(id);
+    }
     if (id == game_.id) {
         QSignalBlocker b(armedSwitch_);
         armedSwitch_->setChecked(on);
@@ -1216,9 +1221,10 @@ void MainWindow::setArmed(const QString& id, bool on, bool announce) {
     if (announce) {
         const GameDef g = Games::get(id);
         const HotkeySpec key = id == game_.id ? hotkeySpec_ : Games::startKey(id);
-        notify(on ? T("«%1» активна — %2 запускает её, даже когда открыта другая игра.").arg(g.name, key.display())
-                  : T("«%1» больше не активна — её клавиша работает, только когда игра открыта.").arg(g.name));
+        notify(on ? T("«%1» используется — %2 запускает её, даже когда открыта другая игра.").arg(g.name, key.display())
+                  : T("«%1» не используется — запустить её нельзя, пока не включишь кружок.").arg(g.name));
     }
+    updateTrayState();
 }
 
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {
@@ -1260,7 +1266,8 @@ void MainWindow::showGameMenu(const QPoint& pos) {
     m.addSeparator();
     QAction* toggle = m.addAction(AqIcons::ui(run ? "stop" : "play", t.redHi, 14),
                                   QString("%1\t%2").arg(run ? T("Остановить") : T("Запустить"), key.display()));
-    QAction* armed = m.addAction(T("Активна — клавиша работает всегда"));
+    toggle->setEnabled(run || Games::armed(id));
+    QAction* armed = m.addAction(T("Используется — можно запускать"));
     armed->setCheckable(true);
     armed->setChecked(Games::armed(id));
     QAction* open = m.addAction(AqIcons::ui("chevron-right", t.muted, 14), T("Открыть"));
@@ -1269,8 +1276,8 @@ void MainWindow::showGameMenu(const QPoint& pos) {
     QAction* startKey = m.addAction(AqIcons::ui("keyboard", t.muted, 14), T("Клавиша старт/стоп… (%1)").arg(key.display()));
     const HotkeySpec ak = Games::armKey(id);
     QAction* armKey = m.addAction(AqIcons::ui("keyboard", t.muted, 14),
-                                  ak.isValid() ? T("Клавиша «активна / нет»… (%1)").arg(ak.display())
-                                               : T("Клавиша «активна / нет»…"));
+                                  ak.isValid() ? T("Клавиша «используется / нет»… (%1)").arg(ak.display())
+                                               : T("Клавиша «используется / нет»…"));
     QAction* edit = m.addAction(AqIcons::ui("pencil", t.muted, 14), T("Изменить…"));
     m.addSeparator();
     QAction* del = m.addAction(AqIcons::ui("trash", t.muted, 14), T("Убрать из списка…"));
@@ -1288,8 +1295,8 @@ void MainWindow::showGameMenu(const QPoint& pos) {
         else { Games::setStartKey(id, sp); rebuildBindings(); updateGameItems(); }
     } else if (chosen == armKey) {
         HotkeySpec sp = ak;
-        if (!HotkeyDialog::ask(this, T("Клавиша «активна / нет»"),
-                               T("Нажатие делает «%1» активной (её клавиша запуска работает всегда) или снимает это.").arg(g.name),
+        if (!HotkeyDialog::ask(this, T("Клавиша «используется / нет»"),
+                               T("Нажатие включает «%1» (её можно запускать) или выключает (запустить нельзя никак).").arg(g.name),
                                sp, true, [this](bool s) { suspendHotkeys(s); }))
             return;
         Games::setArmKey(id, sp);
@@ -1382,7 +1389,7 @@ void MainWindow::stateToUi() {
 void MainWindow::syncSlider() {
     const double lo = game_.minIntervalMs, hi = 5000.0;
     const double iv = qBound(lo, double(cur_.intervalMs), hi);
-    const int v = lo >= hi ? 0 : qRound(1000.0 * qLn(iv / lo) / qLn(hi / lo));
+    const int v = lo >= hi ? 1000 : 1000 - qRound(1000.0 * qLn(iv / lo) / qLn(hi / lo));
     const bool wasLoading = loading_;
     loading_ = true;
     slider_->setValue(v);
@@ -1598,6 +1605,10 @@ void MainWindow::updateProfileState() {
     profileKeyBtn_->setEnabled(!active.isEmpty());
     const HotkeySpec pk = active.isEmpty() ? HotkeySpec{} : Games::profileKey(game_.id, active);
     profileKeyBtn_->setText(pk.isValid() ? pk.display() : QString());
+    // без клавиши — только значок, ровно по центру рамки (с пустым текстом он уезжал влево)
+    profileKeyBtn_->setToolButtonStyle(pk.isValid() ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly);
+    if (pk.isValid()) { profileKeyBtn_->setMinimumSize(30, 30); profileKeyBtn_->setMaximumSize(QWIDGETSIZE_MAX, 30); }
+    else profileKeyBtn_->setFixedSize(30, 30);
     profileKeyBtn_->setToolTip(active.isEmpty() ? T("Клавиша профиля: сначала выбери или создай профиль")
                                : pk.isValid() ? T("Клавиша профиля «%1»: %2 — включает его прямо в игре").arg(active, pk.display())
                                               : T("Назначить клавишу профилю «%1» — включать его прямо в игре").arg(active));
@@ -2138,6 +2149,12 @@ QString MainWindow::startProblem() const { return startProblemFor(game_, cur_); 
 
 void MainWindow::toggleRunning() { toggleFrom(false); }
 
+// Кнопка Старт (главное и мини-окно): категория не используется — кнопка её включает
+void MainWindow::startPressed() {
+    if (hasGame() && !Games::armed(game_.id) && !clk().isRunning() && !pendingStart_) setArmed(game_.id, true, true);
+    else toggleRunning();
+}
+
 bool MainWindow::capturingAnyKey() const {
     return captureBtn_->isCapturing() || (mini_ && mini_->capturingKey()) || (hotkey_ && hotkey_->suspended());
 }
@@ -2210,6 +2227,12 @@ void MainWindow::toggleGame(const QString& id, bool fromHotkey) {
     else startBackground(id, fromHotkey);
 }
 
+bool MainWindow::refuseUnused(const QString& id) {
+    if (id.isEmpty() || Games::armed(id)) return false;
+    notify(T("«%1» не используется — включи кружок у категории, чтобы её можно было запустить.").arg(Games::get(id).name));
+    return true;
+}
+
 void MainWindow::toggleFrom(bool fromHotkey) {
     if (!hasGame()) {
         notify(T("Нельзя запустить: ") + startProblem());
@@ -2223,6 +2246,7 @@ void MainWindow::toggleFrom(bool fromHotkey) {
         cancelPending();
         return;
     }
+    if (refuseUnused(game_.id)) return;
     const QString problem = startProblem();
     if (!problem.isEmpty()) {
         if (QWidget* p = dialogParent(); p && !fromHotkey) QMessageBox::warning(p, kAppTitle, T("Нельзя запустить: ") + problem);
@@ -2283,7 +2307,7 @@ void MainWindow::stopGame(const QString& id) {
 bool MainWindow::startBackground(const QString& id, bool fromHotkey) {
     bool ok = false;
     const GameDef g = Games::get(id, &ok);
-    if (!ok) return false;
+    if (!ok || refuseUnused(id)) return false;
     const GameState st = Games::loadState(g);
     GameRunner& r = runner(id);
     const QString problem = startProblemFor(g, st);
@@ -2337,10 +2361,11 @@ void MainWindow::rebuildBindings() {
         list << HkBinding{sp, {t}};
     };
     for (const GameDef& g : Games::list()) {
-        // клавиша старт/стоп — у открытой игры и у «активных»
-        if (g.id == game_.id) add(hotkeySpec_, HkTarget{0, g.id, QString()});
-        else if (Games::armed(g.id)) add(Games::startKey(g.id), HkTarget{0, g.id, QString()});
+        // клавиша «используется / нет» работает всегда — ею категорию и включают
         add(Games::armKey(g.id), HkTarget{1, g.id, QString()});
+        // не используется — ни старт/стоп, ни профили (открыта она или нет)
+        if (!Games::armed(g.id)) continue;
+        add(g.id == game_.id ? hotkeySpec_ : Games::startKey(g.id), HkTarget{0, g.id, QString()});
         for (const QString& p : Games::profiles(g.id)) add(Games::profileKey(g.id, p), HkTarget{2, g.id, p});
     }
     bindings_ = list;
@@ -2675,7 +2700,8 @@ void MainWindow::updateTrayState() {
     const bool run = hasGame() && clk().isRunning();
     const QString hk = hotkeySpec_.display();
     const bool hold = hasGame() && Games::keyMode(game_.id) == 1;
-    startBtn_->setState(run, hk, pendingStart_);
+    const bool unused = hasGame() && !Games::armed(game_.id) && !run && !pendingStart_;
+    startBtn_->setState(run, hk, pendingStart_, unused);
     QStringList names;
     for (const QString& id : runningIds()) {
         GameRunner* r = findRunner(id);
@@ -2685,13 +2711,17 @@ void MainWindow::updateTrayState() {
     statusText_->setText(pendingStart_ ? T("Выбери окно игры — переключись в «%1»…").arg(game_.name)
                          : !names.isEmpty() ? T("Работает · %1").arg(names.join(", "))
                          : !hasGame() ? T("Добавь игру, чтобы начать")
+                         : unused ? T("«%1» не используется — включи кружок у категории").arg(game_.name)
                          : hold ? T("Остановлен — держи %1 в игре").arg(hk)
                                 : T("Остановлен — нажми %1 в игре").arg(hk));
     const QString gameName = hasGame() ? game_.name : T("нет игры");
     if (trayStatusAction_)
         trayStatusAction_->setText(names.isEmpty() ? QString(AQ_NAME " — %1 · %2").arg(T("остановлен"), gameName)
                                                    : QString(AQ_NAME " — %1 · %2").arg(T("работает"), names.join(", ")));
-    if (trayToggleAction_) trayToggleAction_->setText(QString("%1\t%2").arg(run ? T("Стоп") : pendingStart_ ? T("Отмена") : T("Старт"), hk));
+    if (trayToggleAction_) {
+        trayToggleAction_->setText(QString("%1\t%2").arg(run ? T("Стоп") : pendingStart_ ? T("Отмена") : T("Старт"), hk));
+        trayToggleAction_->setEnabled(!unused);
+    }
     if (trayMenu_)
         if (QAction* stopAll = trayMenu_->findChild<QAction*>("stopAll")) stopAll->setVisible(names.size() > 1);
     if (tray_) {
@@ -2699,7 +2729,7 @@ void MainWindow::updateTrayState() {
         tray_->setToolTip(names.isEmpty() ? QString("%1 — %2 (%3)").arg(kAppTitle, gameName, T("остановлен"))
                                           : QString("%1 — %2 (%3)").arg(kAppTitle, names.join(", "), T("работает")));
     }
-    if (mini_) mini_->setRunning(run, hk, pendingStart_);
+    if (mini_) mini_->setRunning(run, hk, pendingStart_, unused);
 }
 
 QWidget* MainWindow::dialogParent() {

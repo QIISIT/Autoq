@@ -61,6 +61,7 @@ public:
 public slots:
     void restartApp();          // смена языка/размера: выйти и запуститься заново
     void toggleRunning();          // кнопка Старт, трей, мини-окно — для открытой игры
+    void startPressed();           // кнопка Старт: не используется — включить, иначе старт/стоп
     void onHotkeyEvent(const QString& spec, bool down);   // глобальная клавиша (из потока хоткеев)
     void showMain();
     void showMini();
@@ -168,6 +169,7 @@ private:
     void stopGame(const QString& id);
     bool startBackground(const QString& id, bool fromHotkey);   // игра не открыта — без отсчёта
     void toggleGame(const QString& id, bool fromHotkey);
+    bool refuseUnused(const QString& id);       // категория не используется — сказать и не запускать
     void cancelPending();
     QString startProblem() const;
     QString startProblemFor(const GameDef& g, const GameState& st) const;

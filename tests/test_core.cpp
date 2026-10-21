@@ -752,9 +752,11 @@ static void testV112() {
     CHECK(Games::startKey("minecraft").toString() == "mouse:9" && Games::startKey("genshin").toString() == "f7");
     Games::setStartKey("genshin", HotkeySpec{});                // пустую не записываем
     CHECK(Games::startKey("genshin").toString() == "f7");
-    CHECK(!Games::armed("genshin"));
+    CHECK(Games::armed("genshin"));                             // новая категория — используется
+    Games::setArmed("genshin", false);
+    CHECK(!Games::armed("genshin") && Games::armed("minecraft"));
     Games::setArmed("genshin", true);
-    CHECK(Games::armed("genshin") && !Games::armed("minecraft"));
+    CHECK(Games::armed("genshin"));
     CHECK(Games::keyMode("genshin") == 0);
     Games::setKeyMode("genshin", 1);
     CHECK(Games::keyMode("genshin") == 1);
@@ -790,6 +792,35 @@ static void testV112() {
     { QSettings s("AutoQTest", "v112_" + pid); s.clear(); s.sync(); }
 }
 
+// --- 1.13: кружок «используется», Tab в сочетаниях ---
+static void testV113() {
+    const QString pid = QString::number(QCoreApplication::applicationPid());
+    AppSettings::setScope("AutoQTest", "v113_" + pid);
+    { auto s = AppSettings::open(); s->clear();
+      // 1.12: открыта Genshin (кружок пустой), Minecraft «активна», Roblox — пустой
+      s->setValue("version", 2); s->setValue("games/listVersion", 2);
+      s->setValue("games/order", QStringList{"genshin", "minecraft", "roblox"});
+      s->setValue("currentGame", "genshin");
+      s->setValue("games/minecraft/armed", true);
+      s->sync(); }
+    Games::migrate();
+    CHECK(Games::armed("genshin"));            // открытая работала — используется
+    CHECK(Games::armed("minecraft"));
+    CHECK(!Games::armed("roblox"));            // раньше запускалась только открытой — выключена
+    Games::setArmed("roblox", true);
+    Games::migrate();                          // повторно ничего не меняет
+    CHECK(Games::armed("roblox"));
+    Games::addBuiltin("wuwa");
+    CHECK(Games::armed("wuwa"));               // новая — сразу используется
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+
+    // Tab и Shift+Tab — обычные клавиши для сочетаний
+    CHECK(Keys::fromKeyEvent(Qt::Key_Tab, false, 0) && QString(Keys::fromKeyEvent(Qt::Key_Tab, false, 0)->name) == "tab");
+    CHECK(Keys::fromKeyEvent(Qt::Key_Backtab, false, 0) && QString(Keys::fromKeyEvent(Qt::Key_Backtab, false, 0)->name) == "tab");
+    CHECK(HotkeySpec::parse("alt+tab").isValid() && HotkeySpec::parse("ctrl+tab").display() == "Ctrl+Tab");
+    CHECK(HotkeySpec::parse("tab").passthrough());
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     testKeys();
@@ -801,6 +832,7 @@ int main(int argc, char** argv) {
     testV17();
     testV19();
     testV112();
+    testV113();
     testI18n();
     std::printf("\n%d проверок пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

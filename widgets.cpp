@@ -200,10 +200,11 @@ StartButton::StartButton(QWidget* parent) : QPushButton(parent) {
     refreshIcon();
 }
 
-void StartButton::setState(bool running, const QString& hotkey, bool pending) {
-    running_ = running || pending;
+void StartButton::setState(bool running, const QString& hotkey, bool pending, bool unused) {
+    running_ = running || pending || unused;
     pending_ = pending;
-    text_->setText(pending ? T("Отмена") : running ? T("Стоп") : T("Старт"));
+    unused_ = unused && !running && !pending;
+    text_->setText(pending ? T("Отмена") : running ? T("Стоп") : unused_ ? T("Включить") : T("Старт"));
     chip_->setText(hotkey);
     // длинное сочетание (Ctrl+Alt+F7) — мельче, чтобы кнопка не раздувалась
     chip_->setProperty("len", hotkey.size() > 10 ? "l" : hotkey.size() > 6 ? "m" : "s");
@@ -215,7 +216,9 @@ void StartButton::setState(bool running, const QString& hotkey, bool pending) {
     chip_->setMinimumWidth(chip_->fontMetrics().horizontalAdvance(hotkey) + 16);
     chip_->updateGeometry();
     refreshIcon();
-    setToolTip(pending ? T("Ждём, пока выберешь окно игры. Нажми, чтобы отменить запуск") : QString());
+    setToolTip(pending ? T("Ждём, пока выберешь окно игры. Нажми, чтобы отменить запуск")
+               : unused_ ? T("Категория не используется — запустить её нельзя. Нажми, чтобы включить (как кружок в списке)")
+                         : QString());
     setAccessibleName(QString("%1 (%2)").arg(text_->text(), hotkey));
 }
 
@@ -228,6 +231,7 @@ QSize StartButton::sizeHint() const {
 void StartButton::refreshIcon() {
     const qreal dpr = devicePixelRatioF();
     icon_->setPixmap(pending_ ? AqIcons::uiPixmap("x", Theme::t().redHi, 14, dpr, 2.6)
+                     : unused_ ? AqIcons::uiPixmap("power", Theme::t().redHi, 15, dpr, 2.2)
                      : running_ ? AqIcons::uiPixmap("stop", Theme::t().redHi, 14, dpr)
                                 : AqIcons::uiPixmap("play", Theme::t().onRed, 16, dpr));
 }
@@ -390,7 +394,11 @@ void GameListDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const
     const QPixmap tile = idx.data(sel ? TileActiveRole : TileRole).value<QPixmap>();
     const int tileSize = 34;
     const QRect tileRect(opt.rect.left() + 10, opt.rect.top() + (opt.rect.height() - tileSize) / 2, tileSize, tileSize);
+    // не используется (пустой кружок) — значок и название приглушены
+    const bool unused = !armed && !running;
+    p->setOpacity(unused ? 0.42 : 1.0);
     if (!tile.isNull()) p->drawPixmap(tileRect, tile);
+    p->setOpacity(1.0);
 
     // клавиша запуска — плашкой на значке
     const QString key = idx.data(KeyRole).toString();
@@ -420,16 +428,16 @@ void GameListDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const
     f2.setPixelSize(11);
     f2.setWeight(running ? QFont::DemiBold : QFont::Normal);
     p->setFont(f1);
-    p->setPen(sel ? t.text : t.text2);
+    p->setPen(unused ? t.faint : sel ? t.text : t.text2);
     const QString name = QFontMetrics(f1).elidedText(idx.data(Qt::DisplayRole).toString(),
                                                       Qt::ElideRight, textRect.width());
     p->drawText(textRect, Qt::AlignLeft | Qt::AlignTop, name);
     p->setFont(f2);
     p->setPen(running ? t.redHi : sel ? t.redSoft : t.faint);
-    const QString sub = running ? T("▶ работает") : idx.data(SubRole).toString();
+    const QString sub = running ? T("▶ работает") : unused ? T("не используется") : idx.data(SubRole).toString();
     p->drawText(textRect, Qt::AlignLeft | Qt::AlignBottom, QFontMetrics(f2).elidedText(sub, Qt::ElideRight, textRect.width()));
 
-    // кружок «активна»: пустой — нет, закрашен — клавиша запуска работает всегда
+    // кружок «используется»: закрашен — категорию можно запустить, пустой — нельзя никак
     const QRectF c = QRectF(circle).adjusted(4, 4, -4, -4);
     const auto* view = qobject_cast<const QAbstractItemView*>(opt.widget);
     const bool overCircle = hover && view && circle.contains(view->viewport()->mapFromGlobal(QCursor::pos()));
