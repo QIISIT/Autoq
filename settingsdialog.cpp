@@ -271,19 +271,9 @@ QWidget* SettingsDialog::buildGeneralPage() {
         g->setVerticalSpacing(8);
         auto pickRow = [this, g](int r, Sounds::Kind kind, const QString& caption) {
             g->addWidget(lbl(caption, "muted"), r, 0);
-            auto* box = new QComboBox();
+            auto* box = new SoundBox(kind, false);
             box->setAccessibleName(caption);
             box->setMinimumWidth(200);
-            auto fill = [box, kind]() {
-                QSignalBlocker b(box);
-                box->clear();
-                for (const QString& id : Sounds::ids()) box->addItem(Sounds::label(id), id);
-                const QString cur = Sounds::sound(kind);
-                if (cur.startsWith(Sounds::customPrefix())) box->addItem(T("Свой: ") + Sounds::label(cur), cur);
-                box->addItem(T("Свой файл WAV…"), QStringLiteral("pick"));
-                box->setCurrentIndex(qMax(0, box->findData(cur)));
-            };
-            fill();
             g->addWidget(box, r, 1);
             auto* play = new QToolButton();
             play->setObjectName("icon");
@@ -293,17 +283,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
             play->setAccessibleName(T("Послушать"));
             g->addWidget(play, r, 2);
             connect(play, &QToolButton::clicked, this, [kind]() { Sounds::preview(Sounds::sound(kind)); });
-            connect(box, QOverload<int>::of(&QComboBox::activated), this, [this, box, kind, fill](int i) {
-                QString id = box->itemData(i).toString();
-                if (id == "pick") {
-                    const QString f = QFileDialog::getOpenFileName(this, T("Звук — файл WAV"), QString(), T("Звук WAV (*.wav)"));
-                    if (f.isEmpty()) { fill(); return; }
-                    id = Sounds::customPrefix() + QDir::toNativeSeparators(f);
-                }
-                Sounds::setSound(kind, id);
-                fill();
-                Sounds::preview(id);
-            });
+            connect(box, &SoundBox::soundChosen, this, [kind](const QString& id) { Sounds::setSound(kind, id); });
         };
         pickRow(0, Sounds::On, T("Включился"));
         pickRow(1, Sounds::Off, T("Выключился"));
@@ -314,7 +294,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         vol->setRange(0, 100);
         vol->setValue(Sounds::volume());
         vol->setAccessibleName(T("Громкость звука"));
-        vol->setToolTip(T("Тише ← → громче (свои файлы WAV играют как есть)"));
+        vol->setToolTip(T("Тише ← → громче"));
         volRow->addWidget(vol, 1);
         auto* volVal = lbl(QString("%1%").arg(Sounds::volume()), "small");
         volVal->setMinimumWidth(40);
@@ -330,6 +310,28 @@ QWidget* SettingsDialog::buildGeneralPage() {
         hl->setWordWrap(true);
         hr->addWidget(hl, 1);
         g->addLayout(hr, 3, 0, 1, 3);
+        // «Мои звуки»: свои WAV — в папке данных, видны во всех списках звуков
+        auto* mr = new QHBoxLayout();
+        mr->setSpacing(8);
+        auto* mineLbl = lbl(QString(), "small");
+        mineLbl->setWordWrap(true);
+        auto updMine = [mineLbl]() {
+            const int n = Sounds::userSounds().size();
+            mineLbl->setText(n ? T("Мои звуки: %1. Свой звук можно выбрать и у игры или профиля — карточка «Профиль и запуск».").arg(n)
+                               : T("Свои звуки (WAV) — пункт «Добавить свой звук…» в списке. Свой звук можно выбрать и у игры или профиля."));
+        };
+        updMine();
+        auto* mineDir = new QPushButton(T("Папка звуков"));
+        mineDir->setIcon(AqIcons::ui("folder", Theme::t().text, 14));
+        mineDir->setToolTip(T("Положи сюда файлы WAV — они появятся в списках звуков"));
+        connect(mineDir, &QPushButton::clicked, this, []() {
+            QDir().mkpath(Sounds::userDir());
+            QDesktopServices::openUrl(QUrl::fromLocalFile(Sounds::userDir()));
+        });
+        for (SoundBox* sb : box->findChildren<SoundBox*>()) connect(sb, &SoundBox::soundChosen, this, updMine);
+        mr->addWidget(mineLbl, 1);
+        mr->addWidget(mineDir, 0, Qt::AlignTop);
+        g->addLayout(mr, 4, 0, 1, 3);
         g->setColumnStretch(3, 1);
         lay->addWidget(box);
         box->setEnabled(Sounds::enabled());

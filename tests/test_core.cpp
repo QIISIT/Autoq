@@ -6,6 +6,7 @@
 #include <QSet>
 #include <QRegularExpression>
 #include <QFile>
+#include <QtEndian>
 #include "i18n.h"
 #include "sounds.h"
 #include "framesync.h"
@@ -848,11 +849,80 @@ static void testV113() {
     { auto s = AppSettings::open(); s->clear(); s->sync(); }
     CHECK(Sounds::sound(Sounds::On) == "ticks-up" && Sounds::sound(Sounds::Off) == "ticks-down");
     Sounds::setSound(Sounds::On, "coin");
-    Sounds::setSound(Sounds::Off, "file:/tmp/x.wav");
-    CHECK(Sounds::sound(Sounds::On) == "coin" && Sounds::sound(Sounds::Off) == "file:/tmp/x.wav");
-    CHECK(Sounds::label("file:/tmp/x.wav") == "x.wav");
+    QTemporaryDir sndTmp;
+    const QString xwav = sndTmp.filePath("x.wav");
+    { QFile f(xwav); f.open(QIODevice::WriteOnly); f.write(Sounds::wav("coin", 80)); }
+    Sounds::setSound(Sounds::Off, "file:" + xwav);
+    CHECK(Sounds::sound(Sounds::On) == "coin" && Sounds::sound(Sounds::Off) == "file:" + xwav);
+    CHECK(Sounds::label("file:" + xwav) == "x.wav");
     Sounds::setSound(Sounds::On, "нет-такого");
     CHECK(Sounds::sound(Sounds::On) == "ticks-up");     // неизвестный — по умолчанию
+    Sounds::setSound(Sounds::On, "file:" + sndTmp.filePath("пропал.wav"));
+    CHECK(Sounds::sound(Sounds::On) == "ticks-up");     // файла нет — по умолчанию
+
+    // свои звуки: копия в «Мои звуки» (папка данных), видны во всех списках
+    {
+        CHECK(Sounds::userSounds().isEmpty() && Sounds::userDir() == AppSettings::dataDir() + "/sounds");
+        const QString src = sndTmp.filePath("Мой щелчок.wav");
+        { QFile f(src); f.open(QIODevice::WriteOnly); f.write(Sounds::wav("pop", 100)); }
+        QString err;
+        const QString id = Sounds::addUserSound(src, &err);
+        CHECK(id == "user:Мой щелчок.wav" && err.isEmpty());
+        CHECK(QFile::exists(Sounds::userDir() + "/Мой щелчок.wav") && Sounds::exists(id));
+        CHECK(Sounds::label(id) == "Мой щелчок" && Sounds::userSounds() == QStringList{id});
+        CHECK(Sounds::addUserSound(src) == id);                       // тот же файл — не копия
+        { QFile f(src); f.open(QIODevice::WriteOnly); f.write(Sounds::wav("bell", 100)); }
+        CHECK(Sounds::addUserSound(src) == "user:Мой щелчок (2).wav"); // другой с тем же именем
+        const QString txt = sndTmp.filePath("не звук.wav");
+        { QFile f(txt); f.open(QIODevice::WriteOnly); f.write("hello"); }
+        CHECK(Sounds::addUserSound(txt, &err).isEmpty() && !err.isEmpty());
+        CHECK(Sounds::addUserSound(sndTmp.filePath("нет.wav"), &err).isEmpty());
+        // свой звук игры/профиля — если есть; иначе из настроек
+        Sounds::setSound(Sounds::On, "coin");
+        CHECK(Sounds::resolve(Sounds::On, "") == "coin" && Sounds::resolve(Sounds::On, id) == id);
+        CHECK(Sounds::resolve(Sounds::On, "user:пропал.wav") == "coin" && Sounds::resolve(Sounds::Off, "none") == "none");
+        // своя громкость и для своих файлов: 16 бит моно, 8 бит, float стерео
+        auto peak16 = [](const QByteArray& w) {
+            int m = 0;
+            for (int i = 44; i + 1 < w.size(); i += 2) m = qMax(m, qAbs(int(qint16((uchar(w[i + 1]) << 8) | uchar(w[i])))));
+            return m;
+        };
+        const QByteArray orig = Sounds::wav("pop", 100);
+        const int p100 = peak16(Sounds::withVolume(orig, 100)), p50 = peak16(Sounds::withVolume(orig, 50));
+        CHECK(qAbs(p100 - peak16(orig)) <= 2 && qAbs(p50 * 2 - p100) <= 4 && peak16(Sounds::withVolume(orig, 0)) == 0);
+        CHECK(Sounds::withVolume("не wav", 50) == QByteArray("не wav"));
+        auto makeWav = [](int format, int ch, int bits, const QByteArray& data) {
+            QByteArray w;
+            auto u32 = [&w](quint32 v) { char b[4]; qToLittleEndian(v, b); w.append(b, 4); };
+            auto u16 = [&w](quint16 v) { char b[2]; qToLittleEndian(v, b); w.append(b, 2); };
+            w.append("RIFF"); u32(36 + data.size()); w.append("WAVE");
+            w.append("fmt "); u32(16); u16(format); u16(ch); u32(22050); u32(22050 * ch * bits / 8); u16(ch * bits / 8); u16(bits);
+            w.append("data"); u32(data.size()); w.append(data);
+            return w;
+        };
+        const QByteArray b8 = Sounds::withVolume(makeWav(1, 1, 8, QByteArray("\xFF\x80\x00", 3)), 100);
+        CHECK(b8.size() == 44 + 6 && peak16(b8) >= 32000);
+        QByteArray fl(16, 0);
+        qToLittleEndian<float>(0.5f, fl.data()); qToLittleEndian<float>(-0.25f, fl.data() + 4);
+        qToLittleEndian<float>(2.0f, fl.data() + 8);               // за пределами — обрезается
+        const QByteArray fs = Sounds::withVolume(makeWav(3, 2, 32, fl), 100);
+        CHECK(fs.size() == 44 + 8 && qFromLittleEndian<quint16>(fs.constData() + 22) == 2 && peak16(fs) == 32767);
+        CHECK(qFromLittleEndian<qint16>(fs.constData() + 44) == 16384 || qFromLittleEndian<qint16>(fs.constData() + 44) == 16383);
+        // у игры и профиля — свой звук: сохраняется, пустое — как в настройках
+        Games::addBuiltin("genshin");
+        GameState st = Games::loadState(Games::get("genshin"));
+        CHECK(st.soundOn.isEmpty() && st.soundOff.isEmpty());
+        st.soundOn = id;
+        st.soundOff = "none";
+        Games::saveState("genshin", st);
+        const GameState back = Games::loadState(Games::get("genshin"));
+        CHECK(back.soundOn == id && back.soundOff == "none" && back == st);
+        Games::saveProfile("genshin", "Тихий", st, -1);
+        CHECK(Games::loadProfile("genshin", "Тихий").soundOn == id);
+        st.soundOn.clear();
+        Games::saveState("genshin", st);
+        CHECK(!AppSettings::open()->contains("games/genshin/state/soundOn"));
+    }
     { auto s = AppSettings::open(); s->clear(); s->sync(); }
     for (const QString& sc : {"v113_" + pid, "snd_" + pid}) { AppSettings::dropScope("AutoQTest", sc); }
 

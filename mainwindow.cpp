@@ -726,6 +726,44 @@ void MainWindow::buildProfileCard() {
     hotkeyInfo_->hide();
     lay->addWidget(hotkeyInfo_);
 
+    // свой звук включения и выключения — у игры и у каждого профиля
+    BoardBlock* sblk = board_->addBlock("sounds", T("Звуки старт/стоп"));
+    lay = sblk->body();
+    auto* sg = new QGridLayout();
+    sg->setHorizontalSpacing(8);
+    sg->setVerticalSpacing(6);
+    sg->setColumnStretch(1, 1);
+    auto soundRow = [this, sg](int r, Sounds::Kind kind, const QString& caption) {
+        sg->addWidget(mkLabel(caption, "muted"), r, 0);
+        auto* box = new SoundBox(kind, true);
+        box->setAccessibleName(caption);
+        box->setToolTip(T("Свой звук этой игры (сохраняется и в профиле). «Как в настройках» — общий звук."));
+        sg->addWidget(box, r, 1);
+        auto* play = new QToolButton();
+        play->setObjectName("icon");
+        play->setFixedSize(30, 30);
+        play->setToolTip(T("Послушать"));
+        play->setAccessibleName(T("Послушать"));
+        sg->addWidget(play, r, 2);
+        soundPlayBtns_ << play;
+        connect(play, &QToolButton::clicked, this, [this, kind]() {
+            Sounds::preview(Sounds::resolve(kind, kind == Sounds::On ? cur_.soundOn : cur_.soundOff));
+        });
+        connect(box, &SoundBox::soundChosen, this, [this, kind](const QString& id) {
+            if (loading_ || !hasGame()) return;
+            (kind == Sounds::On ? cur_.soundOn : cur_.soundOff) = id;
+            commit();
+        });
+        return box;
+    };
+    soundOnBox_ = soundRow(0, Sounds::On, T("Звук вкл"));
+    soundOffBox_ = soundRow(1, Sounds::Off, T("Звук выкл"));
+    lay->addLayout(sg);
+    soundsOffHint_ = mkLabel(T("Звуки выключены: Настройки → Основные → Звук."), "faint");
+    soundsOffHint_->setWordWrap(true);
+    soundsOffHint_->hide();
+    lay->addWidget(soundsOffHint_);
+
     BoardBlock* ablk = board_->addBlock("armed", T("Используется"));
     lay = ablk->body();
     auto* ar = new QHBoxLayout();
@@ -999,6 +1037,7 @@ void MainWindow::refreshIcons() {
     const auto& t = Theme::t();
     const qreal dpr = devicePixelRatioF();
     board_->refreshIcons();
+    for (QToolButton* b : soundPlayBtns_) b->setIcon(AqIcons::ui("play", t.muted, 12));
     qApp->setWindowIcon(AqIcons::appIcon());
     brandLogo_->setPixmap(AqIcons::logo(26, dpr));
     for (QLabel* l : findChildren<QLabel*>())
@@ -1470,6 +1509,9 @@ void MainWindow::stateToUi() {
     jitterBox_->setEnabled(cur_.randomize);
     lockSwitch_->setChecked(cur_.lockWindow);
     frameSyncSwitch_->setChecked(cur_.frameSync);
+    soundOnBox_->setSound(cur_.soundOn);
+    soundOffBox_->setSound(cur_.soundOff);
+    soundsOffHint_->setVisible(!Sounds::enabled());
     loading_ = wasLoading;
     fillHzBox();
     syncSlider();
@@ -1680,6 +1722,8 @@ void MainWindow::applyPreset(int index) {
     cur_.lockWindow = keep.lockWindow;
     cur_.frameSync = keep.frameSync;
     cur_.frameHz = keep.frameHz;
+    cur_.soundOn = keep.soundOn;
+    cur_.soundOff = keep.soundOff;
     if (l[index].mode >= 0 && gameModeFromInt(l[index].mode) != game_.mode) {
         game_.mode = gameModeFromInt(l[index].mode);
         Games::save(game_);
@@ -1697,6 +1741,8 @@ void MainWindow::updatePresetLabel() {
         a.lockWindow = b.lockWindow;
         a.frameSync = b.frameSync;
         a.frameHz = b.frameHz;
+        a.soundOn = b.soundOn;
+        a.soundOff = b.soundOff;
         a.intervalMs = qMax(a.intervalMs, game_.minIntervalMs);
         const bool modeOk = p.mode < 0 || gameModeFromInt(p.mode) == game_.mode;
         if (a == b && modeOk) { name = p.name; break; }
@@ -1966,6 +2012,8 @@ void MainWindow::newProfile(int base) {
         st.lockWindow = cur_.lockWindow;
         st.frameSync = cur_.frameSync;
         st.frameHz = cur_.frameHz;
+        st.soundOn = cur_.soundOn;
+        st.soundOff = cur_.soundOff;
         st.intervalMs = qMax(st.intervalMs, game_.minIntervalMs);
         if (p.mode >= 0) mode = gameModeFromInt(p.mode);
     }
@@ -2519,7 +2567,7 @@ void MainWindow::startClicker() {
     pushConfig();
     const bool was = clk().isRunning();
     clk().start();
-    if (!was) Sounds::play(Sounds::On, Games::keyMode(game_.id) == 1);
+    if (!was) Sounds::play(Sounds::On, Games::keyMode(game_.id) == 1, cur_.soundOn);
     rateHist_.clear();
     updateTrayState();
     updateGameItems();
@@ -2529,7 +2577,7 @@ void MainWindow::startClicker() {
 void MainWindow::stopGame(const QString& id) {
     GameRunner* r = findRunner(id);
     if (!r) return;
-    if (r->clicker.isRunning()) Sounds::play(Sounds::Off, Games::keyMode(id) == 1);
+    if (r->clicker.isRunning()) Sounds::play(Sounds::Off, Games::keyMode(id) == 1, r->st.soundOff);
     r->clicker.stop();
     r->holdStarted = false;
     updateTrayState();
@@ -2571,7 +2619,7 @@ bool MainWindow::startBackground(const QString& id, bool fromHotkey) {
     r.st = st;
     r.clicker.setConfig(buildConfig(g, st, r.bound));
     r.clicker.start();
-    Sounds::play(Sounds::On, Games::keyMode(id) == 1);
+    Sounds::play(Sounds::On, Games::keyMode(id) == 1, st.soundOn);
     updateTrayState();
     updateGameItems();
     return true;
@@ -2723,7 +2771,7 @@ void MainWindow::refreshLive() {
             r.bound = WindowInfo{};
             const bool wasRunning = r.clicker.isRunning();
             if (wasRunning && Prefs::stopOnGameClose()) {
-                Sounds::play(Sounds::Off);
+                Sounds::play(Sounds::Off, false, r.st.soundOff);
                 r.clicker.stop();
                 r.holdStarted = false;
                 notify(T("Кликер «%1» выключен: окно игры закрылось.").arg(r.def.name.isEmpty() ? it.first : r.def.name));
@@ -3124,6 +3172,10 @@ void MainWindow::openSettingsPage(int page) {
         QTimer::singleShot(0, this, &MainWindow::startOnboarding);
     });
     dlg.exec();
+    // общий звук мог смениться — «Как в настройках · …» у игры тоже
+    soundOnBox_->refill();
+    soundOffBox_->refill();
+    soundsOffHint_->setVisible(!Sounds::enabled());
 }
 
 void MainWindow::onTrayActivated(QSystemTrayIcon::ActivationReason reason) {

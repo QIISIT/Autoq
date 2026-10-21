@@ -90,7 +90,7 @@ bool GameState::usesMouse() const {
 bool GameState::operator==(const GameState& o) const {
     return actions == o.actions && intervalMs == o.intervalMs &&
            randomize == o.randomize && jitterMs == o.jitterMs && lockWindow == o.lockWindow &&
-           frameSync == o.frameSync && frameHz == o.frameHz;
+           frameSync == o.frameSync && frameHz == o.frameHz && soundOn == o.soundOn && soundOff == o.soundOff;
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +428,9 @@ static void writeState(QSettings& s, const QString& prefix, const GameState& st)
     s.setValue(prefix + "lockWindow", st.lockWindow);
     s.setValue(prefix + "frameSync", st.frameSync);
     s.setValue(prefix + "frameHz", st.frameHz);
+    // свой звук: пусто — как в настройках (ключ не пишем)
+    if (st.soundOn.isEmpty()) s.remove(prefix + "soundOn"); else s.setValue(prefix + "soundOn", st.soundOn);
+    if (st.soundOff.isEmpty()) s.remove(prefix + "soundOff"); else s.setValue(prefix + "soundOff", st.soundOff);
     // поля версий до 1.12 (два действия) больше не нужны
     for (const char* k : {"mouse1", "button1", "key1", "useSlot2", "mouse2", "button2", "key2", "between"})
         s.remove(prefix + k);
@@ -468,6 +471,8 @@ static GameState readState(QSettings& s, const QString& prefix, const GameState&
     st.frameSync = s.value(prefix + "frameSync", def.frameSync).toBool();
     st.frameHz = s.value(prefix + "frameHz", def.frameHz).toInt();
     if (st.frameHz < 0 || st.frameHz > 1000) st.frameHz = 0;
+    st.soundOn = s.value(prefix + "soundOn", def.soundOn).toString().left(1000);
+    st.soundOff = s.value(prefix + "soundOff", def.soundOff).toString().left(1000);
     return st;
 }
 

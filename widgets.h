@@ -8,6 +8,8 @@
 #include <QStyledItemDelegate>
 #include <QButtonGroup>
 #include <QList>
+#include <QComboBox>
+#include "sounds.h"
 
 class QLabel;
 class QLineEdit;
@@ -270,4 +272,23 @@ public:
     static void install(QWidget* root);
 protected:
     bool eventFilter(QObject* o, QEvent* e) override;
+};
+
+// Выбор звука вкл/выкл: набор AutoQ, «Мои звуки», «Без звука» и «Добавить свой
+// звук…» (файл копируется в «Мои звуки»). inherit — первый пункт «Как в настройках».
+// Выбрал — звук сразу играет, чтобы было слышно, что выбрано.
+class SoundBox : public QComboBox {
+    Q_OBJECT
+public:
+    SoundBox(Sounds::Kind kind, bool inherit, QWidget* parent = nullptr);
+    void setSound(const QString& id);     // "" — как в настройках
+    QString sound() const { return cur_; }
+    void refill();
+    void showPopup() override;            // перед показом — свежий список «Моих звуков»
+signals:
+    void soundChosen(const QString& id);
+private:
+    Sounds::Kind kind_;
+    bool inherit_;
+    QString cur_;
 };

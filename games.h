@@ -108,6 +108,7 @@ struct GameState {
     bool lockWindow = true;
     bool frameSync = false;      // «В такт с монитором»: клики на сетке кадров
     int frameHz = 0;             // частота такта: 0 — как у монитора, иначе своя (FPS игры)
+    QString soundOn, soundOff;   // свой звук включения / выключения ("" — как в настройках)
     bool multi() const { return actions.size() > 1; }
     bool usesMouse() const;
     bool operator==(const GameState& o) const;

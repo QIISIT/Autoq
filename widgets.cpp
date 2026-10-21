@@ -33,6 +33,8 @@
 #include <QResizeEvent>
 #include <QCursor>
 #include <QScreen>
+#include <QFileDialog>
+#include <QStandardPaths>
 
 // ---------------------------------------------------------------------------
 ToggleSwitch::ToggleSwitch(QWidget* parent) : QAbstractButton(parent) {
@@ -778,4 +780,65 @@ bool WheelGuard::eventFilter(QObject* o, QEvent* e) {
         }
     }
     return QObject::eventFilter(o, e);
+}
+
+// ---------------------------------------------------------------------------
+SoundBox::SoundBox(Sounds::Kind kind, bool inherit, QWidget* parent)
+    : QComboBox(parent), kind_(kind), inherit_(inherit) {
+    setMinimumWidth(160);
+    setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    setMinimumContentsLength(12);
+    cur_ = inherit ? QString() : Sounds::sound(kind);
+    refill();
+    connect(this, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
+        QString id = itemData(i).toString();
+        if (id == QLatin1String("add")) {
+            const QString f = QFileDialog::getOpenFileName(window(), T("Свой звук — файл WAV"),
+                                                           QStandardPaths::writableLocation(QStandardPaths::MusicLocation),
+                                                           T("Звук WAV (*.wav)"));
+            if (f.isEmpty()) { refill(); return; }
+            QString err;
+            id = Sounds::addUserSound(f, &err);
+            if (id.isEmpty()) {
+                QMessageBox::warning(window(), T("Свой звук"), err);
+                refill();
+                return;
+            }
+        }
+        cur_ = id;
+        refill();
+        emit soundChosen(id);
+        Sounds::preview(inherit_ && id.isEmpty() ? Sounds::sound(kind_) : id);
+    });
+}
+
+void SoundBox::setSound(const QString& id) {
+    cur_ = id;
+    refill();
+}
+
+void SoundBox::refill() {
+    QSignalBlocker b(this);
+    clear();
+    if (inherit_) addItem(T("Как в настройках · %1").arg(Sounds::label(Sounds::sound(kind_))), QString());
+    for (const QString& id : Sounds::ids())
+        if (id != QLatin1String("none")) addItem(Sounds::label(id), id);
+    const QStringList mine = Sounds::userSounds();
+    if (!mine.isEmpty()) {
+        insertSeparator(count());
+        for (const QString& id : mine) addItem(T("Мой: %1").arg(Sounds::label(id)), id);
+    }
+    // выбранный раньше файл не из «Моих звуков» (до 1.13) или пропавший — тоже в списке
+    if (!cur_.isEmpty() && findData(cur_) < 0 && cur_ != QLatin1String("none"))
+        addItem((Sounds::exists(cur_) ? T("Свой: %1") : T("Нет файла: %1")).arg(Sounds::label(cur_)), cur_);
+    addItem(Sounds::label("none"), QStringLiteral("none"));
+    insertSeparator(count());
+    addItem(T("Добавить свой звук…"), QStringLiteral("add"));
+    setCurrentIndex(qMax(0, findData(cur_)));
+    setToolTip(currentText());
+}
+
+void SoundBox::showPopup() {
+    refill();
+    QComboBox::showPopup();
 }

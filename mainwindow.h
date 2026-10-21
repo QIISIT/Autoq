@@ -314,6 +314,10 @@ private:
     ToggleSwitch* armedSwitch_;
     QLabel* hotkeyStatus_;
     QLabel* hotkeyInfo_;
+    class SoundBox* soundOnBox_;     // свой звук вкл/выкл игры и профиля
+    class SoundBox* soundOffBox_;
+    QLabel* soundsOffHint_;
+    QList<QToolButton*> soundPlayBtns_;
 
     // --- строка состояния ---
     StatusDot* statusDot_;

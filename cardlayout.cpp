@@ -25,14 +25,14 @@ QStringList legacyOrder() {
 QStringList CardLayout::builtinCards() { return {"actions", "speed", "window", "profile"}; }
 
 QStringList CardLayout::blockIds() {
-    return {"actions", "speed", "framesync", "window", "capture", "profile", "hotkey", "armed"};
+    return {"actions", "speed", "framesync", "window", "capture", "profile", "hotkey", "sounds", "armed"};
 }
 
 QString CardLayout::homeOf(const QString& block) {
     if (block == "actions") return "actions";
     if (block == "speed" || block == "framesync") return "speed";
     if (block == "window" || block == "capture") return "window";
-    if (block == "profile" || block == "hotkey" || block == "armed") return "profile";
+    if (block == "profile" || block == "hotkey" || block == "sounds" || block == "armed") return "profile";
     return QString();
 }
 
