@@ -56,7 +56,9 @@ echo "== 4. Упаковка"
 rm -rf "$OUT" && mkdir -p "$OUT/stage"
 cp "$ROOT/build-win/AutoQ.exe" "$OUT/"
 cp "$ROOT/build-win/AutoQ.exe" "$ROOT/windows/README_WINDOWS.txt" "$ROOT/windows/README_WINDOWS_EN.txt" "$OUT/stage/"
-(cd "$OUT/stage" && zip -9 -q "../AutoQ-Windows-Portable.zip" AutoQ.exe README_WINDOWS.txt README_WINDOWS_EN.txt)
+# папка AutoQ-data рядом с exe — портативный режим: настройки и профили хранятся в ней
+mkdir -p "$OUT/stage/AutoQ-data"
+(cd "$OUT/stage" && zip -9 -q "../AutoQ-Windows-Portable.zip" AutoQ.exe README_WINDOWS.txt README_WINDOWS_EN.txt AutoQ-data/)
 cp "$ROOT/windows/installer.nsi" "$ROOT/windows/app.ico" "$OUT/stage/"
 if [ -n "${SIGN_PFX:-}${SIGN_PKCS11_MODULE:-}${SIGN_JSIGN:-}" ]; then
     (cd "$OUT/stage" && makensis -V2 -DSIGN_CMD="$ROOT/windows/sign.sh" installer.nsi && mv AutoQ-Setup.exe "$OUT/")

@@ -1,5 +1,5 @@
 ﻿================================================================
-  AUTOQ 1.12 for Windows 10/11 (64-bit) — guide
+  AUTOQ 1.13 for Windows 10/11 (64-bit) — guide
   created by Qisit
 ================================================================
 
@@ -15,6 +15,9 @@ OPTION 1. Just the exe (portable, no installation)
    (for example C:\Games\AutoQ). Don't run it from inside the zip.
 2. Double-click AutoQ.exe.
 3. When Windows asks "Allow this app to make changes?" — Yes.
+The AutoQ-data folder next to AutoQ.exe holds all settings and
+profiles (portable mode: carry the folder on a USB stick). Delete
+AutoQ-data to keep settings in %APPDATA%\AutoQ instead.
 
 To remove: turn off "Autostart" (Settings → General), quit from
 the tray icon (right click → Quit), delete the folder.
@@ -51,16 +54,32 @@ HOW TO USE
 3. Press the game's start/stop key (F6 by default; each game has
    its own, a mouse button works too; "On / off" or "While held")
    right in the game: AutoQ picks that window and clicks only there.
-   The circle next to a game in the list makes it "active": its
-   key works even while another game is open — several games can
-   run at once. Right-click a game for start/stop, keys, edit.
+   The circle next to a game: filled — the game is in use, its key
+   works even while another game is open (several games can run
+   at once); empty — not in use, it can't be started until you
+   click the circle. Right-click a game for start/stop, keys, edit.
+   "In sync with the monitor" puts each click into its own frame; the "?"
+   badge explains why CPS then can't exceed the refresh rate.
 4. CPS overlay: the gauge button → Off / Only while running /
-   Always. Its look is in Settings → CPS overlay.
+   Always. Several running games share one panel, a row per game.
+   Its look is in Settings → CPS overlay.
 5. Profiles keep sets of settings per game: New / Save / Reset;
-   a profile key switches to it right in the game.
-6. First launch asks for an interface style (Studio / Glass /
+   a profile key switches to it right in the game. ⋯ → Export /
+   Import a profile file. Start/stop sounds can differ per game and
+   profile; "Add your sound…" takes any WAV ("My sounds").
+6. Cards: the arrow at the top right collapses a card into a small
+   tile. Edit mode (right-click a card → "Arrange cards…", or
+   Settings → Appearance → Cards): drag cards by the title, blocks
+   by any spot, even into another card; "New card" makes an empty
+   named card for your blocks. Each game keeps its own layout.
+7. First launch asks for an interface style (Studio / Glass /
    Terminal) and animations — redo it in Settings → General.
    Settings → Appearance also has the interface editor and size.
+
+Settings, games and profiles are plain files in %APPDATA%\AutoQ
+(portable: AutoQ-data next to the exe) — change the folder in
+Settings → General → Data; copy it to move AutoQ to another PC.
+Settings from older versions (registry) are moved over by itself.
 
 Autostart is the "AutoQ" entry in Task Manager → Startup apps (you
 can turn it off there too); a Task Scheduler task starts AutoQ with

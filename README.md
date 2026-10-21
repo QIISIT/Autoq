@@ -1,4 +1,4 @@
-# AutoQ 1.12 — created by Qisit
+# AutoQ 1.13 — created by Qisit
 
 Автокликер с базой игр: скип диалогов в Genshin и похожих играх, спам,
 комбинации и удержание клавиш в Minecraft и своих играх. Три режима —
@@ -71,6 +71,10 @@ Wayland тоже открываются через XWayland — только т�
 | `keypicker.cpp` | выбор клавиши из всей клавиатуры с поиском |
 | `colorpicker.cpp` | свой цвет с живым образцом окна, быстрое оформление в мини-окне |
 | `overlay.cpp` | оверлей КПС поверх игры (прозрачный для мыши) и его образец в настройках |
+| `cardlayout.cpp`, `board.cpp` | раскладка карточек у каждой игры: свои карточки, перенос блоков, сворачивание, режим редактирования |
+| `sounds.cpp` | звуки старт/стоп: встроенный набор, «Мои звуки» (свои WAV), громкость |
+| `framesync.cpp` | клики в такт с монитором (частота кадров) |
+| `appsettings.cpp` | папка данных: settings.ini, профили файлами, портативный режим (AutoQ-data) |
 | `mainwindow.cpp`, `miniwindow.cpp`, `gameeditdialog.cpp`, `settingsdialog.cpp`, `widgets.cpp` | интерфейс |
 
 Шрифты Unbounded, Onest и JetBrains Mono — под лицензией SIL OFL 1.1
