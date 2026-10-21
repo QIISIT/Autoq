@@ -249,7 +249,7 @@ void BoardCard::setBlocks(const QList<BoardBlock*>& blocks, bool editing) {
     int firstBottom = blocks.size();
     while (firstBottom > 0 && blocks[firstBottom - 1]->bottom) --firstBottom;
     for (int i = 0; i < blocks.size(); ++i) {
-        if (i == firstBottom && i > 0) blocksLay_->addStretch(1);
+        if (i == firstBottom) blocksLay_->addStretch(1);
         blocksLay_->addWidget(blocks[i]);
         blocks[i]->showDivider(i > 0 && !editing);
         blocks[i]->show();

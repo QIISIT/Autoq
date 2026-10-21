@@ -166,34 +166,47 @@ QString soundFile(const QString& id) {
 void playId(const QString& id) {
     if (id.isEmpty() || id == "none") return;
     const int vol = Sounds::volume();
-    QByteArray data;
+    const QString own = soundFile(id);
     QString key;
-    if (const QString file = soundFile(id); !file.isEmpty()) {     // свой файл — с громкостью
-        const QFileInfo fi(file);
+    if (!own.isEmpty()) {                                           // свой файл — с громкостью
+        const QFileInfo fi(own);
         if (!fi.isFile() || fi.size() > 8 * 1024 * 1024) return;
-        QFile f(file);
-        if (!f.open(QIODevice::ReadOnly)) return;
-        data = Sounds::withVolume(f.readAll(), vol);
         key = QString::fromLatin1(QCryptographicHash::hash(fi.absoluteFilePath().toUtf8(), QCryptographicHash::Md5).toHex()) +
               QString("-%1-%2").arg(fi.lastModified().toMSecsSinceEpoch()).arg(vol);
     } else {
         if (!find(id)) return;
-        data = Sounds::wav(id, vol);
         key = QString("%1-%2").arg(id).arg(vol);
     }
-    if (data.isEmpty()) return;
+    // готовый звук не пересчитываем: файл читается только в первый раз
+    auto load = [&]() -> QByteArray {
+        if (own.isEmpty()) return Sounds::wav(id, vol);
+        QFile f(own);
+        return f.open(QIODevice::ReadOnly) ? Sounds::withVolume(f.readAll(), vol) : QByteArray();
+    };
 #ifdef _WIN32
     // PlaySound читает данные, пока играет, — держим их живыми
     static QHash<QString, QByteArray> keep;
-    if (!keep.contains(key)) keep.insert(key, data);
+    if (!keep.contains(key)) {
+        const QByteArray data = load();
+        if (data.isEmpty()) return;
+        if (keep.size() >= 24) { PlaySoundW(nullptr, nullptr, 0); keep.clear(); }   // не копим: сначала остановить
+        keep.insert(key, data);
+    }
     PlaySoundW(reinterpret_cast<LPCWSTR>(keep[key].constData()), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
 #else
     const QString exe = player();
     if (exe.isEmpty()) return;
     const QString dir = QDir::temp().absoluteFilePath(QString("autoq-sounds-%1").arg(QCoreApplication::applicationPid()));
+    if (static bool once = false; !once && QCoreApplication::instance()) {    // за собой — убрать
+        once = true;
+        QObject::connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit,
+                         [dir]() { QDir(dir).removeRecursively(); });
+    }
     QDir().mkpath(dir);
     const QString file = dir + QString("/%1.wav").arg(key);
     if (!QFile::exists(file)) {
+        const QByteArray data = load();
+        if (data.isEmpty()) return;
         QFile f(file);
         if (!f.open(QIODevice::WriteOnly)) return;
         f.write(data);

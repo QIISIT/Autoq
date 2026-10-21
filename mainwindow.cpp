@@ -518,9 +518,8 @@ void MainWindow::buildSpeedCard() {
     r2->addWidget(jitterBox_);
     lay->addLayout(r2);
 
-    // в такт с монитором: каждый клик — в свой кадр (отдельный блок, внизу карточки)
+    // в такт с монитором: каждый клик — в свой кадр (отдельный блок)
     BoardBlock* fblk = board_->addBlock("framesync", T("Такт монитора"));
-    fblk->bottom = true;
     lay = fblk->body();
     auto* r3 = new QHBoxLayout();
     r3->setSpacing(8);
@@ -1230,6 +1229,7 @@ void MainWindow::switchToGame(const QString& id) {
         cancelPending();
         game_ = GameDef{};
         cur_ = GameState{};
+        board_->setEditMode(false);           // редактировать нечего
         pages_->setCurrentIndex(0);
         rebuildBindings();
         updateProfileState();
