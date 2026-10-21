@@ -300,6 +300,7 @@ private:
     CardFlow* cardFlow_;
     QComboBox* profileBox_;
     QToolButton* renameProfileBtn_;
+    QToolButton* profileOverlayBtn_;   // «показывать в оверлее КПС» у профиля
     QToolButton* profileKeyBtn_;
     QLabel* profileState_;
     QPushButton* newProfileBtn_;

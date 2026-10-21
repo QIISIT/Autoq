@@ -338,7 +338,9 @@ void ActionsEditor::updateValues() {
             ui.type->setCurrentIndex(a.mouse ? 0 : 1);
         }
         QString item = a.itemName();
-        if (!a.mouse && !Keys::actionKeyNames().contains(a.key)) item = Keys::actionKeyNames().value(0);
+        // клавиша не из списка действий (F13–F24 из старых настроек или профиля) — показываем
+        // как есть: кликер жмёт именно её, и подпись не должна врать
+        if (!a.mouse && !Keys::byName(a.key)) item = Keys::actionKeyNames().value(0);
         ui.value->setCurrentItem(item);
         if (ui.hold && ui.hold->value() != a.holdMs) { QSignalBlocker b(ui.hold); ui.hold->setValue(a.holdMs); }
         if (ui.after && ui.after->value() != a.afterMs) { QSignalBlocker b(ui.after); ui.after->setValue(a.afterMs); }

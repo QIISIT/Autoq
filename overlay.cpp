@@ -178,6 +178,14 @@ QVector<Block> buildBlocks(const OverlaySettings& s, const OverlayView& v, const
     const QColor num = numberColorOf(s);
     QVector<Block> out;
     const bool anything = s.showCps || s.showActions || s.showTotal || s.showStatus || s.showGame || s.showGraph;
+    // несколько игр сразу: у каждой плашки сначала название — иначе не понять, где какая
+    if (v.named && !v.game.isEmpty()) {
+        Block b;
+        Line l;
+        l << Run{QFontMetricsF(f.ui).elidedText(v.game, Qt::ElideRight, 200 * f.k), f.ui, text};
+        b.lines << l;
+        out << b;
+    }
 
     if (s.showCps || !anything) {
         Block b;
@@ -237,7 +245,7 @@ QVector<Block> buildBlocks(const OverlaySettings& s, const OverlayView& v, const
         b.lines << l;
         out << b;
     }
-    if (s.showGame && !v.game.isEmpty()) {
+    if (s.showGame && !v.named && !v.game.isEmpty()) {
         Block b;
         Line l;
         l << Run{QFontMetricsF(f.ui).elidedText(v.game, Qt::ElideRight, 180 * f.k), f.ui, dim};
@@ -386,6 +394,31 @@ void OverlayPaint::paint(QPainter& p, const QPointF& tl, const OverlaySettings& 
     p.restore();
 }
 
+QSize OverlayPaint::size(const OverlaySettings& s, const QList<OverlayView>& views) {
+    if (views.size() == 1) return size(s, views.first());
+    const qreal gap = 6 * s.scale / 100.0;
+    int w = 0, h = 0;
+    for (int i = 0; i < views.size(); ++i) {
+        const QSize one = size(s, views[i]);
+        w = qMax(w, one.width());
+        h += one.height() + (i ? qRound(gap) : 0);
+    }
+    return QSize(qMax(w, 1), qMax(h, 1));
+}
+
+void OverlayPaint::paint(QPainter& p, const OverlaySettings& s, const QList<OverlayView>& views, int align,
+                         bool moveHint) {
+    const int total = size(s, views).width();
+    const qreal gap = 6 * s.scale / 100.0;
+    qreal y = 0;
+    for (const OverlayView& v : views) {
+        const QSize one = size(s, v);
+        const qreal x = align == 0 ? 0 : align == 1 ? (total - one.width()) / 2.0 : total - one.width();
+        paint(p, QPointF(x, y), s, v, moveHint);
+        y += one.height() + qRound(gap);
+    }
+}
+
 OverlayView OverlayPaint::sample() {
     OverlayView v;
     v.cps = 20; v.cps1 = 10; v.cps2 = 10;
@@ -423,7 +456,7 @@ void OverlayWindow::applyFlags() {
 
 void OverlayWindow::setSettings(const OverlaySettings& s) {
     s_ = s;
-    hist_.clear();
+    for (auto& t : tracks_) t.second.hist.clear();
     relayout();
     refresh();
     update();
@@ -445,7 +478,8 @@ QRect OverlayWindow::screenRect() const {
 }
 
 void OverlayWindow::relayout() {
-    const QSize sz = OverlayPaint::size(s_, v_);
+    if (views_.isEmpty()) views_ << OverlayView{};
+    const QSize sz = OverlayPaint::size(s_, views_);
     if (size() != sz) setFixedSize(sz);
     if (dragging_) return;
     const QRect g = screenRect();
@@ -459,9 +493,16 @@ void OverlayWindow::relayout() {
     if (pos() != QPoint(x, y)) move(x, y);
 }
 
-void OverlayWindow::refresh() {
-    const OverlayData d = source_ ? source_() : OverlayData{};
-    const bool want = move_ || (s_.enabled && d.hasGame && (s_.when == 1 || d.running || d.pending));
+bool OverlayData::anyActive() const {
+    for (const OverlayEntry& e : entries)
+        if (e.running || e.pending) return true;
+    return false;
+}
+
+void OverlayWindow::refresh() { refresh(source_ ? source_() : OverlayData{}); }
+
+void OverlayWindow::refresh(const OverlayData& d) {
+    const bool want = move_ || (s_.enabled && d.hasGame && !d.entries.isEmpty() && (s_.when == 1 || d.anyActive()));
     if (want && !isVisible()) { relayout(); show(); raise(); keepOverlayOnTop(this); }
     else if (!want && isVisible()) hide();
 }
@@ -469,42 +510,60 @@ void OverlayWindow::refresh() {
 void OverlayWindow::tick() {
     const OverlayData d = source_ ? source_() : OverlayData{};
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    // клики в секунду — по приросту счётчиков за последние windowMs
-    if (!d.running) {
-        hist_.clear();
-        v_.cps = v_.cps1 = v_.cps2 = 0;
-    } else {
-        if (!hist_.empty() && (d.c1 < hist_.back().c1 || d.c2 < hist_.back().c2)) hist_.clear();
-        hist_.push_back({now, d.c1, d.c2});
-        while (hist_.size() > 1 && hist_[1].t <= now - s_.windowMs) hist_.pop_front();
-        const Sample& a = hist_.front();
-        const double dt = (now - a.t) / 1000.0;
-        if (dt >= 0.15) {
-            v_.cps1 = (d.c1 - a.c1) / dt;
-            v_.cps2 = (d.c2 - a.c2) / dt;
+    const bool graphTick = now - lastGraph_ >= 250;
+    if (graphTick) lastGraph_ = now;
+    QList<OverlayView> views;
+    for (const OverlayEntry& e : d.entries) {
+        Track& t = tracks_[e.key];
+        t.seen = now;
+        // клики в секунду — по приросту счётчиков за последние windowMs
+        if (!e.running) {
+            t.hist.clear();
+            t.cps = t.cps1 = t.cps2 = 0;
         } else {
-            v_.cps1 = v_.cps2 = 0;
+            if (!t.hist.empty() && (e.c1 < t.hist.back().c1 || e.c2 < t.hist.back().c2)) t.hist.clear();
+            t.hist.push_back({now, e.c1, e.c2});
+            while (t.hist.size() > 1 && t.hist[1].t <= now - s_.windowMs) t.hist.pop_front();
+            const Sample& a = t.hist.front();
+            const double dt = (now - a.t) / 1000.0;
+            if (dt >= 0.15) {
+                t.cps1 = (e.c1 - a.c1) / dt;
+                t.cps2 = (e.c2 - a.c2) / dt;
+            } else {
+                t.cps1 = t.cps2 = 0;
+            }
+            t.cps = t.cps1 + t.cps2;
         }
-        v_.cps = v_.cps1 + v_.cps2;
+        if (graphTick) {
+            t.graph << t.cps;
+            while (t.graph.size() > 40) t.graph.removeFirst();
+        }
+        OverlayView v;
+        v.cps = t.cps; v.cps1 = t.cps1; v.cps2 = t.cps2;
+        v.graph = t.graph;
+        v.a1 = e.a1;
+        v.a2 = e.a2;
+        v.total = static_cast<long long>(e.total);
+        v.hold = e.hold && e.running;
+        v.game = e.profile.isEmpty() ? e.game : e.game + " · " + e.profile;
+        v.named = d.entries.size() > 1;
+        v.status = e.pending ? 3 : !e.running ? 0 : e.allowed ? 1 : e.pauseReason == 2 ? 4 : 2;
+        views << v;
     }
-    if (now - lastGraph_ >= 250) {
-        lastGraph_ = now;
-        v_.graph << v_.cps;
-        while (v_.graph.size() > 40) v_.graph.removeFirst();
-    }
-    v_.a1 = d.a1;
-    v_.a2 = d.a2;
-    v_.total = static_cast<long long>(d.total);
-    v_.hold = d.hold && d.running;
-    v_.game = d.game;
-    v_.status = d.pending ? 3 : !d.running ? 0 : d.allowed ? 1 : d.pauseReason == 2 ? 4 : 2;
-    if (move_ && !d.running) {        // в режиме перетаскивания — пример, чтобы было что двигать
+    // игры, которых больше нет в оверлее, — забыть их историю
+    for (auto it = tracks_.begin(); it != tracks_.end();)
+        it = it->second.seen == now ? std::next(it) : tracks_.erase(it);
+    if (views.isEmpty()) views << OverlayView{};
+    if (move_ && !d.anyActive()) {    // в режиме перетаскивания — пример, чтобы было что двигать
         const OverlayView ex = OverlayPaint::sample();
-        v_.cps = ex.cps; v_.cps1 = ex.cps1; v_.cps2 = ex.cps2;
-        if (v_.a1.isEmpty()) { v_.a1 = ex.a1; v_.a2 = ex.a2; }
-        if (v_.graph.size() < 2) v_.graph = ex.graph;
+        OverlayView& v = views.first();
+        v.cps = ex.cps; v.cps1 = ex.cps1; v.cps2 = ex.cps2;
+        if (v.a1.isEmpty()) { v.a1 = ex.a1; v.a2 = ex.a2; }
+        if (v.graph.size() < 2) v.graph = ex.graph;
+        if (v.game.isEmpty()) v.game = ex.game;
     }
-    refresh();
+    views_ = views;
+    refresh(d);
     if (!isVisible()) return;
     relayout();
     if (++raiseTick_ >= 10) {         // раз в секунду — снова поверх (игра могла подняться выше)
@@ -521,7 +580,7 @@ void OverlayWindow::paintEvent(QPaintEvent*) {
     p.setCompositionMode(QPainter::CompositionMode_Source);
     p.fillRect(rect(), Qt::transparent);
     p.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    OverlayPaint::paint(p, QPointF(0, 0), s_, v_, move_);
+    OverlayPaint::paint(p, s_, views_, s_.anchor % 3, move_);
 }
 
 void OverlayWindow::mousePressEvent(QMouseEvent* e) {

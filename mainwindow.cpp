@@ -639,6 +639,12 @@ QFrame* MainWindow::buildProfileCard() {
     renameProfileBtn_->setToolTip(T("Переименовать профиль"));
     renameProfileBtn_->setAccessibleName(T("Переименовать профиль"));
     prow->addWidget(renameProfileBtn_);
+    profileOverlayBtn_ = new QToolButton();
+    profileOverlayBtn_->setObjectName("icon");
+    profileOverlayBtn_->setFixedSize(30, 30);
+    profileOverlayBtn_->setCheckable(true);
+    profileOverlayBtn_->setAccessibleName(T("Показывать в оверлее КПС"));
+    prow->addWidget(profileOverlayBtn_);
     lay->addLayout(prow);
     // пресеты — готовые настройки игры
     auto* presetRow = new QHBoxLayout();
@@ -768,6 +774,18 @@ void MainWindow::connectSignals() {
     connect(delProfileBtn_, &QPushButton::clicked, this, &MainWindow::deleteProfile);
     connect(renameProfileBtn_, &QToolButton::clicked, this, &MainWindow::renameProfile);
     connect(profileKeyBtn_, &QToolButton::clicked, this, &MainWindow::editProfileKey);
+    connect(profileOverlayBtn_, &QToolButton::toggled, this, [this](bool on) {
+        if (loading_ || !hasGame()) return;
+        const QString active = Games::activeProfile(game_.id);
+        Games::setProfileInOverlay(game_.id, active, on);
+        updateProfileState();
+        if (overlay_) overlay_->refresh();
+        const QString who = active.isEmpty() ? game_.name : T("Профиль «%1»").arg(active);
+        if (on && !(overlay_ && overlay_->settings().enabled))
+            notify(T("%1 — в оверлее КПС. Сам оверлей выключен: включи его кнопкой со спидометром вверху.").arg(who));
+        else
+            notify(on ? T("%1 — показывается в оверлее КПС.").arg(who) : T("%1 — скрыт из оверлея КПС.").arg(who));
+    });
 
     connect(modeSeg_, &Segmented::changed, this, [this](int i) {
         if (!loading_) setGameMode(gameModeFromInt(i));
@@ -1727,6 +1745,18 @@ void MainWindow::updateProfileState() {
     delProfileBtn_->setEnabled(!active.isEmpty());
     renameProfileBtn_->setEnabled(!active.isEmpty());
     profileKeyBtn_->setEnabled(!active.isEmpty());
+    {
+        const bool inOv = !hasGame() || Games::profileInOverlay(game_.id, active);
+        const bool wasLoading = loading_;
+        loading_ = true;
+        profileOverlayBtn_->setChecked(inOv);
+        loading_ = wasLoading;
+        profileOverlayBtn_->setEnabled(hasGame());
+        profileOverlayBtn_->setIcon(AqIcons::ui(inOv ? "gauge" : "gauge-off", inOv ? Theme::t().redHi : Theme::t().faint, 16, 1.9));
+        const QString who = active.isEmpty() ? T("Без профиля") : T("Профиль «%1»").arg(active);
+        profileOverlayBtn_->setToolTip(inOv ? T("%1 показывается в оверлее КПС — нажми, чтобы скрыть").arg(who)
+                                            : T("%1 не показывается в оверлее КПС — нажми, чтобы показывать").arg(who));
+    }
     const HotkeySpec pk = active.isEmpty() ? HotkeySpec{} : Games::profileKey(game_.id, active);
     profileKeyBtn_->setText(pk.isValid() ? pk.display() : QString());
     // без клавиши — только значок, ровно по центру рамки (с пустым текстом он уезжал влево)
@@ -2219,27 +2249,47 @@ QString MainWindow::actionsLabel(const GameState& st, int from, int to) const {
 
 OverlayData MainWindow::overlayData() {
     OverlayData d;
-    const QString id = focusRunnerId();
-    GameRunner* r = findRunner(id);
-    const bool isCur = id == game_.id;
-    const GameDef g = isCur || !r ? game_ : r->def;
-    const GameState st = isCur || !r ? cur_ : r->st;
-    d.running = r && r->clicker.isRunning();
-    d.pending = isCur && pendingStart_;
-    d.allowed = r && r->clicker.allowedNow();
-    d.pauseReason = r ? r->clicker.pauseReason() : 0;
-    d.hold = g.mode == GameMode::Hold;
     d.hasGame = hasGame();
-    if (r) {
-        d.c1 = r->clicker.actionCount(0);
-        for (int i = 1; i < Clicker::kCounters; ++i) d.c2 += r->clicker.actionCount(i);
-        d.total = r->clicker.clickCount();
+    auto entryFor = [this](const QString& id) {
+        OverlayEntry e;
+        GameRunner* r = findRunner(id);
+        const bool isCur = id == game_.id;
+        const GameDef g = isCur || !r ? game_ : r->def;
+        const GameState st = isCur || !r ? cur_ : r->st;
+        e.key = id;
+        e.running = r && r->clicker.isRunning();
+        e.pending = isCur && pendingStart_;
+        e.allowed = r && r->clicker.allowedNow();
+        e.pauseReason = r ? r->clicker.pauseReason() : 0;
+        e.hold = g.mode == GameMode::Hold;
+        if (r) {
+            e.c1 = r->clicker.actionCount(0);
+            for (int i = 1; i < Clicker::kCounters; ++i) e.c2 += r->clicker.actionCount(i);
+            e.total = r->clicker.clickCount();
+        }
+        e.a1 = actionsLabel(st, 0, 1);
+        e.a2 = st.multi() ? actionsLabel(st, 1, st.actions.size()) : QString();
+        e.game = g.name;
+        e.profile = Games::activeProfile(id);
+        return e;
+    };
+    // открытая игра первой, за ней остальные работающие — по порядку в списке игр;
+    // у каждой — только если её профилю разрешено «Показывать в оверлее»
+    const QString first = focusRunnerId();
+    QStringList ids;
+    if (!first.isEmpty()) ids << first;
+    const QStringList run = runningIds();
+    for (int i = 0; i < gameList_->count(); ++i) {
+        const QString id = gameList_->item(i)->data(GameListDelegate::IdRole).toString();
+        if (run.contains(id) && !ids.contains(id)) ids << id;
     }
-    d.a1 = actionsLabel(st, 0, 1);
-    d.a2 = st.multi() ? actionsLabel(st, 1, st.actions.size()) : QString();
-    d.game = g.name;
-    const int others = runningIds().size() - (d.running ? 1 : 0);
-    if (others > 0) d.game = QString("%1 +%2").arg(g.name).arg(others);
+    for (const QString& id : run)
+        if (!ids.contains(id)) ids << id;
+    for (const QString& id : ids) {
+        if (!Games::profileInOverlay(id, Games::activeProfile(id))) continue;
+        d.entries << entryFor(id);
+        if (d.entries.size() >= 6) break;     // больше шести плашек закроют полэкрана
+    }
     return d;
 }
 

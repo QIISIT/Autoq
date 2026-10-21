@@ -557,6 +557,7 @@ bool Games::renameProfile(const QString& gameId, const QString& from, const QStr
     int mode = -1;
     const GameState st = loadProfile(gameId, a, &mode);
     const HotkeySpec key = profileKey(gameId, a);
+    const bool inOverlay = profileInOverlay(gameId, a);
     const bool wasActive = activeProfile(gameId) == a;
     removeProfile(gameId, a);           // сначала убрать: в реестре Windows это тот же ключ
     {
@@ -565,6 +566,7 @@ bool Games::renameProfile(const QString& gameId, const QString& from, const QStr
         writeState(*s, prefix, st);
         if (mode >= 0 && mode <= 2) s->setValue(prefix + "mode", mode);
         if (key.isValid()) s->setValue(prefix + "hotkey", key.toString());
+        if (!inOverlay) s->setValue(prefix + "overlay", false);
         s->sync();
     }
     if (wasActive) setActiveProfile(gameId, b);
@@ -635,6 +637,24 @@ void Games::setArmKey(const QString& gameId, const HotkeySpec& sp) {
     auto s = AppSettings::open();
     if (sp.isValid()) s->setValue(gkey(gameId, "armKey"), sp.toString());
     else s->remove(gkey(gameId, "armKey"));
+    s->sync();
+}
+
+static QString overlayKey(const QString& gameId, const QString& profile) {
+    return profile.trimmed().isEmpty() ? gkey(gameId, "overlay")
+                                       : gkey(gameId, "profiles/" + storedProfileName(gameId, profile) + "/overlay");
+}
+
+bool Games::profileInOverlay(const QString& gameId, const QString& profile) {
+    if (!profile.trimmed().isEmpty() && !profileExists(gameId, profile)) return true;
+    return AppSettings::open()->value(overlayKey(gameId, profile), true).toBool();
+}
+
+void Games::setProfileInOverlay(const QString& gameId, const QString& profile, bool on) {
+    if (!profile.trimmed().isEmpty() && !profileExists(gameId, profile)) return;
+    auto s = AppSettings::open();
+    if (on) s->remove(overlayKey(gameId, profile));   // по умолчанию — да
+    else s->setValue(overlayKey(gameId, profile), false);
     s->sync();
 }
 

@@ -147,6 +147,10 @@ namespace Games {
     void setKeyMode(const QString& gameId, int mode);
     HotkeySpec armKey(const QString& gameId);    // пустая — нет
     void setArmKey(const QString& gameId, const HotkeySpec& sp);
+    // «Показывать в оверлее КПС» — у каждого профиля свой (по умолчанию да);
+    // profile "" — игра без профиля
+    bool profileInOverlay(const QString& gameId, const QString& profile);
+    void setProfileInOverlay(const QString& gameId, const QString& profile, bool on);
     HotkeySpec profileKey(const QString& gameId, const QString& profile);
     void setProfileKey(const QString& gameId, const QString& profile, const HotkeySpec& sp);
 

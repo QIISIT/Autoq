@@ -96,6 +96,27 @@ int main(int argc, char** argv) {
     OverlayView one = v; one.a2.clear();
     CHECK(OverlayPaint::size(OverlaySettings::defaults(), one).width() < s100.width());
 
+    // И2: по плашке на игру — друг под другом, у каждой название первым
+    {
+        const OverlaySettings d = OverlaySettings::defaults();
+        CHECK(OverlayPaint::size(d, QList<OverlayView>{v}) == OverlayPaint::size(d, v));
+        OverlayView named = v; named.named = true;
+        CHECK(OverlayPaint::size(d, named).width() > OverlayPaint::size(d, v).width());
+        OverlayView second = one; second.named = true; second.game = "Minecraft (Java) · Быстро";
+        const QSize two = OverlayPaint::size(d, QList<OverlayView>{named, second});
+        CHECK(two.height() > OverlayPaint::size(d, named).height() + OverlayPaint::size(d, second).height());
+        CHECK(two.width() == qMax(OverlayPaint::size(d, named).width(), OverlayPaint::size(d, second).width()));
+        QImage img(two, QImage::Format_ARGB32_Premultiplied);
+        img.fill(Qt::transparent);
+        {
+            QPainter p(&img);
+            OverlayPaint::paint(p, d, QList<OverlayView>{named, second}, 2);
+        }
+        // нижняя плашка уже верхней и прижата вправо: левый нижний угол пустой
+        CHECK(qAlpha(img.pixel(1, two.height() - 4)) == 0 && qAlpha(img.pixel(two.width() - 8, two.height() - 8)) > 0);
+        CHECK(qAlpha(img.pixel(8, 8)) > 0);
+    }
+
     { auto st = AppSettings::open(); st->clear(); st->sync(); }
     std::printf("\n%d проверок пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

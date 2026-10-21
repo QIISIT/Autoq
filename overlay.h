@@ -10,6 +10,8 @@
 #include <QVector>
 #include <functional>
 #include <deque>
+#include <map>
+#include <QList>
 
 struct OverlaySettings {
     bool enabled = false;
@@ -52,21 +54,35 @@ struct OverlayView {
     int status = 0;               // 0 — остановлен, 1 — работает, 2 — пауза (не окно игры), 3 — ждёт окно,
                                   // 4 — пауза (курсор не над игрой)
     bool hold = false;            // режим «Зажать»
-    QString game;
+    QString game;                 // «Genshin Impact · Профиль»
+    bool named = false;           // несколько игр сразу — название первым, даже если «Игра» выключена
     QVector<double> graph;        // последние 10 секунд
 };
 
-// Данные для оверлея (заполняет главное окно)
-struct OverlayData {
-    bool running = false, pending = false, allowed = false, hold = false, hasGame = false;
+// Одна игра (с её профилем) в оверлее — заполняет главное окно
+struct OverlayEntry {
+    QString key;                  // id игры: у каждой своя история кликов и график
+    bool running = false, pending = false, allowed = false, hold = false;
     int pauseReason = 0;          // 1 — не окно игры, 2 — курсор не над игрой
     unsigned long long c1 = 0, c2 = 0, total = 0;
-    QString a1, a2, game;
+    QString a1, a2, game, profile;
+};
+
+// Данные для оверлея: по плашке на каждую работающую игру, если у её профиля
+// включено «Показывать в оверлее». Первая — игра, открытая в AutoQ.
+struct OverlayData {
+    bool hasGame = false;
+    QList<OverlayEntry> entries;
+    bool anyActive() const;       // хоть одна работает или ждёт окно
 };
 
 namespace OverlayPaint {
     QSize size(const OverlaySettings& s, const OverlayView& v);
     void paint(QPainter& p, const QPointF& topLeft, const OverlaySettings& s, const OverlayView& v,
+               bool moveHint = false);
+    // несколько плашек друг под другом; align: 0 — по левому краю, 1 — по центру, 2 — по правому
+    QSize size(const OverlaySettings& s, const QList<OverlayView>& views);
+    void paint(QPainter& p, const OverlaySettings& s, const QList<OverlayView>& views, int align,
                bool moveHint = false);
     OverlayView sample();         // пример для образца в настройках
 }
@@ -93,14 +109,21 @@ protected:
 
 private:
     void applyFlags();
+    void refresh(const OverlayData& d);
     void tick();
     void relayout();
     QRect screenRect() const;
     std::function<OverlayData()> source_;
     OverlaySettings s_;
-    OverlayView v_;
+    QList<OverlayView> views_;    // что рисуем сейчас — по плашке на игру
     struct Sample { qint64 t; unsigned long long c1, c2; };
-    std::deque<Sample> hist_;
+    struct Track {                // своя история у каждой игры
+        std::deque<Sample> hist;
+        QVector<double> graph;
+        double cps = 0, cps1 = 0, cps2 = 0;
+        qint64 seen = 0;
+    };
+    std::map<QString, Track> tracks_;
     qint64 lastGraph_ = 0;
     bool move_ = false;
     bool dragging_ = false;
