@@ -86,7 +86,8 @@ bool GameState::usesMouse() const {
 
 bool GameState::operator==(const GameState& o) const {
     return actions == o.actions && intervalMs == o.intervalMs &&
-           randomize == o.randomize && jitterMs == o.jitterMs && lockWindow == o.lockWindow;
+           randomize == o.randomize && jitterMs == o.jitterMs && lockWindow == o.lockWindow &&
+           frameSync == o.frameSync && frameHz == o.frameHz;
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +421,8 @@ static void writeState(QSettings& s, const QString& prefix, const GameState& st)
     s.setValue(prefix + "randomize", st.randomize);
     s.setValue(prefix + "jitter", st.jitterMs);
     s.setValue(prefix + "lockWindow", st.lockWindow);
+    s.setValue(prefix + "frameSync", st.frameSync);
+    s.setValue(prefix + "frameHz", st.frameHz);
     // поля версий до 1.12 (два действия) больше не нужны
     for (const char* k : {"mouse1", "button1", "key1", "useSlot2", "mouse2", "button2", "key2", "between"})
         s.remove(prefix + k);
@@ -457,6 +460,9 @@ static GameState readState(QSettings& s, const QString& prefix, const GameState&
     st.randomize = s.value(prefix + "randomize", def.randomize).toBool();
     st.jitterMs = qBound(0, s.value(prefix + "jitter", def.jitterMs).toInt(), 1000);
     st.lockWindow = s.value(prefix + "lockWindow", def.lockWindow).toBool();
+    st.frameSync = s.value(prefix + "frameSync", def.frameSync).toBool();
+    st.frameHz = s.value(prefix + "frameHz", def.frameHz).toInt();
+    if (st.frameHz < 0 || st.frameHz > 1000) st.frameHz = 0;
     return st;
 }
 

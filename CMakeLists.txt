@@ -25,6 +25,7 @@ set(CORE_SOURCES
     clicker.cpp     clicker.h
     hotkey.cpp      hotkey.h
     sounds.cpp      sounds.h
+    framesync.cpp   framesync.h
 )
 if(APPLE)
     list(APPEND CORE_SOURCES macsupport.mm macsupport.h)
@@ -88,7 +89,7 @@ qt_add_resources(AutoQ "aq_fonts"
 )
 
 if(WIN32)
-    target_link_libraries(aq_core PUBLIC winmm)
+    target_link_libraries(aq_core PUBLIC winmm dwmapi)
     target_compile_definitions(aq_core PUBLIC UNICODE _UNICODE)
     if(MINGW)
         # один самодостаточный exe — без libstdc++/libgcc/winpthread DLL

@@ -32,6 +32,7 @@
 #include <QGridLayout>
 #include <QResizeEvent>
 #include <QCursor>
+#include <QScreen>
 
 // ---------------------------------------------------------------------------
 ToggleSwitch::ToggleSwitch(QWidget* parent) : QAbstractButton(parent) {
@@ -277,6 +278,60 @@ void PlusBadge::paintEvent(QPaintEvent*) {
     p.setBrush(t.redTint);
     p.drawEllipse(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5));
     AqIcons::paint(p, "plus", QRectF(9, 9, 16, 16), t.redHi, 2.6);
+}
+
+// ---------------------------------------------------------------------------
+InfoBadge::InfoBadge(const QString& title, const QString& text, QWidget* parent)
+    : QAbstractButton(parent), title_(title), text_(text) {
+    setFixedSize(18, 18);
+    setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::TabFocus);
+    setToolTip(T("Подробнее"));
+    setAccessibleName(title);
+    setAttribute(Qt::WA_Hover);
+    connect(this, &QAbstractButton::clicked, this, &InfoBadge::showInfo);
+}
+
+void InfoBadge::paintEvent(QPaintEvent*) {
+    const auto& t = Theme::t();
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    const bool hot = underMouse() || hasFocus() || isDown();
+    AqIcons::paint(p, "help", QRectF(rect()).adjusted(1, 1, -1, -1), hot ? t.redHi : t.muted, 1.9);
+}
+
+void InfoBadge::showInfo() {
+    auto* pop = new QFrame(this, Qt::Popup);
+    pop->setObjectName("popup");
+    pop->setAttribute(Qt::WA_DeleteOnClose);
+    auto* lay = new QVBoxLayout(pop);
+    lay->setContentsMargins(16, 14, 16, 14);
+    lay->setSpacing(8);
+    auto* head = new QLabel(title_);
+    head->setObjectName("cardTitle");
+    head->setWordWrap(true);
+    lay->addWidget(head);
+    auto* body = new QLabel(text_);
+    body->setObjectName("muted");
+    body->setWordWrap(true);
+    body->setTextFormat(Qt::PlainText);
+    lay->addWidget(body);
+    // ширина задана — высоту считаем по переносам строк (иначе текст обрезался бы)
+    pop->ensurePolished();
+    for (QLabel* l : {head, body}) {
+        l->ensurePolished();
+        l->setFixedWidth(328);
+        l->setFixedHeight(l->heightForWidth(328));
+    }
+    pop->adjustSize();
+    QPoint pos = mapToGlobal(QPoint(width() / 2 - 24, height() + 6));
+    if (QScreen* scr = screen()) {
+        const QRect g = scr->availableGeometry();
+        if (pos.y() + pop->height() > g.bottom()) pos.setY(mapToGlobal(QPoint(0, 0)).y() - pop->height() - 6);
+        pos.setX(qBound(g.left() + 4, pos.x(), g.right() - pop->width() - 4));
+    }
+    pop->move(pos);
+    pop->show();
 }
 
 // ---------------------------------------------------------------------------

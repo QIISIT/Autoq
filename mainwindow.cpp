@@ -17,6 +17,7 @@
 #include "icons.h"
 #include "theme.h"
 #include "sounds.h"
+#include "framesync.h"
 #include <QWidget>
 #include <QFrame>
 #include <QVBoxLayout>
@@ -124,6 +125,17 @@ static QString presetsWord(int n) {
     if (b == 1) return T("%1 пресет").arg(n);
     if (b >= 2 && b <= 4) return T("%1 пресета").arg(n);
     return T("%1 пресетов").arg(n);
+}
+
+// «каждый кадр», «каждые 2 кадра», «каждые 5 кадров»
+static QString everyFrames(int n) {
+    if (I18n::english()) return n == 1 ? QString("every frame") : QString("every %1 frames").arg(n);
+    const int a = n % 100, b = n % 10;
+    if (n == 1) return T("каждый кадр");
+    if (a >= 11 && a <= 14) return T("каждые %1 кадров").arg(n);
+    if (b == 1) return T("каждый %1 кадр").arg(n);
+    if (b >= 2 && b <= 4) return T("каждые %1 кадра").arg(n);
+    return T("каждые %1 кадров").arg(n);
 }
 
 static bool titleMatches(const QStringList& titles, const QString& title) {
@@ -514,6 +526,37 @@ QFrame* MainWindow::buildSpeedCard() {
     jitterBox_->setAccessibleName(T("Разброс"));
     r2->addWidget(jitterBox_);
     lay->addLayout(r2);
+
+    // в такт с монитором: каждый клик — в свой кадр
+    auto* r3 = new QHBoxLayout();
+    r3->setSpacing(8);
+    frameSyncSwitch_ = new ToggleSwitch();
+    frameSyncSwitch_->setToolTip(T("Клики ровно раз в 1, 2, 3… кадра монитора — каждый попадает в свой кадр"));
+    frameSyncSwitch_->setAccessibleName(T("В такт с монитором"));
+    r3->addWidget(frameSyncSwitch_);
+    r3->addWidget(mkLabel(T("В такт с монитором"), "muted"));
+    r3->addWidget(new InfoBadge(T("Почему КПС зависит от герцовки"),
+        T("Монитор обновляет картинку N раз в секунду: 60 Гц — кадр каждые 16,7 мс, 144 Гц — каждые 6,9 мс. "
+          "Многие игры тоже читают нажатия раз за кадр.\n\n"
+          "Если кликать чаще, чем идут кадры, несколько кликов попадают в один кадр — игра засчитает один, "
+          "остальные пропадут. А клики «не в такт» ложатся неровно: в один кадр два, в соседний ни одного.\n\n"
+          "В такте AutoQ жмёт ровно раз в 1, 2, 3… кадра: каждый клик попадает в свой кадр, ничего не теряется, "
+          "ритм ровный. Поэтому скорость округляется до целого числа кадров, а самое быстрое — один клик за кадр "
+          "(при 144 Гц — 144 в секунду).\n\n"
+          "Если в игре ограничен FPS (например, 60), выбери 60 Гц вместо «Авто»: тогда такт — по кадрам игры.")),
+        0, Qt::AlignVCenter);
+    r3->addStretch(1);
+    lay->addLayout(r3);
+    auto* r4 = new QHBoxLayout();
+    r4->setSpacing(8);
+    hzCaption_ = mkLabel(T("Частота кадров"), "muted");
+    r4->addWidget(hzCaption_, 1);
+    hzBox_ = new QComboBox();
+    hzBox_->setFixedWidth(130);
+    hzBox_->setToolTip(T("«Авто» — частота монитора, на котором игра. Своё значение — если в игре ограничен FPS."));
+    hzBox_->setAccessibleName(T("Частота кадров"));
+    r4->addWidget(hzBox_);
+    lay->addLayout(r4);
     lay->addStretch(1);
     perMinuteLabel_ = mkLabel(QString(), "faint");
     perMinuteLabel_->setWordWrap(true);
@@ -780,6 +823,19 @@ void MainWindow::connectSignals() {
         if (loading_) return;
         cur_.lockWindow = on; commit(); refreshLive();
     });
+    connect(frameSyncSwitch_, &ToggleSwitch::toggled, this, [this](bool on) {
+        if (loading_) return;
+        cur_.frameSync = on;
+        fillHzBox();
+        commit();
+    });
+    connect(hzBox_, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
+        if (loading_) return;
+        cur_.frameHz = hzBox_->itemData(i).toInt();
+        commit();
+    });
+    // «Авто» показывает частоту монитора — открыли список: обновить (могли сменить монитор)
+    hzBox_->installEventFilter(this);
     connect(procEdit_, &ChipEditor::itemsChanged, this, [this](const QStringList& l) { setRules(l, game_.titles); });
     connect(procEdit_, &ChipEditor::pickRequested, this, [this](QWidget* a) {
         WindowPickerPopup::open(a, WindowPickerPopup::Process, game_.processes, [this](const QString& v) {
@@ -1229,6 +1285,7 @@ void MainWindow::setArmed(const QString& id, bool on, bool announce) {
 }
 
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {
+    if (o == hzBox_ && e->type() == QEvent::MouseButtonPress) fillHzBox();
     if (mainScroll_ && o == mainScroll_->viewport() && e->type() == QEvent::Resize) updateResponsive();
     if (o == gameList_->viewport()) {
         if (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonDblClick) {
@@ -1362,9 +1419,10 @@ void MainWindow::applyModeLayout() {
     // в режиме «Зажать» интервал не нужен
     for (QWidget* w : {static_cast<QWidget*>(slider_), static_cast<QWidget*>(speedBox_),
                        static_cast<QWidget*>(randomizeSwitch_), static_cast<QWidget*>(jitterBox_),
-                       static_cast<QWidget*>(unitSeg_)})
+                       static_cast<QWidget*>(unitSeg_), static_cast<QWidget*>(frameSyncSwitch_)})
         w->setEnabled(!hold);
     if (!hold) jitterBox_->setEnabled(cur_.randomize);
+    hzBox_->setEnabled(!hold && cur_.frameSync);
     {
         const bool wasLoading = loading_;
         loading_ = true;
@@ -1381,7 +1439,9 @@ void MainWindow::stateToUi() {
     jitterBox_->setValue(cur_.jitterMs);
     jitterBox_->setEnabled(cur_.randomize);
     lockSwitch_->setChecked(cur_.lockWindow);
+    frameSyncSwitch_->setChecked(cur_.frameSync);
     loading_ = wasLoading;
+    fillHzBox();
     syncSlider();
     syncSpeedBox();
     applyModeLayout();
@@ -1440,11 +1500,62 @@ ClickerConfig MainWindow::buildConfig(const GameDef& g, const GameState& st, con
     c.randomize = st.randomize;
     c.jitterMs = st.jitterMs;
     c.lockToWindow = st.lockWindow;
+    c.frameMs = (st.frameSync && g.mode != GameMode::Hold) ? FrameSync::frameMs(syncHz(st, w.handle)) : 0;
     c.rule = g.rule();
     c.boundHandle = w.handle;
     c.boundPid = w.pid;
     c.mouseOnlyOverGame = Prefs::mouseOnlyOverGame();
     return c;
+}
+
+double MainWindow::monitorHz(unsigned long long handle) {
+    // спрашиваем систему не чаще раза в 3 с (Linux — новое подключение к X11)
+    static unsigned long long cachedHandle = ~0ull;
+    static qint64 cachedAt = 0;
+    static double cachedHz = 0;
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (handle == cachedHandle && now - cachedAt < 3000 && cachedHz > 0) return cachedHz;
+    double hz = FrameSync::monitorHz(handle);          // Windows: монитор окна игры
+    if (hz <= 0) {
+        QScreen* scr = nullptr;
+        int x = 0, y = 0;
+        if (FrameSync::windowCenter(handle, &x, &y))    // Linux: экран, где окно игры
+            for (QScreen* sc : QGuiApplication::screens()) {
+                const QRect g = sc->geometry();
+                if (QRect(g.topLeft(), g.size() * sc->devicePixelRatio()).contains(x, y)) { scr = sc; break; }
+            }
+        if (!scr) scr = QGuiApplication::primaryScreen();
+        hz = scr ? scr->refreshRate() : 60;
+    }
+    if (hz < 20 || hz > 1000) hz = 60;
+    cachedHandle = handle;
+    cachedAt = now;
+    cachedHz = hz;
+    return hz;
+}
+
+double MainWindow::syncHz(const GameState& st, unsigned long long handle) {
+    return st.frameHz > 0 ? st.frameHz : monitorHz(handle);
+}
+
+unsigned long long MainWindow::boundHandle(const QString& gameId) const {
+    auto it = runners_.find(gameId);
+    return it == runners_.end() ? 0 : it->second->bound.handle;
+}
+
+void MainWindow::fillHzBox() {
+    const bool wasLoading = loading_;
+    loading_ = true;
+    hzBox_->clear();
+    const double hz = monitorHz(boundHandle(game_.id));
+    hzBox_->addItem(T("Авто · %1 Гц").arg(qRound(hz)), 0);
+    QList<int> list = FrameSync::hzChoices();
+    if (cur_.frameHz > 0 && !list.contains(cur_.frameHz)) list << cur_.frameHz;
+    std::sort(list.begin(), list.end());
+    for (int v : list) hzBox_->addItem(T("%1 Гц").arg(v), v);
+    hzBox_->setCurrentIndex(qMax(0, hzBox_->findData(cur_.frameHz)));
+    hzBox_->setEnabled(cur_.frameSync && game_.mode != GameMode::Hold);
+    loading_ = wasLoading;
 }
 
 void MainWindow::pushConfig() {
@@ -1474,17 +1585,13 @@ void MainWindow::commit() {
 double MainWindow::perSecond(const GameDef& g, const GameState& st) const {
     if (g.mode == GameMode::Hold) return 0;
     const int n = qMax(1, int(st.actions.size()));
-    int cycle = qMax(1, st.intervalMs);
-    if (g.mode == GameMode::Combo && n > 1) {
-        int hold = 0;
-        for (const ActionStep& a : st.actions) hold = qMax(hold, a.holdMs);
-        return 1000.0 / (cycle + hold);
+    const bool combo = g.mode == GameMode::Combo && n > 1;
+    double cycle = FrameSync::cycleMs(st.actions, qMax(st.intervalMs, g.minIntervalMs), g.mode == GameMode::Combo);
+    if (st.frameSync) {                 // в такт: целое число кадров на цикл
+        const double f = FrameSync::frameMs(syncHz(st, boundHandle(g.id)));
+        cycle = FrameSync::frames(cycle, f) * f;
     }
-    for (int i = 0; i < n; ++i) {
-        cycle += st.actions[i].holdMs;
-        if (i + 1 < n) cycle += st.actions[i].afterMs;
-    }
-    return 1000.0 / cycle * n;
+    return combo ? 1000.0 / cycle : 1000.0 / cycle * n;
 }
 
 void MainWindow::updateRate() {
@@ -1504,8 +1611,19 @@ void MainWindow::updateRate() {
         const double real = dt > 0.2 ? (b.n - a.n) / dt : 0;
         perMinuteLabel_->setText(T("Сейчас: %1 в секунду · %2 в минуту").arg(dec(real), num(qRound64(real * 60))));
     } else {
-        QString t = T("%1 в минуту · минимум %2 мс").arg(num(qRound64(ps * 60))).arg(game_.minIntervalMs);
-        if (cur_.randomize && cur_.jitterMs > 0) t = T("в среднем ") + t;
+        QString t;
+        if (cur_.frameSync) {
+            const double hz = syncHz(cur_, boundHandle(game_.id)), f = FrameSync::frameMs(hz);
+            const int fr = FrameSync::frames(FrameSync::cycleMs(cur_.actions, qMax(cur_.intervalMs, game_.minIntervalMs),
+                                                                game_.mode == GameMode::Combo), f);
+            QString every = everyFrames(fr);
+            if (cur_.randomize && cur_.jitterMs > 0) every = T("в среднем ") + every;
+            t = T("В такт %1 Гц: %2 (%3 мс) · %4 в минуту")
+                    .arg(qRound(hz)).arg(every, dec(fr * f), num(qRound64(ps * 60)));
+        } else {
+            t = T("%1 в минуту · минимум %2 мс").arg(num(qRound64(ps * 60))).arg(game_.minIntervalMs);
+            if (cur_.randomize && cur_.jitterMs > 0) t = T("в среднем ") + t;
+        }
         perMinuteLabel_->setText(t);
     }
 }
@@ -1526,9 +1644,12 @@ void MainWindow::applyPreset(int index) {
     if (!hasGame()) return;
     const QList<GamePreset> l = Games::presets(game_);
     if (index < 0 || index >= l.size()) return;
-    const bool lock = cur_.lockWindow;       // привязку к окну пресет не трогает
+    // привязку к окну и такт монитора пресет не трогает — это про ПК, а не про игру
+    const GameState keep = cur_;
     cur_ = l[index].state;
-    cur_.lockWindow = lock;
+    cur_.lockWindow = keep.lockWindow;
+    cur_.frameSync = keep.frameSync;
+    cur_.frameHz = keep.frameHz;
     if (l[index].mode >= 0 && gameModeFromInt(l[index].mode) != game_.mode) {
         game_.mode = gameModeFromInt(l[index].mode);
         Games::save(game_);
@@ -1544,6 +1665,8 @@ void MainWindow::updatePresetLabel() {
     for (const GamePreset& p : Games::presets(game_)) {
         GameState a = p.state, b = cur_;
         a.lockWindow = b.lockWindow;
+        a.frameSync = b.frameSync;
+        a.frameHz = b.frameHz;
         a.intervalMs = qMax(a.intervalMs, game_.minIntervalMs);
         const bool modeOk = p.mode < 0 || gameModeFromInt(p.mode) == game_.mode;
         if (a == b && modeOk) { name = p.name; break; }
@@ -1797,6 +1920,8 @@ void MainWindow::newProfile(int base) {
         const GamePreset& p = presets[b - 2];
         st = p.state;
         st.lockWindow = cur_.lockWindow;
+        st.frameSync = cur_.frameSync;
+        st.frameHz = cur_.frameHz;
         st.intervalMs = qMax(st.intervalMs, game_.minIntervalMs);
         if (p.mode >= 0) mode = gameModeFromInt(p.mode);
     }

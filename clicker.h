@@ -24,6 +24,9 @@ struct ClickerConfig {
     unsigned long long boundHandle = 0;
     long long boundPid = 0;
     bool mouseOnlyOverGame = true;    // мышью — только когда курсор над окном игры
+    // «В такт с монитором»: длительность кадра, мс (0 — выключено). Циклы начинаются
+    // ровно на кадрах, через целое число кадров; разброс — тоже целыми кадрами
+    double frameMs = 0;
 };
 
 // Можно ли нажимать в этом окне (общая проверка для кликера и интерфейса)
@@ -57,6 +60,7 @@ private:
     bool allowedFor(const ClickerConfig& cfg);   // можно ли жать прямо сейчас (окно, курсор)
     void releaseHeld();
     void sleepWhileRunning(int ms);
+    void sleepUntilRunning(std::chrono::steady_clock::time_point until);   // точно, до долей мс
     void countAction(int i);
     std::vector<ActionStep> held_;        // что сейчас зажато (режим "Зажать")
     std::atomic<bool> running_{false};
@@ -68,6 +72,7 @@ private:
     ClickerConfig config_;
     std::mutex configMutex_;
     void* display_ = nullptr;             // Display* на Linux, CGEventSourceRef на macOS
+    void* timer_ = nullptr;               // Windows: таймер высокой точности потока кликера
     std::unique_ptr<ActiveWindowProbe> probe_;
     std::chrono::steady_clock::time_point pointerAwaySince_{};   // только поток кликера
 };

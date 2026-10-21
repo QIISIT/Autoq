@@ -8,6 +8,8 @@
 #include <QFile>
 #include "i18n.h"
 #include "sounds.h"
+#include "framesync.h"
+#include <thread>
 #include <cstdio>
 #include "keys.h"
 #include "winmatch.h"
@@ -852,6 +854,83 @@ static void testV113() {
     CHECK(Sounds::sound(Sounds::On) == "ticks-up");     // неизвестный — по умолчанию
     { auto s = AppSettings::open(); s->clear(); s->sync(); }
     for (const QString& sc : {"v113_" + pid, "snd_" + pid}) { QSettings s("AutoQTest", sc); s.clear(); s.sync(); }
+
+    // И1 «в такт с монитором»: кадры, длина цикла, сетка без накопления ошибки
+    CHECK(qAbs(FrameSync::frameMs(144) - 6.9444) < 0.001 && FrameSync::frameMs(0) == 0);
+    CHECK(FrameSync::frames(100, 1000.0 / 60) == 6 && FrameSync::frames(3, 6.94) == 1 && FrameSync::frames(25, 10) == 3);
+    CHECK(FrameSync::frames(0, 10) == 1 && FrameSync::frames(50, 0) == 1);
+    {
+        ActionStep a1; a1.holdMs = 5; a1.afterMs = 20;
+        ActionStep a2; a2.holdMs = 7; a2.afterMs = 30;      // пауза после последнего не считается
+        CHECK(FrameSync::cycleMs({a1, a2}, 100, false) == 132);
+        CHECK(FrameSync::cycleMs({a1, a2}, 100, true) == 107);    // вместе: самое долгое «держать»
+        CHECK(FrameSync::cycleMs({a1}, 0, false) == 6);           // интервал не меньше 1 мс
+    }
+    {
+        using namespace std::chrono;
+        FrameSync::Grid g;
+        const auto t0 = steady_clock::now();
+        CHECK(g.next(10, t0, false) == t0);                       // первый цикл — сразу
+        g.advance(3);
+        CHECK(g.next(10, t0 + milliseconds(5), false) == t0 + milliseconds(30));
+        g.advance(3);
+        CHECK(g.next(10, t0 + milliseconds(45), false) == t0 + milliseconds(60));
+        g.advance(1);                                             // цикл затянулся до 75 мс — ближайший кадр
+        CHECK(g.next(10, t0 + milliseconds(75), false) == t0 + milliseconds(80));
+        g.advance(1000);                                          // через 1000 кадров — без сдвига
+        CHECK(g.next(10, t0 + milliseconds(81), false) == t0 + milliseconds(10080));
+        g.advance(0);                                             // меньше кадра не бывает
+        CHECK(g.next(10, t0 + milliseconds(10081), false) == t0 + milliseconds(10090));
+        const auto t1 = t0 + seconds(20);
+        CHECK(g.next(1000.0 / 60, t1, false) == t1);              // другая частота — новая сетка
+    }
+    // настройка сохраняется в состоянии игры и в профиле; пресет её не трогает
+    AppSettings::setScope("AutoQTest", "fs_" + pid);
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+    {
+        Games::addBuiltin("genshin");
+        GameState st = Games::loadState(Games::get("genshin"));
+        CHECK(!st.frameSync && st.frameHz == 0);
+        st.frameSync = true; st.frameHz = 60;
+        Games::saveState("genshin", st);
+        const GameState back = Games::loadState(Games::get("genshin"));
+        CHECK(back.frameSync && back.frameHz == 60 && back == st);
+        Games::saveProfile("genshin", "Такт", st, 0);
+        const GameState prof = Games::loadProfile("genshin", "Такт");
+        CHECK(prof.frameSync && prof.frameHz == 60);
+        GameState other = st; other.frameHz = 144;
+        CHECK(!(other == st));
+        auto s = AppSettings::open();
+        s->setValue("games/genshin/state/frameHz", 5000);           // мусор в настройках — «Авто»
+        s->sync();
+        CHECK(Games::loadState(Games::get("genshin")).frameHz == 0);
+        s->clear(); s->sync();
+    }
+    { QSettings s("AutoQTest", "fs_" + pid); s.clear(); s.sync(); }
+
+    // кликер в такте: 10 мс кадр, цикл 25 мс -> 3 кадра = 30 мс
+    {
+        Clicker c;
+        ClickerConfig cfg;
+        cfg.lockToWindow = false;
+        cfg.intervalMs = 25;
+        cfg.frameMs = 10;
+        c.setConfig(cfg);
+        c.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(610));
+        c.stop();
+        const auto n = c.clickCount();           // 0, 30, 60 … 600 мс — 21
+        CHECK(n >= 18 && n <= 22);
+        if (n < 18 || n > 22) std::printf("  такт: %llu кликов за 610 мс (ждали ~21)\n", n);
+        cfg.intervalMs = 1;                      // быстрее кадра — один клик за кадр
+        c.setConfig(cfg);
+        c.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(305));
+        c.stop();
+        const auto m = c.clickCount();           // 0, 10 … 300 — 31
+        CHECK(m >= 28 && m <= 32);
+        if (m < 28 || m > 32) std::printf("  такт: %llu кликов за 305 мс (ждали ~31)\n", m);
+    }
 }
 
 int main(int argc, char** argv) {

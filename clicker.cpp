@@ -1,8 +1,10 @@
 #include "clicker.h"
 #include "keys.h"
+#include "framesync.h"
 #include <random>
 #include <chrono>
 #include <algorithm>
+#include <cmath>
 
 #ifdef _WIN32
     #ifndef NOMINMAX
@@ -181,6 +183,32 @@ void Clicker::sleepWhileRunning(int ms) {
     }
 }
 
+#ifdef _WIN32
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+#endif
+
+// Точное ожидание для «В такт с монитором». Windows: таймер высокой точности
+// (Windows 10 1803+, ~0,5 мс) — обычный sleep опаздывает на 1–2 мс, а при 240 Гц
+// кадр всего 4 мс. Таймер свой у потока кликера (timer_).
+void Clicker::sleepUntilRunning(std::chrono::steady_clock::time_point until) {
+    while (running_) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= until) break;
+        const auto d = std::min<std::chrono::steady_clock::duration>(until - now, std::chrono::milliseconds(20));
+#ifdef _WIN32
+        LARGE_INTEGER due;
+        due.QuadPart = -std::max<long long>(1, std::chrono::duration_cast<std::chrono::nanoseconds>(d).count() / 100);
+        if (timer_ && SetWaitableTimer(static_cast<HANDLE>(timer_), &due, 0, nullptr, nullptr, FALSE)) {
+            WaitForSingleObject(static_cast<HANDLE>(timer_), 100);
+            continue;
+        }
+#endif
+        std::this_thread::sleep_for(d);
+    }
+}
+
 void Clicker::countAction(int i) {
     counts_[static_cast<size_t>(std::min(i, kCounters - 1))] += 1;
 }
@@ -254,9 +282,32 @@ void Clicker::releaseHeld() {
 
 void Clicker::loop() {
     std::mt19937 rng(std::random_device{}());
+    FrameSync::Grid grid;
+#ifdef _WIN32
+    timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    if (!timer_) timer_ = CreateWaitableTimerW(nullptr, FALSE, nullptr);   // Windows постарше
+#endif
     while (running_) {
         ClickerConfig cfg;
         { std::lock_guard<std::mutex> lk(configMutex_); cfg = config_; }
+
+        // «В такт с монитором»: цикл начинается ровно на своём кадре
+        if (!cfg.hold && cfg.frameMs > 0) {
+            if (!held_.empty()) releaseHeld();
+            sleepUntilRunning(grid.next(cfg.frameMs, std::chrono::steady_clock::now()));
+            if (!running_) break;
+            const bool allowed = allowedFor(cfg);
+            allowedNow_ = allowed;
+            if (allowed) doCycle(cfg);
+            int n = FrameSync::frames(FrameSync::cycleMs(cfg.actions, cfg.intervalMs, cfg.simultaneous), cfg.frameMs);
+            if (cfg.randomize && cfg.jitterMs > 0) {
+                const int j = static_cast<int>(std::lround(cfg.jitterMs / cfg.frameMs));   // разброс — целыми кадрами
+                if (j > 0) n += std::uniform_int_distribution<int>(-j, j)(rng);
+            }
+            grid.advance(n);
+            continue;
+        }
+        grid.reset();
 
         const bool allowed = allowedFor(cfg);
         allowedNow_ = allowed;
@@ -303,6 +354,9 @@ void Clicker::loop() {
         }
     }
     releaseHeld();   // стоп — ничего не остаётся зажатым
+#ifdef _WIN32
+    if (timer_) { CloseHandle(static_cast<HANDLE>(timer_)); timer_ = nullptr; }
+#endif
 }
 
 void Clicker::start() {

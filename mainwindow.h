@@ -165,6 +165,11 @@ private:
     QString focusRunnerId() const;             // чьи цифры показывать в оверлее
     OverlayData overlayData();
     static ClickerConfig buildConfig(const GameDef& g, const GameState& st, const WindowInfo& w);
+    // «В такт с монитором»: частота монитора, где окно игры (0 — окно не выбрано: основной экран)
+    static double monitorHz(unsigned long long windowHandle);
+    static double syncHz(const GameState& st, unsigned long long windowHandle);   // своя или монитора
+    unsigned long long boundHandle(const QString& gameId) const;
+    void fillHzBox();
     void toggleFrom(bool fromHotkey);
     void startClicker();
     void stopGame(const QString& id);
@@ -275,6 +280,9 @@ private:
     Segmented* unitSeg_;
     ToggleSwitch* randomizeSwitch_;
     QSpinBox* jitterBox_;
+    ToggleSwitch* frameSyncSwitch_;
+    QComboBox* hzBox_;
+    QLabel* hzCaption_;
     QLabel* perMinuteLabel_;
 
     // --- 03 окно игры ---

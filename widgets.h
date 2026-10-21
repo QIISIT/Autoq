@@ -132,6 +132,20 @@ protected:
     void paintEvent(QPaintEvent*) override;
 };
 
+// Маленький «?» рядом с настройкой: щелчок (или Enter) — окошко с объяснением
+// «почему так». Закрывается щелчком мимо или Esc.
+class InfoBadge : public QAbstractButton {
+public:
+    InfoBadge(const QString& title, const QString& text, QWidget* parent = nullptr);
+    void setInfo(const QString& title, const QString& text) { title_ = title; text_ = text; }
+    QSize sizeHint() const override { return QSize(18, 18); }
+    void showInfo();
+protected:
+    void paintEvent(QPaintEvent*) override;
+private:
+    QString title_, text_;
+};
+
 // Точка статуса: кольцо (стоит) или красная мигающая (работает)
 class StatusDot : public QWidget {
 public:
