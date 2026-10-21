@@ -207,6 +207,40 @@ QWidget* SettingsDialog::buildGeneralPage() {
         autoSw->setChecked(Autostart::isEnabled());
         emit generalChanged();
     });
+#ifdef _WIN32
+    // права администратора: без них игры, запущенные «от администратора», не примут клики
+    {
+        row(T("Просить права администратора при запуске"),
+            T("Игры, запущенные от имени администратора, принимают клики только от программы с такими же правами.\n"
+              "Выключи — и окна UAC при запуске не будет; права можно получить кнопкой ниже."),
+            Prefs::elevateAtStart(), [](bool v) { Prefs::setElevateAtStart(v); });
+        const bool admin = Autostart::elevated();
+        auto* h = new QHBoxLayout();
+        h->setContentsMargins(50, 0, 0, 0);
+        h->setSpacing(8);
+        auto* ic = new QLabel();
+        ic->setPixmap(AqIcons::ui("shield", admin ? Theme::t().ok : Theme::t().warn, 16).pixmap(16, 16));
+        h->addWidget(ic, 0, Qt::AlignTop);
+        auto* st = lbl(admin ? T("Сейчас AutoQ работает с правами администратора — клики доходят до любых игр.")
+                             : T("Сейчас AutoQ работает без прав администратора: игры, запущенные от имени администратора, не примут клики."),
+                       "small");
+        st->setWordWrap(true);
+        h->addWidget(st, 1);
+        lay->addLayout(h);
+        if (!admin) {
+            auto* btn = new QPushButton(AqIcons::ui("shield", Theme::t().onRed, 16), T("Перезапустить от имени администратора"));
+            btn->setObjectName("accent");
+            btn->setCursor(Qt::PointingHandCursor);
+            btn->setToolTip(T("Windows спросит разрешение (окно UAC). Игры, кликер и настройки останутся как были."));
+            auto* bh = new QHBoxLayout();
+            bh->setContentsMargins(50, 0, 0, 0);
+            bh->addWidget(btn);
+            bh->addStretch(1);
+            lay->addLayout(bh);
+            connect(btn, &QPushButton::clicked, this, &SettingsDialog::adminRestartRequested);
+        }
+    }
+#endif
     row(T("Открывать мини-окно вместо большого"), T("При обычном запуске сразу показывать компактное окно поверх игры"),
         Prefs::startMini(), [](bool v) { Prefs::setStartMini(v); });
     row(T("Мини-окно поверх всех окон"), T("Выключи — и мини-окно будет обычным окном: игры и программы смогут его перекрывать"),

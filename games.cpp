@@ -46,6 +46,8 @@ bool Prefs::mouseOnlyOverGame() { return prefBool("mouseOnlyOverGame", true); }
 void Prefs::setMouseOnlyOverGame(bool on) { setPrefBool("mouseOnlyOverGame", on); }
 bool Prefs::miniOnTop() { return prefBool("miniOnTop", true); }
 void Prefs::setMiniOnTop(bool on) { setPrefBool("miniOnTop", on); }
+bool Prefs::elevateAtStart() { return prefBool("elevateAtStart", true); }
+void Prefs::setElevateAtStart(bool on) { setPrefBool("elevateAtStart", on); }
 bool Prefs::onboardingDone() { return prefBool("onboardingDone", false); }
 void Prefs::setOnboardingDone(bool done) { setPrefBool("onboardingDone", done); }
 

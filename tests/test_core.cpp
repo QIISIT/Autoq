@@ -661,7 +661,9 @@ static void testI18n() {
     // у каждой строки T("…") в исходниках есть перевод
     QDir dir(QStringLiteral(AQ_SOURCE_DIR));
     if (!dir.exists("i18n_en.cpp")) { std::printf("  (исходники не найдены — проверка переводов пропущена)\n"); return; }
-    const QRegularExpression re(QStringLiteral("\\bT\\(\"((?:[^\"\\\\]|\\\\.)*)\"\\)"));
+    // T("…" "…") — соседние строки склеиваются, как у компилятора
+    const QRegularExpression re(QStringLiteral("\\bT\\(\\s*((?:\"(?:[^\"\\\\]|\\\\.)*\"\\s*)+)\\)"));
+    const QRegularExpression part(QStringLiteral("\"((?:[^\"\\\\]|\\\\.)*)\""));
     int found = 0;
     QStringList missing;
     for (const QString& f : dir.entryList({"*.cpp", "*.h"}, QDir::Files)) {
@@ -670,7 +672,9 @@ static void testI18n() {
         if (!file.open(QIODevice::ReadOnly)) continue;
         const QString src = QString::fromUtf8(file.readAll());
         for (auto it = re.globalMatch(src); it.hasNext();) {
-            const QString ru = unescapeC(it.next().captured(1));
+            QString ru;
+            const QString lits = it.next().captured(1);
+            for (auto p = part.globalMatch(lits); p.hasNext();) ru += unescapeC(p.next().captured(1));
             ++found;
             if (!I18n::hasTranslation(ru)) missing << f + ": " + ru;
         }

@@ -37,8 +37,10 @@
 int main(int argc, char** argv) {
     // Windows: нужны права администратора (игры «от администратора» не принимают
     // клики от обычных программ). Манифест их не требует — так AutoQ можно
-    // поставить в обычную автозагрузку; просим права здесь.
-    if (Autostart::relaunchElevatedIfNeeded(argc, argv) == 0) return 0;
+    // поставить в обычную автозагрузку; просим права здесь. В настройках это
+    // можно выключить — тогда окна UAC нет, а права — кнопкой «Перезапустить
+    // от имени администратора».
+    if (Prefs::elevateAtStart() && Autostart::relaunchElevatedIfNeeded(argc, argv) == 0) return 0;
     // Язык интерфейса — до создания любых окон (Настройки → Основные → Язык)
     {
         QSettings pre(AQ_NAME, "config");
@@ -88,9 +90,11 @@ int main(int argc, char** argv) {
 
     QApplication::setQuitOnLastWindowClosed(false);
 
-    bool startHidden = false;
-    for (int i = 1; i < argc; ++i)
+    bool startHidden = false, restarted = false;
+    for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--tray") startHidden = true;
+        if (std::string(argv[i]) == "--restarted") restarted = true;   // перезапуск из настроек
+    }
 
     // Только один экземпляр: второй запуск (автозапуск + ручной, или двойной
     // клик) иначе дрался бы за глобальный хоткей и дублировал иконку в трее.
@@ -99,6 +103,11 @@ int main(int argc, char** argv) {
     // выключения ПК не "залипает" (в отличие от файла блокировки с PID).
     HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, L"Local\\AutoQ_SingleInstance");
     bool alreadyRunning = (GetLastError() == ERROR_ALREADY_EXISTS);
+    // перезапуск (с правами администратора): прежняя копия ещё закрывается — ждём её
+    if (alreadyRunning && restarted && instanceMutex) {
+        const DWORD w = WaitForSingleObject(instanceMutex, 10000);
+        alreadyRunning = !(w == WAIT_OBJECT_0 || w == WAIT_ABANDONED);
+    }
 #else
     // файл блокировки — свой у каждого пользователя (/tmp общий на всех)
     QString user = QString::fromLocal8Bit(qgetenv("USER"));
@@ -106,7 +115,7 @@ int main(int argc, char** argv) {
     QLockFile lock(QDir::temp().absoluteFilePath(user.isEmpty() ? QString("AutoQ.lock")
                                                                 : QString("AutoQ-%1.lock").arg(user)));
     lock.setStaleLockTime(0); // упавший экземпляр распознаётся по PID
-    bool alreadyRunning = !lock.tryLock(300);
+    bool alreadyRunning = !lock.tryLock(restarted ? 10000 : 300);
 #endif
     if (alreadyRunning) {
         if (!startHidden)
@@ -167,7 +176,7 @@ int main(int argc, char** argv) {
 #else
         lock.unlock();
 #endif
-        QProcess::startDetached(QCoreApplication::applicationFilePath(), {});
+        QProcess::startDetached(QCoreApplication::applicationFilePath(), {"--restarted"});
     }
 #ifdef _WIN32
     if (instanceMutex) { ReleaseMutex(instanceMutex); CloseHandle(instanceMutex); }

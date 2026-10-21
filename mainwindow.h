@@ -60,6 +60,7 @@ public:
     bool restartRequested() const { return restart_; }
 public slots:
     void restartApp();          // смена языка/размера: выйти и запуститься заново
+    void restartAsAdmin();      // Windows: копия с правами администратора (UAC), эта выходит
     void toggleRunning();          // кнопка Старт, трей, мини-окно — для открытой игры
     void startPressed();           // кнопка Старт: не используется — включить, иначе старт/стоп
     void onHotkeyEvent(const QString& spec, bool down);   // глобальная клавиша (из потока хоткеев)

@@ -294,6 +294,18 @@ int Autostart::relaunchElevatedIfNeeded(int argc, char** argv) {
     if (ShellExecuteExW(&sei)) return 0;               // запустилась копия с правами — эта выходит
     return -1;                                          // отказались в UAC — работаем как есть
 }
+
+bool Autostart::restartElevated() {
+    if (processElevated()) return false;
+    const std::wstring exe = exePathW();
+    SHELLEXECUTEINFOW sei = {};
+    sei.cbSize = sizeof(sei);
+    sei.lpVerb = L"runas";
+    sei.lpFile = exe.c_str();
+    sei.lpParameters = L"--elevated --restarted";
+    sei.nShow = SW_SHOWNORMAL;
+    return ShellExecuteExW(&sei) != FALSE;
+}
 #elif defined(__APPLE__)
 // ---------------------------------------------------------------------------
 // macOS: агент входа ~/Library/LaunchAgents/com.qisit.autoq.plist.
@@ -326,6 +338,7 @@ static std::string plistEscape(const std::string& in) {
 void Autostart::migrate() { if (isEnabled()) setEnabled(true); }   // обновить путь к программе
 void Autostart::ensureDesktopEntry() {}
 bool Autostart::elevated() { return true; }
+bool Autostart::restartElevated() { return false; }
 int Autostart::relaunchElevatedIfNeeded(int, char**) { return -1; }
 
 bool Autostart::setEnabled(bool enable) {
@@ -372,6 +385,7 @@ static std::string desktopFilePath(const char* name = "AutoQ") {
 
 void Autostart::migrate() { if (isEnabled()) setEnabled(true); }   // обновить путь к программе
 bool Autostart::elevated() { return true; }
+bool Autostart::restartElevated() { return false; }
 int Autostart::relaunchElevatedIfNeeded(int, char**) { return -1; }
 
 bool Autostart::setEnabled(bool enable) {

@@ -2634,6 +2634,12 @@ void MainWindow::buildTray() {
     connect(overlaySettings, &QAction::triggered, this, &MainWindow::openOverlaySettings);
     QAction* settingsAction = trayMenu_->addAction(T("Настройки…"));
     connect(settingsAction, &QAction::triggered, this, &MainWindow::openSettings);
+#ifdef _WIN32
+    if (!Autostart::elevated()) {
+        QAction* admin = trayMenu_->addAction(T("Перезапустить от имени администратора"));
+        connect(admin, &QAction::triggered, this, &MainWindow::restartAsAdmin);
+    }
+#endif
     trayMenu_->addSeparator();
     QAction* quitAction = trayMenu_->addAction(T("Выход"));
     connect(quitAction, &QAction::triggered, this, &MainWindow::quitApp);
@@ -2843,6 +2849,10 @@ void MainWindow::openSettingsPage(int page) {
         dlg.accept();
         QTimer::singleShot(0, this, &MainWindow::restartApp);
     });
+    connect(&dlg, &SettingsDialog::adminRestartRequested, this, [this, &dlg]() {
+        dlg.accept();
+        QTimer::singleShot(0, this, &MainWindow::restartAsAdmin);
+    });
     connect(&dlg, &SettingsDialog::generalChanged, this, [this]() {
         for (auto& r : runners_)
             if (!r.first.isEmpty() && r.second->clicker.isRunning())
@@ -2871,6 +2881,13 @@ void MainWindow::onTrayActivated(QSystemTrayIcon::ActivationReason reason) {
 void MainWindow::restartApp() {
     restart_ = true;
     quitApp();
+}
+
+void MainWindow::restartAsAdmin() {
+    if (Autostart::elevated()) return;
+    // окно UAC: «Да» — запустится копия с правами (дождётся, пока эта закроется)
+    if (Autostart::restartElevated()) quitApp();
+    else notify(T("Права администратора не получены — в окне UAC выбрали «Нет»."));
 }
 
 void MainWindow::quitApp() {

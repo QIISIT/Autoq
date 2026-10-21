@@ -33,6 +33,7 @@ signals:
     void overlayChanged();
     void generalChanged();
     void restartRequested();
+    void adminRestartRequested();   // Windows: «Перезапустить от имени администратора»
     void onboardingRequested();     // «Пройти первый запуск заново»
     void cardOrderChanged();
 

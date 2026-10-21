@@ -37,6 +37,8 @@ namespace Prefs {
     void setMouseOnlyOverGame(bool on);
     bool miniOnTop();                     // мини-окно поверх всех окон
     void setMiniOnTop(bool on);
+    bool elevateAtStart();                // Windows: просить права администратора при запуске (окно UAC)
+    void setElevateAtStart(bool on);
 
     // Первый запуск: выбор оформления и анимаций (один раз; «Пройти заново» — в настройках)
     bool onboardingDone();
