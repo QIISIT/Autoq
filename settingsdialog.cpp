@@ -228,7 +228,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         h->addWidget(st, 1);
         lay->addLayout(h);
         if (!admin) {
-            auto* btn = new QPushButton(AqIcons::ui("shield", Theme::t().onRed, 16), T("Перезапустить от имени администратора"));
+            auto* btn = new QPushButton(AqIcons::ui("shield", Theme::t().redHi, 16), T("Перезапустить от имени администратора"));
             btn->setObjectName("accent");
             btn->setCursor(Qt::PointingHandCursor);
             btn->setToolTip(T("Windows спросит разрешение (окно UAC). Игры, кликер и настройки останутся как были."));
