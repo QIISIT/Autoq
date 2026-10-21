@@ -54,7 +54,8 @@ struct OverlayView {
     int status = 0;               // 0 — остановлен, 1 — работает, 2 — пауза (не окно игры), 3 — ждёт окно,
                                   // 4 — пауза (курсор не над игрой)
     bool hold = false;            // режим «Зажать»
-    QString game;                 // «Genshin Impact · Профиль»
+    QString game;                 // «Genshin Impact»
+    QString profile;              // имя профиля (пусто — без профиля)
     bool named = false;           // несколько игр сразу — название первым, даже если «Игра» выключена
     QVector<double> graph;        // последние 10 секунд
 };
@@ -68,7 +69,7 @@ struct OverlayEntry {
     QString a1, a2, game, profile;
 };
 
-// Данные для оверлея: по плашке на каждую работающую игру, если у её профиля
+// Данные для оверлея: по строке на каждую работающую игру, если у её профиля
 // включено «Показывать в оверлее». Первая — игра, открытая в AutoQ.
 struct OverlayData {
     bool hasGame = false;
@@ -80,9 +81,9 @@ namespace OverlayPaint {
     QSize size(const OverlaySettings& s, const OverlayView& v);
     void paint(QPainter& p, const QPointF& topLeft, const OverlaySettings& s, const OverlayView& v,
                bool moveHint = false);
-    // несколько плашек друг под другом; align: 0 — по левому краю, 1 — по центру, 2 — по правому
+    // несколько игр в одной плашке: по строке на каждую, колонки выровнены
     QSize size(const OverlaySettings& s, const QList<OverlayView>& views);
-    void paint(QPainter& p, const OverlaySettings& s, const QList<OverlayView>& views, int align,
+    void paint(QPainter& p, const QPointF& topLeft, const OverlaySettings& s, const QList<OverlayView>& views,
                bool moveHint = false);
     OverlayView sample();         // пример для образца в настройках
 }
@@ -115,7 +116,7 @@ private:
     QRect screenRect() const;
     std::function<OverlayData()> source_;
     OverlaySettings s_;
-    QList<OverlayView> views_;    // что рисуем сейчас — по плашке на игру
+    QList<OverlayView> views_;    // что рисуем сейчас — по строке на игру
     struct Sample { qint64 t; unsigned long long c1, c2; };
     struct Track {                // своя история у каждой игры
         std::deque<Sample> hist;

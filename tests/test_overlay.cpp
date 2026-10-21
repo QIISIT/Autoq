@@ -96,25 +96,36 @@ int main(int argc, char** argv) {
     OverlayView one = v; one.a2.clear();
     CHECK(OverlayPaint::size(OverlaySettings::defaults(), one).width() < s100.width());
 
-    // И2: по плашке на игру — друг под другом, у каждой название первым
+    // И2: несколько игр — одна плашка, по строке на игру, у каждой строки название первым
     {
         const OverlaySettings d = OverlaySettings::defaults();
         CHECK(OverlayPaint::size(d, QList<OverlayView>{v}) == OverlayPaint::size(d, v));
         OverlayView named = v; named.named = true;
         CHECK(OverlayPaint::size(d, named).width() > OverlayPaint::size(d, v).width());
-        OverlayView second = one; second.named = true; second.game = "Minecraft (Java) · Быстро";
+        OverlayView second = one; second.named = true; second.game = "Minecraft (Java)"; second.profile = "Быстро";
+        const QSize a = OverlayPaint::size(d, named), b = OverlayPaint::size(d, second);
         const QSize two = OverlayPaint::size(d, QList<OverlayView>{named, second});
-        CHECK(two.height() > OverlayPaint::size(d, named).height() + OverlayPaint::size(d, second).height());
-        CHECK(two.width() == qMax(OverlayPaint::size(d, named).width(), OverlayPaint::size(d, second).width()));
+        // общие поля: ниже, чем две плашки отдельно, но выше любой одной
+        CHECK(two.height() < a.height() + b.height() && two.height() > qMax(a.height(), b.height()));
+        // колонки общие: ширина — по самой широкой строке
+        CHECK(two.width() >= qMax(a.width(), b.width()) && two.width() <= a.width() + b.width());
         QImage img(two, QImage::Format_ARGB32_Premultiplied);
         img.fill(Qt::transparent);
         {
             QPainter p(&img);
-            OverlayPaint::paint(p, d, QList<OverlayView>{named, second}, 2);
+            OverlayPaint::paint(p, QPointF(0, 0), d, QList<OverlayView>{named, second});
         }
-        // нижняя плашка уже верхней и прижата вправо: левый нижний угол пустой
-        CHECK(qAlpha(img.pixel(1, two.height() - 4)) == 0 && qAlpha(img.pixel(two.width() - 8, two.height() - 8)) > 0);
-        CHECK(qAlpha(img.pixel(8, 8)) > 0);
+        // одна сплошная плашка: фон без щелей сверху донизу и по всей ширине
+        bool solid = true;
+        for (int y = 16; y < two.height() - 16; ++y)
+            if (qAlpha(img.pixel(4, y)) == 0 || qAlpha(img.pixel(two.width() - 5, y)) == 0) solid = false;
+        CHECK(solid);
+        CHECK(qAlpha(img.pixel(two.width() - 8, two.height() - 8)) > 0 && qAlpha(img.pixel(8, two.height() - 8)) > 0);
+        // столбиком — тоже одна плашка: строки друг под другом
+        OverlaySettings vd = d; vd.vertical = true;
+        const QSize vtwo = OverlayPaint::size(vd, QList<OverlayView>{named, second});
+        CHECK(vtwo.height() > OverlayPaint::size(vd, named).height());
+        CHECK(vtwo.height() < OverlayPaint::size(vd, named).height() + OverlayPaint::size(vd, second).height());
     }
 
     AppSettings::dropScope("AutoQTest", QString("ov_%1").arg(QCoreApplication::applicationPid()));

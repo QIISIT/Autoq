@@ -162,8 +162,12 @@ qreal lineAscent(const Line& l) {
     return a;
 }
 
+// Что показывает блок — по этому блоки разных игр встают в одну колонку
+enum Kind { kName, kCps, kActions, kTotal, kStatus, kGame, kGraph, kKinds };
+
 // Блок оверлея: несколько строк текста или график
 struct Block {
+    int kind = kCps;
     QVector<Line> lines;
     bool graph = false;
     bool dot = false;             // точка статуса перед первой строкой
@@ -178,17 +182,25 @@ QVector<Block> buildBlocks(const OverlaySettings& s, const OverlayView& v, const
     const QColor num = numberColorOf(s);
     QVector<Block> out;
     const bool anything = s.showCps || s.showActions || s.showTotal || s.showStatus || s.showGame || s.showGraph;
-    // несколько игр сразу: у каждой плашки сначала название — иначе не понять, где какая
+    // несколько игр сразу: у каждой строки сначала название — иначе не понять, где какая
+    // название игры, под ним — профиль
     if (v.named && !v.game.isEmpty()) {
         Block b;
+        b.kind = kName;
         Line l;
-        l << Run{QFontMetricsF(f.ui).elidedText(v.game, Qt::ElideRight, 200 * f.k), f.ui, text};
+        l << Run{QFontMetricsF(f.ui).elidedText(v.game, Qt::ElideRight, 180 * f.k), f.ui, text};
         b.lines << l;
+        if (!v.profile.isEmpty()) {
+            Line pl;
+            pl << Run{QFontMetricsF(f.label).elidedText(v.profile, Qt::ElideRight, 180 * f.k), f.label, dim};
+            b.lines << pl;
+        }
         out << b;
     }
 
     if (s.showCps || !anything) {
         Block b;
+        b.kind = kCps;
         Line l;
         if (v.hold) {
             l << Run{QStringLiteral("—"), f.number, num};
@@ -202,6 +214,7 @@ QVector<Block> buildBlocks(const OverlaySettings& s, const OverlayView& v, const
     }
     if (s.showActions && !v.a1.isEmpty()) {
         Block b;
+        b.kind = kActions;
         if (v.hold) {
             Line l;
             l << Run{v.a2.isEmpty() ? v.a1 : v.a1 + " + " + v.a2, f.mono, num};
@@ -227,6 +240,7 @@ QVector<Block> buildBlocks(const OverlaySettings& s, const OverlayView& v, const
     }
     if (s.showTotal) {
         Block b;
+        b.kind = kTotal;
         Line l;
         l << Run{T("всего "), f.ui, dim} << Run{fmtNum(v.total), f.mono, text};
         b.lines << l;
@@ -234,6 +248,7 @@ QVector<Block> buildBlocks(const OverlaySettings& s, const OverlayView& v, const
     }
     if (s.showStatus) {
         Block b;
+        b.kind = kStatus;
         b.dot = true;
         const QString names[] = {T("Остановлен"), T("Работает"), T("Пауза: не окно игры"), T("Выбери окно"),
                                       T("Пауза: курсор не над игрой")};
@@ -247,13 +262,16 @@ QVector<Block> buildBlocks(const OverlaySettings& s, const OverlayView& v, const
     }
     if (s.showGame && !v.named && !v.game.isEmpty()) {
         Block b;
+        b.kind = kGame;
         Line l;
-        l << Run{QFontMetricsF(f.ui).elidedText(v.game, Qt::ElideRight, 180 * f.k), f.ui, dim};
+        const QString g = v.profile.isEmpty() ? v.game : v.game + " · " + v.profile;
+        l << Run{QFontMetricsF(f.ui).elidedText(g, Qt::ElideRight, 180 * f.k), f.ui, dim};
         b.lines << l;
         out << b;
     }
     if (s.showGraph) {
         Block b;
+        b.kind = kGraph;
         b.graph = true;
         b.size = QSizeF(96 * f.k, 26 * f.k);
         out << b;
@@ -290,27 +308,124 @@ void drawRun(QPainter& p, const QPointF& baseline, const Run& r, bool outline, q
 struct Metrics { qreal padX, padY, gap; };
 Metrics metricsFor(const Fonts& f) { return {14 * f.k, 9 * f.k, 14 * f.k}; }
 
+// Плашка целиком: строка на каждую игру. В строку блоки идут колонками,
+// одинаковые блоки разных игр — друг под другом (колонки общие на все строки).
+// «Столбиком» — у каждой игры блоки друг под другом, игры разделены линией.
+struct Panel {
+    QVector<QVector<Block>> rows;
+    QVector<qreal> rowH;
+    qreal colW[kKinds] = {};
+    bool used[kKinds] = {};
+    qreal rowGap = 0;
+    QSizeF inner;                 // без полей
+};
+
+Panel layoutPanel(const OverlaySettings& s, const QList<OverlayView>& views, const Fonts& f, const Metrics& m) {
+    Panel pn;
+    pn.rowGap = m.gap * 0.9;
+    for (const OverlayView& v : views) pn.rows << buildBlocks(s, v, f);
+    qreal w = 0, h = 0;
+    if (!s.vertical) {
+        for (const QVector<Block>& r : pn.rows)
+            for (const Block& b : r) {
+                pn.used[b.kind] = true;
+                pn.colW[b.kind] = qMax(pn.colW[b.kind], b.size.width());
+            }
+        int n = 0;
+        for (int k = 0; k < kKinds; ++k)
+            if (pn.used[k]) w += pn.colW[k] + (n++ ? m.gap : 0);
+    }
+    for (int r = 0; r < pn.rows.size(); ++r) {
+        const QVector<Block>& bl = pn.rows[r];
+        qreal rh = 0;
+        for (int i = 0; i < bl.size(); ++i) {
+            if (s.vertical) {
+                w = qMax(w, bl[i].size.width());
+                rh += bl[i].size.height() + (i ? m.gap * 0.6 : 0);
+            } else {
+                rh = qMax(rh, bl[i].size.height());
+            }
+        }
+        pn.rowH << rh;
+        h += rh + (r ? pn.rowGap : 0);
+    }
+    pn.inner = QSizeF(w, h);
+    return pn;
+}
+
+QSize panelSize(const Panel& pn, const Metrics& m) {
+    return QSize(qCeil(pn.inner.width() + 2 * m.padX) + 4, qCeil(pn.inner.height() + 2 * m.padY) + 4);
+}
+
+void drawBlock(QPainter& p, const QPointF& at, const Block& b, const OverlayView& v, const OverlaySettings& s,
+               const Fonts& f, const QColor& num) {
+    if (b.graph) {
+        const QRectF g(at, b.size);
+        QColor base = s.textColor;
+        base.setAlphaF(0.18);
+        p.setPen(QPen(base, 1));
+        p.drawLine(QPointF(g.left(), g.bottom()), QPointF(g.right(), g.bottom()));
+        const QVector<double>& d = v.graph;
+        if (d.size() < 2) return;
+        double mx = 1;
+        for (double val : d) mx = qMax(mx, val);
+        QPainterPath line, fill;
+        for (int i = 0; i < d.size(); ++i) {
+            const QPointF pt(g.left() + g.width() * i / (d.size() - 1), g.bottom() - (g.height() - 2) * d[i] / mx);
+            if (i == 0) { line.moveTo(pt); fill.moveTo(g.left(), g.bottom()); fill.lineTo(pt); }
+            else { line.lineTo(pt); fill.lineTo(pt); }
+        }
+        fill.lineTo(g.right(), g.bottom());
+        fill.closeSubpath();
+        QColor fc = num;
+        fc.setAlphaF(0.22);
+        p.fillPath(fill, fc);
+        p.setPen(QPen(num, qMax(1.5, 2 * f.k), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(Qt::NoBrush);
+        p.drawPath(line);
+        return;
+    }
+    qreal ly = at.y();
+    for (int i = 0; i < b.lines.size(); ++i) {
+        const Line& l = b.lines[i];
+        qreal lx = at.x();
+        if (b.dot && i == 0) {
+            const qreal r = 4 * f.k;
+            p.setPen(Qt::NoPen);
+            p.setBrush(b.dotColor);
+            p.drawEllipse(QPointF(lx + r, ly + lineHeight(l) / 2), r, r);
+            lx += 12 * f.k;
+        }
+        const qreal base = ly + lineAscent(l);
+        for (const Run& r : l) {
+            drawRun(p, QPointF(lx, base), r, s.outline, f.k);
+            lx += QFontMetricsF(r.font).horizontalAdvance(r.text);
+        }
+        ly += lineHeight(l) + 2 * f.k;
+    }
+}
+
 } // namespace
 
-QSize OverlayPaint::size(const OverlaySettings& s, const OverlayView& v) {
-    const Fonts f = fontsFor(s);
-    const QVector<Block> blocks = buildBlocks(s, v, f);
-    const Metrics m = metricsFor(f);
-    qreal w = 0, h = 0;
-    for (int i = 0; i < blocks.size(); ++i) {
-        const QSizeF bs = blocks[i].size;
-        if (s.vertical) { w = qMax(w, bs.width()); h += bs.height() + (i ? m.gap * 0.6 : 0); }
-        else { w += bs.width() + (i ? m.gap : 0); h = qMax(h, bs.height()); }
-    }
-    return QSize(qCeil(w + 2 * m.padX) + 4, qCeil(h + 2 * m.padY) + 4);
-}
+QSize OverlayPaint::size(const OverlaySettings& s, const OverlayView& v) { return size(s, QList<OverlayView>{v}); }
 
 void OverlayPaint::paint(QPainter& p, const QPointF& tl, const OverlaySettings& s, const OverlayView& v,
                          bool moveHint) {
+    paint(p, tl, s, QList<OverlayView>{v}, moveHint);
+}
+
+QSize OverlayPaint::size(const OverlaySettings& s, const QList<OverlayView>& views) {
     const Fonts f = fontsFor(s);
-    const QVector<Block> blocks = buildBlocks(s, v, f);
     const Metrics m = metricsFor(f);
-    const QSize total = size(s, v);
+    return panelSize(layoutPanel(s, views, f, m), m);
+}
+
+void OverlayPaint::paint(QPainter& p, const QPointF& tl, const OverlaySettings& s, const QList<OverlayView>& views,
+                         bool moveHint) {
+    const Fonts f = fontsFor(s);
+    const Metrics m = metricsFor(f);
+    const Panel pn = layoutPanel(s, views, f, m);
+    const QSize total = panelSize(pn, m);
     p.save();
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::TextAntialiasing);
@@ -329,94 +444,45 @@ void OverlayPaint::paint(QPainter& p, const QPointF& tl, const OverlaySettings& 
         p.drawRoundedRect(box.adjusted(1, 1, -1, -1), s.radius * f.k, s.radius * f.k);
     }
     const QColor num = numberColorOf(s);
-    qreal x = box.left() + m.padX, y = box.top() + m.padY;
-    const qreal innerH = box.height() - 2 * m.padY;
-    for (const Block& b : blocks) {
-        const qreal by = s.vertical ? y : y + (innerH - b.size.height()) / 2;
-        if (b.graph) {
-            const QRectF g(x, by, b.size.width(), b.size.height());
-            QColor base = s.textColor;
-            base.setAlphaF(0.18);
-            p.setPen(QPen(base, 1));
-            p.drawLine(QPointF(g.left(), g.bottom()), QPointF(g.right(), g.bottom()));
-            const QVector<double>& d = v.graph;
-            if (d.size() >= 2) {
-                double mx = 1;
-                for (double val : d) mx = qMax(mx, val);
-                QPainterPath line, fill;
-                for (int i = 0; i < d.size(); ++i) {
-                    const QPointF pt(g.left() + g.width() * i / (d.size() - 1),
-                                     g.bottom() - (g.height() - 2) * d[i] / mx);
-                    if (i == 0) { line.moveTo(pt); fill.moveTo(g.left(), g.bottom()); fill.lineTo(pt); }
-                    else { line.lineTo(pt); fill.lineTo(pt); }
-                }
-                fill.lineTo(g.right(), g.bottom());
-                fill.closeSubpath();
-                QColor fc = num;
-                fc.setAlphaF(0.22);
-                p.fillPath(fill, fc);
-                p.setPen(QPen(num, qMax(1.5, 2 * f.k), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
-                p.setBrush(Qt::NoBrush);
-                p.drawPath(line);
+    QColor sep = s.textColor;
+    sep.setAlphaF(0.22);
+    const qreal left = box.left() + m.padX;
+    qreal y = box.top() + m.padY;
+    for (int r = 0; r < pn.rows.size(); ++r) {
+        const QVector<Block>& bl = pn.rows[r];
+        const qreal rh = pn.rowH[r];
+        const OverlayView& v = views[r];
+        if (r) {                       // линия между играми
+            const qreal ly = qRound(y - pn.rowGap / 2) + 0.5;
+            p.setPen(QPen(sep, 1));
+            p.drawLine(QPointF(left, ly), QPointF(left + pn.inner.width(), ly));
+        }
+        if (s.vertical) {
+            qreal by = y;
+            for (const Block& b : bl) {
+                drawBlock(p, QPointF(left, by), b, v, s, f, num);
+                by += b.size.height() + m.gap * 0.6;
             }
         } else {
-            qreal ly = by;
-            for (int i = 0; i < b.lines.size(); ++i) {
-                const Line& l = b.lines[i];
-                qreal lx = x;
-                if (b.dot && i == 0) {
-                    const qreal r = 4 * f.k;
-                    p.setPen(Qt::NoPen);
-                    p.setBrush(b.dotColor);
-                    p.drawEllipse(QPointF(lx + r, ly + lineHeight(l) / 2), r, r);
-                    lx += 12 * f.k;
+            qreal x = left;
+            bool drawn = false;
+            for (int k = 0; k < kKinds; ++k) {
+                if (!pn.used[k]) continue;
+                for (const Block& b : bl) {
+                    if (b.kind != k) continue;
+                    if (drawn) {       // тонкий разделитель перед блоком
+                        p.setPen(QPen(sep, 1));
+                        p.drawLine(QPointF(x - m.gap / 2, y + 2), QPointF(x - m.gap / 2, y + rh - 2));
+                    }
+                    drawBlock(p, QPointF(x, y + (rh - b.size.height()) / 2), b, v, s, f, num);
+                    drawn = true;
                 }
-                const qreal base = ly + lineAscent(l);
-                for (const Run& r : l) {
-                    drawRun(p, QPointF(lx, base), r, s.outline, f.k);
-                    lx += QFontMetricsF(r.font).horizontalAdvance(r.text);
-                }
-                ly += lineHeight(l) + 2 * f.k;
+                x += pn.colW[k] + m.gap;
             }
         }
-        if (s.vertical) y += b.size.height() + m.gap * 0.6;
-        else {
-            x += b.size.width() + m.gap;
-            // тонкий разделитель между блоками
-            if (&b != &blocks.last()) {
-                QColor sep = s.textColor;
-                sep.setAlphaF(0.22);
-                p.setPen(QPen(sep, 1));
-                p.drawLine(QPointF(x - m.gap / 2, box.top() + m.padY + 2), QPointF(x - m.gap / 2, box.bottom() - m.padY - 2));
-            }
-        }
+        y += rh + pn.rowGap;
     }
     p.restore();
-}
-
-QSize OverlayPaint::size(const OverlaySettings& s, const QList<OverlayView>& views) {
-    if (views.size() == 1) return size(s, views.first());
-    const qreal gap = 6 * s.scale / 100.0;
-    int w = 0, h = 0;
-    for (int i = 0; i < views.size(); ++i) {
-        const QSize one = size(s, views[i]);
-        w = qMax(w, one.width());
-        h += one.height() + (i ? qRound(gap) : 0);
-    }
-    return QSize(qMax(w, 1), qMax(h, 1));
-}
-
-void OverlayPaint::paint(QPainter& p, const OverlaySettings& s, const QList<OverlayView>& views, int align,
-                         bool moveHint) {
-    const int total = size(s, views).width();
-    const qreal gap = 6 * s.scale / 100.0;
-    qreal y = 0;
-    for (const OverlayView& v : views) {
-        const QSize one = size(s, v);
-        const qreal x = align == 0 ? 0 : align == 1 ? (total - one.width()) / 2.0 : total - one.width();
-        paint(p, QPointF(x, y), s, v, moveHint);
-        y += one.height() + qRound(gap);
-    }
 }
 
 OverlayView OverlayPaint::sample() {
@@ -545,7 +611,8 @@ void OverlayWindow::tick() {
         v.a2 = e.a2;
         v.total = static_cast<long long>(e.total);
         v.hold = e.hold && e.running;
-        v.game = e.profile.isEmpty() ? e.game : e.game + " · " + e.profile;
+        v.game = e.game;
+        v.profile = e.profile;
         v.named = d.entries.size() > 1;
         v.status = e.pending ? 3 : !e.running ? 0 : e.allowed ? 1 : e.pauseReason == 2 ? 4 : 2;
         views << v;
@@ -580,7 +647,7 @@ void OverlayWindow::paintEvent(QPaintEvent*) {
     p.setCompositionMode(QPainter::CompositionMode_Source);
     p.fillRect(rect(), Qt::transparent);
     p.setCompositionMode(QPainter::CompositionMode_SourceOver);
-    OverlayPaint::paint(p, s_, views_, s_.anchor % 3, move_);
+    OverlayPaint::paint(p, QPointF(0, 0), s_, views_, move_);
 }
 
 void OverlayWindow::mousePressEvent(QMouseEvent* e) {

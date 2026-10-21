@@ -1653,8 +1653,6 @@ extern const AqTranslation kAqEnglish[] = {
      "%1 is shown in the CPS overlay — click to hide"},
     {"%1 не показывается в оверлее КПС — нажми, чтобы показывать",
      "%1 is not shown in the CPS overlay — click to show"},
-    {"Работают несколько игр — у каждой своя плашка с названием и профилем. Скрыть игру или профиль из оверлея — кнопка со спидометром у профиля (карточка «Профиль и запуск»).",
-     "Several games running — each gets its own panel with its name and profile. To hide a game or profile from the overlay, use the gauge button next to the profile (the “Profile & start” card)."},
     {"Профиль не найден.",
      "Profile not found."},
     {"Не удалось записать файл: %1",
@@ -1719,5 +1717,7 @@ extern const AqTranslation kAqEnglish[] = {
      "Replace with current"},
     {"Не получилось: нет доступа к «%1». Выбери другую папку.",
      "Failed: no access to “%1”. Choose another folder."},
+    {"Работают несколько игр — все в одной плашке, по строке с названием и профилем. Скрыть игру или профиль из оверлея — кнопка со спидометром у профиля (карточка «Профиль и запуск»).",
+     "Several games running — all in one panel, a row each with the game and profile name. To hide a game or profile from the overlay, use the gauge button next to the profile (the “Profile & start” card)."},
 };
 extern const int kAqEnglishCount = sizeof(kAqEnglish) / sizeof(kAqEnglish[0]);
