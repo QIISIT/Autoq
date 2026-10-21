@@ -56,11 +56,15 @@ namespace Theme {
     QString normalizeAnim(const QString& id);
 
     // --- размер интерфейса (меняется после перезапуска) ---
-    QList<int> guiScaleChoices();               // 90, 100, 110, 125, 150
+    QList<int> guiScaleChoices();               // 90, 100, 110, 125, 150, 175, 200
     int guiScale();                             // %, 100 — как в системе
     void setGuiScale(int percent);
     int startupGuiScale();                      // с каким размером запущен AutoQ
     void applyGuiScaleEnv();                    // до QApplication: QT_SCALE_FACTOR
+    // после QApplication: экран мельче 1:1 (Qt так не рисует) — с каким множителем
+    // перезапуститься (0 — всё хорошо)
+    double scaleClampNeeded();
+    int minUsableGuiScale();                    // меньше этого на этих экранах нельзя (обычно 100 %)
 
     // --- порядок карточек на главном экране ---
     QStringList cardIds();                      // speed, window, profile

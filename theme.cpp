@@ -20,6 +20,14 @@
 #include <QBoxLayout>
 #include <QEvent>
 #include <QRegularExpression>
+#include <QScreen>
+#include <QGuiApplication>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include "games.h"
 #include "appinfo.h"
 
@@ -569,9 +577,15 @@ QString Theme::animNote(const QString& id) {
 // ---------------------------------------------------------------------------
 // Размер интерфейса
 // ---------------------------------------------------------------------------
+// Меньше 100 % — через QT_SCALE_FACTOR < 1. Но Qt не умеет рисовать мельче
+// пикселя экрана: если итоговый масштаб окна (система × наш) меньше 1, QPainter
+// считает его за 1, а обрезка — нет, и виджеты рисуются кусками (так было на 90 %
+// при 100 % в Windows). Поэтому масштаб окна держим не меньше 1: 90 % работает,
+// когда в системе 125 % и больше, а на экране 100 % остаётся 100 %.
 static int g_startupScale = 100;
+static double g_appliedFactor = 1.0;   // какой QT_SCALE_FACTOR поставили мы (1 — не ставили)
 
-QList<int> Theme::guiScaleChoices() { return {90, 100, 110, 125, 150}; }
+QList<int> Theme::guiScaleChoices() { return {90, 100, 110, 125, 150, 175, 200}; }
 
 int Theme::guiScale() {
     auto s = AppSettings::open();
@@ -588,6 +602,38 @@ void Theme::setGuiScale(int percent) {
 
 int Theme::startupGuiScale() { return g_startupScale; }
 
+#ifdef _WIN32
+// Наименьший масштаб среди мониторов (1.0 = 100 %, 1.25 = 125 %), 0 — не узнать.
+// До QApplication процесс ещё «не знает» о DPI, поэтому спрашиваем в режиме
+// Per-Monitor v2 только для этого потока и сразу возвращаем как было.
+static BOOL CALLBACK minDpiProc(HMONITOR mon, HDC, LPRECT, LPARAM data) {
+    using GetDpiFn = HRESULT(WINAPI*)(HMONITOR, int, UINT*, UINT*);
+    static GetDpiFn getDpi = [] {
+        HMODULE sh = LoadLibraryW(L"shcore.dll");
+        return sh ? reinterpret_cast<GetDpiFn>(reinterpret_cast<void*>(GetProcAddress(sh, "GetDpiForMonitor"))) : nullptr;
+    }();
+    UINT x = 0, y = 0;
+    if (getDpi && getDpi(mon, 0 /* MDT_EFFECTIVE_DPI */, &x, &y) == S_OK && x > 0) {
+        UINT* minDpi = reinterpret_cast<UINT*>(data);
+        if (*minDpi == 0 || x < *minDpi) *minDpi = x;
+    }
+    return TRUE;
+}
+
+static double windowsMinMonitorScale() {
+    using SetCtxFn = void*(WINAPI*)(void*);
+    HMODULE user = GetModuleHandleW(L"user32.dll");
+    auto setCtx = user ? reinterpret_cast<SetCtxFn>(reinterpret_cast<void*>(GetProcAddress(user, "SetThreadDpiAwarenessContext")))
+                       : nullptr;
+    if (!setCtx) return 0;
+    void* old = setCtx(reinterpret_cast<void*>(static_cast<intptr_t>(-4)));   // PER_MONITOR_AWARE_V2
+    UINT minDpi = 0;
+    EnumDisplayMonitors(nullptr, nullptr, minDpiProc, reinterpret_cast<LPARAM>(&minDpi));
+    if (old) setCtx(old);
+    return minDpi ? minDpi / 96.0 : 0;
+}
+#endif
+
 void Theme::applyGuiScaleEnv() {
     QSettings pre(AQ_NAME, "config");
     int v = pre.value("guiScale", 100).toInt();
@@ -598,10 +644,49 @@ void Theme::applyGuiScaleEnv() {
         qunsetenv("QT_SCALE_FACTOR");
         qunsetenv("AQ_OWN_SCALE");
     }
-    if (v != 100 && qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR")) {
-        qputenv("QT_SCALE_FACTOR", QByteArray::number(v / 100.0, 'f', 2));
-        qputenv("AQ_OWN_SCALE", "1");
+    double f = v / 100.0;
+    // AutoQ перезапустился сам: экран оказался 100 % — мельче нельзя
+    if (qEnvironmentVariableIsSet("AQ_SCALE_CLAMP")) {
+        f = qMax(f, qEnvironmentVariable("AQ_SCALE_CLAMP").toDouble());
+        qunsetenv("AQ_SCALE_CLAMP");
     }
+#ifdef _WIN32
+    if (f < 1.0) {
+        const double minScale = windowsMinMonitorScale();
+        if (minScale > 0) f = qMax(f, 1.0 / minScale);
+    }
+#endif
+    if (qAbs(f - 1.0) > 0.001 && qEnvironmentVariableIsEmpty("QT_SCALE_FACTOR")) {
+        qputenv("QT_SCALE_FACTOR", QByteArray::number(f, 'f', 4));
+        qputenv("AQ_OWN_SCALE", "1");
+        g_appliedFactor = f;
+    }
+}
+
+// масштаб экранов без нашего множителя: наименьший (1.0 — 100 %)
+static double baseScreenScale() {
+    double m = 0;
+    for (QScreen* sc : QGuiApplication::screens()) {
+        const double d = sc->devicePixelRatio() / g_appliedFactor;
+        if (m == 0 || d < m) m = d;
+    }
+    return m > 0 ? m : 1.0;
+}
+
+double Theme::scaleClampNeeded() {
+    if (g_appliedFactor >= 1.0) return 0;
+    double minDpr = 0;
+    for (QScreen* sc : QGuiApplication::screens())
+        if (minDpr == 0 || sc->devicePixelRatio() < minDpr) minDpr = sc->devicePixelRatio();
+    if (minDpr <= 0 || minDpr >= 0.999) return 0;
+    return qMin(1.0, g_appliedFactor / minDpr);
+}
+
+int Theme::minUsableGuiScale() {
+    const double base = baseScreenScale();
+    for (int v : guiScaleChoices())
+        if (base * v / 100.0 >= 0.999) return v;
+    return 100;
 }
 
 // ---------------------------------------------------------------------------

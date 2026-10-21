@@ -398,7 +398,6 @@ void GameListDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const
     const bool unused = !armed && !running;
     p->setOpacity(unused ? 0.42 : 1.0);
     if (!tile.isNull()) p->drawPixmap(tileRect, tile);
-    p->setOpacity(1.0);
 
     // клавиша запуска — плашкой на значке
     const QString key = idx.data(KeyRole).toString();
@@ -417,6 +416,7 @@ void GameListDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const
         p->setPen(running ? t.onRed : t.text);
         p->drawText(kr, Qt::AlignCenter, k);
     }
+    p->setOpacity(1.0);
 
     const QRect circle = circleRect(opt.rect);
     const int textX = tileRect.right() + 13;
