@@ -16,6 +16,7 @@
 #include "animations.h"
 #include "icons.h"
 #include "theme.h"
+#include "sounds.h"
 #include <QWidget>
 #include <QFrame>
 #include <QVBoxLayout>
@@ -2287,7 +2288,9 @@ void MainWindow::toggleFrom(bool fromHotkey) {
 
 void MainWindow::startClicker() {
     pushConfig();
+    const bool was = clk().isRunning();
     clk().start();
+    if (!was) Sounds::play(Sounds::On, Games::keyMode(game_.id) == 1);
     rateHist_.clear();
     updateTrayState();
     updateGameItems();
@@ -2297,6 +2300,7 @@ void MainWindow::startClicker() {
 void MainWindow::stopGame(const QString& id) {
     GameRunner* r = findRunner(id);
     if (!r) return;
+    if (r->clicker.isRunning()) Sounds::play(Sounds::Off, Games::keyMode(id) == 1);
     r->clicker.stop();
     r->holdStarted = false;
     updateTrayState();
@@ -2338,6 +2342,7 @@ bool MainWindow::startBackground(const QString& id, bool fromHotkey) {
     r.st = st;
     r.clicker.setConfig(buildConfig(g, st, r.bound));
     r.clicker.start();
+    Sounds::play(Sounds::On, Games::keyMode(id) == 1);
     updateTrayState();
     updateGameItems();
     return true;
@@ -2489,6 +2494,7 @@ void MainWindow::refreshLive() {
             r.bound = WindowInfo{};
             const bool wasRunning = r.clicker.isRunning();
             if (wasRunning && Prefs::stopOnGameClose()) {
+                Sounds::play(Sounds::Off);
                 r.clicker.stop();
                 r.holdStarted = false;
                 notify(T("Кликер «%1» выключен: окно игры закрылось.").arg(r.def.name.isEmpty() ? it.first : r.def.name));

@@ -7,6 +7,7 @@
 #include <QRegularExpression>
 #include <QFile>
 #include "i18n.h"
+#include "sounds.h"
 #include <cstdio>
 #include "keys.h"
 #include "winmatch.h"
@@ -819,6 +820,34 @@ static void testV113() {
     CHECK(Keys::fromKeyEvent(Qt::Key_Backtab, false, 0) && QString(Keys::fromKeyEvent(Qt::Key_Backtab, false, 0)->name) == "tab");
     CHECK(HotkeySpec::parse("alt+tab").isValid() && HotkeySpec::parse("ctrl+tab").display() == "Ctrl+Tab");
     CHECK(HotkeySpec::parse("tab").passthrough());
+
+    // звуки вкл/выкл: настоящий WAV, громкость влияет; «вкл» и «выкл» — отдельно
+    for (const QString& id : Sounds::ids()) {
+        const QByteArray w = Sounds::wav(id, 50);
+        if (id == "none") { CHECK(w.isEmpty()); continue; }
+        CHECK(w.startsWith("RIFF") && w.mid(8, 4) == "WAVE" && w.size() > 2000 && w.size() < 100000);
+    }
+    CHECK(Sounds::wav("ticks-up", 50) != Sounds::wav("ticks-down", 50));
+    {
+        auto peak = [](const QByteArray& w) {
+            int m = 0;
+            for (int i = 44; i + 1 < w.size(); i += 2) m = qMax(m, qAbs(int(qint16((uchar(w[i + 1]) << 8) | uchar(w[i])))));
+            return m;
+        };
+        const int full = peak(Sounds::wav("ticks-up", 100)), low = peak(Sounds::wav("ticks-up", 10));
+        CHECK(full > 8000 && full <= 30000 && low * 8 < full && peak(Sounds::wav("ticks-up", 0)) == 0);
+    }
+    AppSettings::setScope("AutoQTest", "snd_" + pid);
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+    CHECK(Sounds::sound(Sounds::On) == "ticks-up" && Sounds::sound(Sounds::Off) == "ticks-down");
+    Sounds::setSound(Sounds::On, "coin");
+    Sounds::setSound(Sounds::Off, "file:/tmp/x.wav");
+    CHECK(Sounds::sound(Sounds::On) == "coin" && Sounds::sound(Sounds::Off) == "file:/tmp/x.wav");
+    CHECK(Sounds::label("file:/tmp/x.wav") == "x.wav");
+    Sounds::setSound(Sounds::On, "нет-такого");
+    CHECK(Sounds::sound(Sounds::On) == "ticks-up");     // неизвестный — по умолчанию
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+    for (const QString& sc : {"v113_" + pid, "snd_" + pid}) { QSettings s("AutoQTest", sc); s.clear(); s.sync(); }
 }
 
 int main(int argc, char** argv) {

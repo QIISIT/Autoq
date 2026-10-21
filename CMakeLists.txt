@@ -24,6 +24,7 @@ set(CORE_SOURCES
     winmatch.cpp    winmatch.h
     clicker.cpp     clicker.h
     hotkey.cpp      hotkey.h
+    sounds.cpp      sounds.h
 )
 if(APPLE)
     list(APPEND CORE_SOURCES macsupport.mm macsupport.h)

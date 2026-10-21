@@ -9,6 +9,7 @@
 #include "colorpicker.h"
 #include "games.h"
 #include "animations.h"
+#include "sounds.h"
 #include <QApplication>
 #include <QGuiApplication>
 #include <QVBoxLayout>
@@ -23,6 +24,8 @@
 #include <QLineEdit>
 #include <QSpinBox>
 #include <QSlider>
+#include <QDir>
+#include <QFileDialog>
 #include <QComboBox>
 #include <QScreen>
 #include <QSignalBlocker>
@@ -219,6 +222,87 @@ QWidget* SettingsDialog::buildGeneralPage() {
         Prefs::mouseOnlyOverGame(), [](bool v) { Prefs::setMouseOnlyOverGame(v); });
     row(T("Выключать кликер, когда окно игры закрылось"), T("Игру закрыли или она вылетела — кликер останавливается сам"),
         Prefs::stopOnGameClose(), [](bool v) { Prefs::setStopOnGameClose(v); });
+
+    // --- звук при включении и выключении кликера: свой для «вкл» и для «выкл»
+    lay->addWidget(lbl(T("Звук"), "fieldLabel"));
+    {
+        auto* soundSw = row(T("Звук, когда кликер включается и выключается"),
+                            T("Слышно прямо в игре, не глядя на оверлей. Звук для «вкл» и для «выкл» — свой."),
+                            Sounds::enabled(), [](bool v) { Sounds::setEnabled(v); });
+        auto* box = new QWidget();
+        auto* g = new QGridLayout(box);
+        g->setContentsMargins(50, 0, 0, 0);
+        g->setHorizontalSpacing(10);
+        g->setVerticalSpacing(8);
+        auto pickRow = [this, g](int r, Sounds::Kind kind, const QString& caption) {
+            g->addWidget(lbl(caption, "muted"), r, 0);
+            auto* box = new QComboBox();
+            box->setAccessibleName(caption);
+            box->setMinimumWidth(200);
+            auto fill = [box, kind]() {
+                QSignalBlocker b(box);
+                box->clear();
+                for (const QString& id : Sounds::ids()) box->addItem(Sounds::label(id), id);
+                const QString cur = Sounds::sound(kind);
+                if (cur.startsWith(Sounds::customPrefix())) box->addItem(T("Свой: ") + Sounds::label(cur), cur);
+                box->addItem(T("Свой файл WAV…"), QStringLiteral("pick"));
+                box->setCurrentIndex(qMax(0, box->findData(cur)));
+            };
+            fill();
+            g->addWidget(box, r, 1);
+            auto* play = new QToolButton();
+            play->setObjectName("icon");
+            play->setFixedSize(30, 30);
+            play->setIcon(AqIcons::ui("play", Theme::t().muted, 12));
+            play->setToolTip(T("Послушать"));
+            play->setAccessibleName(T("Послушать"));
+            g->addWidget(play, r, 2);
+            connect(play, &QToolButton::clicked, this, [kind]() { Sounds::preview(Sounds::sound(kind)); });
+            connect(box, QOverload<int>::of(&QComboBox::activated), this, [this, box, kind, fill](int i) {
+                QString id = box->itemData(i).toString();
+                if (id == "pick") {
+                    const QString f = QFileDialog::getOpenFileName(this, T("Звук — файл WAV"), QString(), T("Звук WAV (*.wav)"));
+                    if (f.isEmpty()) { fill(); return; }
+                    id = Sounds::customPrefix() + QDir::toNativeSeparators(f);
+                }
+                Sounds::setSound(kind, id);
+                fill();
+                Sounds::preview(id);
+            });
+        };
+        pickRow(0, Sounds::On, T("Включился"));
+        pickRow(1, Sounds::Off, T("Выключился"));
+        g->addWidget(lbl(T("Громкость"), "muted"), 2, 0);
+        auto* volRow = new QHBoxLayout();
+        volRow->setSpacing(8);
+        auto* vol = new QSlider(Qt::Horizontal);
+        vol->setRange(0, 100);
+        vol->setValue(Sounds::volume());
+        vol->setAccessibleName(T("Громкость звука"));
+        vol->setToolTip(T("Тише ← → громче (свои файлы WAV играют как есть)"));
+        volRow->addWidget(vol, 1);
+        auto* volVal = lbl(QString("%1%").arg(Sounds::volume()), "small");
+        volVal->setMinimumWidth(40);
+        volRow->addWidget(volVal);
+        g->addLayout(volRow, 2, 1, 1, 2);
+        auto* holdSw = new ToggleSwitch();
+        holdSw->setChecked(Sounds::inHoldMode());
+        holdSw->setAccessibleName(T("Звук и в режиме «Пока держу»"));
+        auto* hr = new QHBoxLayout();
+        hr->setSpacing(10);
+        hr->addWidget(holdSw);
+        auto* hl = lbl(T("И в режиме «Пока держу» (там кликер включается на каждое нажатие)"), "small");
+        hl->setWordWrap(true);
+        hr->addWidget(hl, 1);
+        g->addLayout(hr, 3, 0, 1, 3);
+        g->setColumnStretch(3, 1);
+        lay->addWidget(box);
+        box->setEnabled(Sounds::enabled());
+        connect(soundSw, &ToggleSwitch::toggled, box, &QWidget::setEnabled);
+        connect(vol, &QSlider::valueChanged, this, [volVal](int v) { Sounds::setVolume(v); volVal->setText(QString("%1%").arg(v)); });
+        connect(vol, &QSlider::sliderReleased, this, []() { Sounds::preview(Sounds::sound(Sounds::On)); });
+        connect(holdSw, &ToggleSwitch::toggled, this, [](bool v) { Sounds::setInHoldMode(v); });
+    }
 
     lay->addWidget(lbl(T("Первый запуск"), "fieldLabel"));
     auto* again = new QPushButton(T("Пройти выбор оформления и анимаций заново"));
