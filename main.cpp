@@ -43,8 +43,8 @@ int main(int argc, char** argv) {
     if (Prefs::elevateAtStart() && Autostart::relaunchElevatedIfNeeded(argc, argv) == 0) return 0;
     // Язык интерфейса — до создания любых окон (Настройки → Основные → Язык)
     {
-        QSettings pre(AQ_NAME, "config");
-        I18n::setLanguage(I18n::fromSetting(pre.value("language", "auto").toString()));
+        auto pre = AppSettings::open();
+        I18n::setLanguage(I18n::fromSetting(pre->value("language", "auto").toString()));
     }
 #if !defined(_WIN32) && !defined(__APPLE__)
     // Пункт меню приложений autoq.desktop — до QApplication: при запуске Qt
@@ -57,8 +57,8 @@ int main(int argc, char** argv) {
     // Если xcb не загрузится, Qt сам возьмёт wayland (список через «;»).
     if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM") && !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") &&
         !qEnvironmentVariableIsEmpty("DISPLAY")) {
-        QSettings pre(AQ_NAME, "config");
-        if (pre.value("useXWayland", true).toBool()) qputenv("QT_QPA_PLATFORM", "xcb;wayland");
+        auto pre = AppSettings::open();
+        if (pre->value("useXWayland", true).toBool()) qputenv("QT_QPA_PLATFORM", "xcb;wayland");
     }
 #endif
 

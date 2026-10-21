@@ -49,6 +49,13 @@
 #include <QListWidget>
 #include <QDateTime>
 #include <QLocale>
+#include <QRegularExpression>
+#include <QDir>
+#include <QFileInfo>
+#include <QStandardPaths>
+#include <QUrl>
+#include <QDesktopServices>
+#include <QFileDialog>
 #include <QSignalBlocker>
 #include <QtMath>
 
@@ -645,6 +652,27 @@ QFrame* MainWindow::buildProfileCard() {
     profileOverlayBtn_->setCheckable(true);
     profileOverlayBtn_->setAccessibleName(T("Показывать в оверлее КПС"));
     prow->addWidget(profileOverlayBtn_);
+    // ⋯ — профиль в файл и обратно: поделиться с другом, перенести на другой ПК
+    profileMoreBtn_ = new QToolButton();
+    profileMoreBtn_->setObjectName("icon");
+    profileMoreBtn_->setFixedSize(30, 30);
+    profileMoreBtn_->setPopupMode(QToolButton::InstantPopup);
+    profileMoreBtn_->setToolTip(T("Профиль в файл и из файла"));
+    profileMoreBtn_->setAccessibleName(T("Ещё: экспорт и импорт профиля"));
+    {
+        auto* m = new QMenu(profileMoreBtn_);
+        exportProfileAction_ = m->addAction(T("Экспорт профиля в файл…"), this, &MainWindow::exportProfile);
+        m->addAction(T("Импорт профиля из файла…"), this, &MainWindow::importProfile);
+        m->addSeparator();
+        m->addAction(T("Открыть папку профилей"), this, [this]() {
+            if (!hasGame()) return;
+            const QString dir = Games::profilesFolder(game_.id);
+            QDir().mkpath(dir);
+            QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+        });
+        profileMoreBtn_->setMenu(m);
+    }
+    prow->addWidget(profileMoreBtn_);
     lay->addLayout(prow);
     // пресеты — готовые настройки игры
     auto* presetRow = new QHBoxLayout();
@@ -1003,6 +1031,7 @@ void MainWindow::refreshIcons() {
     checkBtn_->setIcon(AqIcons::ui("target", t.redHi, 15));
     captureBtn_->setIcon(AqIcons::ui("keyboard", t.muted, 16));
     renameProfileBtn_->setIcon(AqIcons::ui("pencil", t.muted, 14));
+    profileMoreBtn_->setIcon(AqIcons::ui("more", t.muted, 16));
     profileKeyBtn_->setIcon(AqIcons::ui("keyboard", t.muted, 15));
     newProfileBtn_->setIcon(AqIcons::ui("plus", t.muted, 13, 2.2));
     saveProfileBtn_->setIcon(AqIcons::ui("save", t.redHi, 14));
@@ -1745,6 +1774,8 @@ void MainWindow::updateProfileState() {
     delProfileBtn_->setEnabled(!active.isEmpty());
     renameProfileBtn_->setEnabled(!active.isEmpty());
     profileKeyBtn_->setEnabled(!active.isEmpty());
+    profileMoreBtn_->setEnabled(hasGame());
+    if (exportProfileAction_) exportProfileAction_->setEnabled(!active.isEmpty());
     {
         const bool inOv = !hasGame() || Games::profileInOverlay(game_.id, active);
         const bool wasLoading = loading_;
@@ -2039,6 +2070,46 @@ void MainWindow::renameProfile() {
     Games::renameProfile(game_.id, active, n);
     updateProfileState();
     rebuildBindings();
+}
+
+void MainWindow::exportProfile() {
+    const QString active = Games::activeProfile(game_.id);
+    if (active.isEmpty()) return;
+    if (profileDirty() && askYesNo(dialogParent(), T("Экспорт профиля"),
+                                   T("В профиле «%1» есть несохранённые изменения. Сохранить их перед экспортом?").arg(active),
+                                   T("Сохранить"), T("Экспортировать как есть")))
+        saveProfile();
+    QString base = active;
+    for (const QChar c : QStringLiteral("<>:\"/\\|?*")) base.replace(c, '_');
+    const QString start = QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation))
+                              .filePath(QString("%1 - %2.ini").arg(game_.name, base).replace(QRegularExpression("[<>:\"/\\\\|?*]"), "_"));
+    const QString file = QFileDialog::getSaveFileName(dialogParent(), T("Экспорт профиля"), start,
+                                                      T("Профиль AutoQ (*.ini)"));
+    if (file.isEmpty()) return;
+    QString err;
+    if (!Games::exportProfile(game_.id, active, file, &err)) { QMessageBox::warning(dialogParent(), T("Экспорт профиля"), err); return; }
+    notify(T("Профиль «%1» сохранён в файл: %2").arg(active, QFileInfo(file).fileName()));
+}
+
+void MainWindow::importProfile() {
+    if (!hasGame()) return;
+    const QString file = QFileDialog::getOpenFileName(dialogParent(), T("Импорт профиля"),
+                                                      QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+                                                      T("Профиль AutoQ (*.ini);;Все файлы (*)"));
+    if (file.isEmpty()) return;
+    QString err, from;
+    const QString name = Games::importProfile(game_.id, file, &err, &from);
+    if (name.isEmpty()) {
+        QMessageBox::warning(dialogParent(), T("Импорт профиля"), T("Не удалось импортировать «%1»: %2").arg(QFileInfo(file).fileName(), err));
+        return;
+    }
+    updateProfileState();
+    rebuildTrayProfiles();
+    // сразу включить новый профиль (если текущие изменения не жалко)
+    if (confirmLeaveProfile()) loadProfile(name);
+    updateProfileState();
+    notify(from.isEmpty() ? T("Импортирован профиль «%1».").arg(name)
+                          : T("Импортирован профиль «%1» (сделан для «%2»).").arg(name, from));
 }
 
 // ===========================================================================

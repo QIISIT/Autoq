@@ -142,6 +142,8 @@ private:
     void deleteProfile();
     void renameProfile();
     void editProfileKey();
+    void exportProfile();       // профиль в файл (поделиться)
+    void importProfile();       // профиль из файла
     void applyProfileFor(const QString& gameId, const QString& profile);   // клавишей профиля
     GameState standardState() const;
     GameMode standardMode() const;
@@ -301,6 +303,8 @@ private:
     QComboBox* profileBox_;
     QToolButton* renameProfileBtn_;
     QToolButton* profileOverlayBtn_;   // «показывать в оверлее КПС» у профиля
+    QToolButton* profileMoreBtn_;      // ⋯ — экспорт, импорт, папка профилей
+    QAction* exportProfileAction_ = nullptr;
     QToolButton* profileKeyBtn_;
     QLabel* profileState_;
     QPushButton* newProfileBtn_;

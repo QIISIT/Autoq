@@ -209,6 +209,7 @@ QPushButton#segText:checked { background: @red@; color: @onRed@; }
 
 QToolButton#icon { background: transparent; border: 1px solid @fieldBorder@; border-radius: 8px; padding: 0; }
 QToolButton#icon:hover { border-color: @fieldBorder2@; background: @field@; }
+QToolButton#icon::menu-indicator { image: none; width: 0; }
 QToolButton#chip { background: @field@; border: 1px solid @fieldBorder@; border-radius: 11px /*pill*/; padding: 3px 10px; font-size: 12px; }
 QToolButton#chip:hover { border-color: @fieldBorder2@; }
 QToolButton#chip::menu-indicator { image: none; width: 0; }
@@ -644,8 +645,8 @@ static double windowsMinMonitorScale() {
 #endif
 
 void Theme::applyGuiScaleEnv() {
-    QSettings pre(AQ_NAME, "config");
-    int v = pre.value("guiScale", 100).toInt();
+    auto pre = AppSettings::open();
+    int v = pre->value("guiScale", 100).toInt();
     if (!guiScaleChoices().contains(v)) v = 100;
     g_startupScale = v;
     // перезапуск из AutoQ: старое значение досталось от нас же — его можно менять

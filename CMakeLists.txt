@@ -21,6 +21,7 @@ set(CORE_SOURCES
     i18n.cpp        i18n.h          i18n_en.cpp
     keys.cpp        keys.h
     games.cpp       games.h
+    appsettings.cpp
     winmatch.cpp    winmatch.h
     clicker.cpp     clicker.h
     hotkey.cpp      hotkey.h

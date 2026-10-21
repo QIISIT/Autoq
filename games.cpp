@@ -2,13 +2,16 @@
 #include "i18n.h"
 #include "keys.h"
 #include <QRegularExpression>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QDateTime>
+#include <QHash>
 
-// ---------------------------------------------------------------------------
-static QString g_org = "AutoQ";
-static QString g_app = "config";
-
-void AppSettings::setScope(const QString& org, const QString& app) { g_org = org; g_app = app; }
-std::unique_ptr<QSettings> AppSettings::open() { return std::make_unique<QSettings>(g_org, g_app); }
+namespace {
+QString profileDir(const QString& gameId);        // файлы профилей — ниже, у профилей
+void dropProfileCache(const QString& gameId);
+}
 
 // ---------------------------------------------------------------------------
 QList<int> Prefs::captureChoices() { return {3, 5, 7, 10}; }
@@ -243,10 +246,10 @@ static GameDef readGame(QSettings& s, const QString& id) {
 }
 
 static bool hasProfiles(QSettings& s, const QString& id) {
-    s.beginGroup(gkey(id, "profiles"));
+    s.beginGroup(gkey(id, "profiles"));          // профили до 1.13 (ещё не перенесены в файлы)
     const bool any = !s.childGroups().isEmpty();
     s.endGroup();
-    return any;
+    return any || !QDir(AppSettings::profilesDir() + "/" + id).entryList({"*.ini"}, QDir::Files).isEmpty();
 }
 
 // Пользователь что-то менял у встроенной игры (правила, режим, значок)
@@ -336,6 +339,8 @@ bool Games::remove(const QString& id) {
     order.removeAll(id);
     s->setValue("games/order", order);
     s->remove("games/" + id);
+    QDir(profileDir(id)).removeRecursively();      // и файлы профилей этой игры
+    dropProfileCache(id);
     if (s->value("currentGame").toString() == id) {
         if (order.isEmpty()) s->remove("currentGame");
         else s->setValue("currentGame", order.first());
@@ -491,38 +496,134 @@ bool Games::validProfileName(const QString& name, QString* why) {
     return err.isEmpty();
 }
 
+// ---------------------------------------------------------------------------
+// Профили — по файлу на профиль: <папка данных>/profiles/<игра>/<имя>.ini.
+// Имя профиля записано в файле ([AutoQ] name), имя файла — только для людей
+// (запрещённые в именах файлов знаки заменены на «_»). Регистр не различается
+// (как в реестре и файлах Windows): «Fast» и «fast» — один профиль.
+// ---------------------------------------------------------------------------
+namespace {
+const char* kProfilePrefix = "profile/";
+
+QString safeFileName(const QString& name) {
+    QString out;
+    for (const QChar c : name) out += (c.unicode() < 32 || QStringLiteral("<>:\"/\\|?*").contains(c)) ? QChar('_') : c;
+    while (out.endsWith('.') || out.endsWith(' ')) out.chop(1);
+    if (out.isEmpty()) out = QStringLiteral("_");
+    static const QRegularExpression reserved(QStringLiteral("^(con|prn|aux|nul|com[1-9]|lpt[1-9])$"),
+                                             QRegularExpression::CaseInsensitiveOption);
+    if (reserved.match(out).hasMatch()) out += '_';
+    return out;
+}
+
+QString profileDir(const QString& gameId) { return AppSettings::profilesDir() + "/" + safeFileName(gameId); }
+
+struct ProfileFile { QString name, path; };
+
+// Список файлов профилей игры. Читается заново, если папку меняли (или прошло 2 с —
+// файлы могли поправить руками); свои записи сбрасывают кэш сразу.
+struct ProfileCache { QString dir; QDateTime mtime; qint64 at = 0; QList<ProfileFile> list; };
+QHash<QString, ProfileCache>& profileCache() { static QHash<QString, ProfileCache> c; return c; }
+void dropProfileCache(const QString& gameId) { profileCache().remove(gameId); }
+
+QList<ProfileFile> profileFiles(const QString& gameId) {
+    const QString dirPath = profileDir(gameId);
+    const QFileInfo di(dirPath);
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    ProfileCache& c = profileCache()[gameId];
+    if (c.dir == dirPath && c.at && now - c.at < 2000 && c.mtime == di.lastModified()) return c.list;
+    QList<ProfileFile> out;
+    QDir dir(dirPath);
+    for (const QFileInfo& fi : dir.entryInfoList({"*.ini"}, QDir::Files, QDir::Name)) {
+        QSettings f(fi.absoluteFilePath(), QSettings::IniFormat);
+        QString n = f.value("AutoQ/name").toString().trimmed();
+        if (n.isEmpty()) n = fi.completeBaseName().trimmed();     // файл положили руками
+        if (!Games::validProfileName(n, nullptr)) continue;
+        bool dup = false;
+        for (const ProfileFile& p : out) dup = dup || p.name.compare(n, Qt::CaseInsensitive) == 0;
+        if (!dup) out << ProfileFile{n, fi.absoluteFilePath()};
+    }
+    c = ProfileCache{dirPath, di.lastModified(), now, out};
+    return out;
+}
+
+ProfileFile findProfile(const QString& gameId, const QString& name) {
+    const QString n = name.trimmed();
+    for (const ProfileFile& p : profileFiles(gameId))
+        if (p.name.compare(n, Qt::CaseInsensitive) == 0) return p;
+    return ProfileFile{};
+}
+
+// Файл для нового профиля: «Имя.ini», при совпадении — «Имя (2).ini»
+QString newProfilePath(const QString& gameId, const QString& name) {
+    const QString dir = profileDir(gameId);
+    const QString base = safeFileName(name.trimmed());
+    QString path = dir + "/" + base + ".ini";
+    for (int i = 2; QFile::exists(path); ++i) path = QString("%1/%2 (%3).ini").arg(dir, base).arg(i);
+    return path;
+}
+
+std::unique_ptr<QSettings> openProfile(const QString& path) {
+    return std::make_unique<QSettings>(path, QSettings::IniFormat);
+}
+
+void writeProfileFile(const QString& path, const QString& gameId, const QString& name, const GameState& st,
+                      int mode, const QString& hotkey, bool inOverlay) {
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    auto f = openProfile(path);
+    f->clear();
+    f->setValue("AutoQ/type", "profile");
+    f->setValue("AutoQ/name", name.trimmed());
+    f->setValue("AutoQ/game", gameId);
+    bool ok = false;
+    const GameDef g = Games::get(gameId, &ok);
+    if (ok) f->setValue("AutoQ/gameName", g.name);
+    writeState(*f, kProfilePrefix, st);
+    if (mode >= 0 && mode <= 2) f->setValue(QString(kProfilePrefix) + "mode", mode);
+    if (!hotkey.isEmpty()) f->setValue(QString(kProfilePrefix) + "hotkey", hotkey);
+    if (!inOverlay) f->setValue(QString(kProfilePrefix) + "overlay", false);
+    f->sync();
+}
+
+GameState defaultFor(const QString& gameId) {
+    bool ok = false;
+    const GameDef g = Games::get(gameId, &ok);
+    return ok ? Games::defaultState(g) : GameState{};
+}
+}
+
+QString Games::profileFile(const QString& gameId, const QString& name) { return findProfile(gameId, name).path; }
+QString Games::profilesFolder(const QString& gameId) { return profileDir(gameId); }
+
 QStringList Games::profiles(const QString& gameId) {
-    auto s = AppSettings::open();
-    s->beginGroup(gkey(gameId, "profiles"));
-    QStringList names = s->childGroups();
-    s->endGroup();
+    QStringList names;
+    for (const ProfileFile& p : profileFiles(gameId)) names << p.name;
     names.sort(Qt::CaseInsensitive);
     return names;
 }
 
-// Имя профиля как оно уже записано (без учёта регистра). В реестре Windows
-// ключи не различают регистр: «Fast» и «fast» — один профиль, и записывать
-// надо под тем именем, что уже есть, иначе профиль «потеряется».
+// Имя профиля как оно уже записано (без учёта регистра)
 static QString storedProfileName(const QString& gameId, const QString& name) {
-    const QString n = name.trimmed();
-    for (const QString& p : Games::profiles(gameId))
-        if (p.compare(n, Qt::CaseInsensitive) == 0) return p;
-    return n;
+    const ProfileFile p = findProfile(gameId, name);
+    return p.path.isEmpty() ? name.trimmed() : p.name;
 }
 
 bool Games::profileExists(const QString& gameId, const QString& name) {
-    return profiles(gameId).contains(name.trimmed(), Qt::CaseInsensitive);
+    return !findProfile(gameId, name).path.isEmpty();
 }
 
 GameState Games::loadProfile(const QString& gameId, const QString& name, int* mode) {
-    auto s = AppSettings::open();
     bool ok = false;
     GameDef g = get(gameId, &ok);
-    const QString prefix = gkey(gameId, "profiles/" + storedProfileName(gameId, name) + "/");
-    GameState st = readState(*s, prefix, ok ? defaultState(g) : GameState{});
+    const ProfileFile pf = findProfile(gameId, name);
+    const GameState def = ok ? defaultState(g) : GameState{};
+    if (mode) *mode = -1;
+    if (pf.path.isEmpty()) return def;
+    auto f = openProfile(pf.path);
+    GameState st = readState(*f, kProfilePrefix, def);
     if (ok) st.intervalMs = qMax(st.intervalMs, g.minIntervalMs);
     if (mode) {
-        const int m = s->value(prefix + "mode", -1).toInt();
+        const int m = f->value(QString(kProfilePrefix) + "mode", -1).toInt();
         *mode = (m >= 0 && m <= 2) ? m : -1;
     }
     return st;
@@ -530,47 +631,94 @@ GameState Games::loadProfile(const QString& gameId, const QString& name, int* mo
 
 void Games::saveProfile(const QString& gameId, const QString& name, const GameState& st, int mode) {
     if (!validProfileName(name, nullptr)) return;
-    const QString stored = storedProfileName(gameId, name);
-    auto s = AppSettings::open();
-    const QString prefix = gkey(gameId, "profiles/" + stored + "/");
-    writeState(*s, prefix, st);
-    if (mode >= 0 && mode <= 2) s->setValue(prefix + "mode", mode);
-    else s->remove(prefix + "mode");
-    s->sync();
+    const ProfileFile pf = findProfile(gameId, name);
+    if (pf.path.isEmpty()) {
+        writeProfileFile(newProfilePath(gameId, name), gameId, name, st, mode, QString(), true);
+    } else {
+        // клавиша и «в оверлее» — не часть настроек, остаются как были
+        auto f = openProfile(pf.path);
+        const QString hk = f->value(QString(kProfilePrefix) + "hotkey").toString();
+        const bool ov = f->value(QString(kProfilePrefix) + "overlay", true).toBool();
+        f.reset();
+        writeProfileFile(pf.path, gameId, pf.name, st, mode, hk, ov);
+    }
+    dropProfileCache(gameId);
 }
 
 void Games::removeProfile(const QString& gameId, const QString& name) {
-    const QString stored = storedProfileName(gameId, name);
+    const ProfileFile pf = findProfile(gameId, name);
+    if (!pf.path.isEmpty()) QFile::remove(pf.path);
+    dropProfileCache(gameId);
     auto s = AppSettings::open();
-    s->remove(gkey(gameId, "profiles/" + stored));
-    if (s->value(gkey(gameId, "activeProfile")).toString().compare(stored, Qt::CaseInsensitive) == 0)
+    if (!pf.name.isEmpty() &&
+        s->value(gkey(gameId, "activeProfile")).toString().compare(pf.name, Qt::CaseInsensitive) == 0)
         s->remove(gkey(gameId, "activeProfile"));
     s->sync();
 }
 
 bool Games::renameProfile(const QString& gameId, const QString& from, const QString& to) {
-    const QString a = storedProfileName(gameId, from), b = to.trimmed();
-    if (!validProfileName(b, nullptr) || !profileExists(gameId, a)) return false;
-    if (a == b) return true;
-    const bool caseOnly = a.compare(b, Qt::CaseInsensitive) == 0;   // «fast» -> «Fast»
+    const ProfileFile a = findProfile(gameId, from);
+    const QString b = to.trimmed();
+    if (!validProfileName(b, nullptr) || a.path.isEmpty()) return false;
+    if (a.name == b) return true;
+    const bool caseOnly = a.name.compare(b, Qt::CaseInsensitive) == 0;   // «fast» -> «Fast»
     if (!caseOnly && profileExists(gameId, b)) return false;
     int mode = -1;
-    const GameState st = loadProfile(gameId, a, &mode);
-    const HotkeySpec key = profileKey(gameId, a);
-    const bool inOverlay = profileInOverlay(gameId, a);
-    const bool wasActive = activeProfile(gameId) == a;
-    removeProfile(gameId, a);           // сначала убрать: в реестре Windows это тот же ключ
+    const GameState st = loadProfile(gameId, a.name, &mode);
+    QString hk;
+    bool ov = true;
     {
-        auto s = AppSettings::open();
-        const QString prefix = gkey(gameId, "profiles/" + b + "/");
-        writeState(*s, prefix, st);
-        if (mode >= 0 && mode <= 2) s->setValue(prefix + "mode", mode);
-        if (key.isValid()) s->setValue(prefix + "hotkey", key.toString());
-        if (!inOverlay) s->setValue(prefix + "overlay", false);
-        s->sync();
+        auto f = openProfile(a.path);
+        hk = f->value(QString(kProfilePrefix) + "hotkey").toString();
+        ov = f->value(QString(kProfilePrefix) + "overlay", true).toBool();
     }
+    const bool wasActive = activeProfile(gameId) == a.name;
+    QFile::remove(a.path);              // сначала убрать: «fast.ini» и «Fast.ini» в Windows — один файл
+    dropProfileCache(gameId);
+    writeProfileFile(newProfilePath(gameId, b), gameId, b, st, mode, hk, ov);
+    dropProfileCache(gameId);
     if (wasActive) setActiveProfile(gameId, b);
     return true;
+}
+
+bool Games::exportProfile(const QString& gameId, const QString& name, const QString& file, QString* error) {
+    const ProfileFile pf = findProfile(gameId, name);
+    if (pf.path.isEmpty()) { if (error) *error = T("Профиль не найден."); return false; }
+    int mode = -1;
+    const GameState st = loadProfile(gameId, pf.name, &mode);
+    bool ov = true;
+    { auto f = openProfile(pf.path); ov = f->value(QString(kProfilePrefix) + "overlay", true).toBool(); }
+    QFile::remove(file);
+    writeProfileFile(file, gameId, pf.name, st, mode, QString(), ov);   // без клавиши — у друга она своя
+    if (!QFile::exists(file)) { if (error) *error = T("Не удалось записать файл: %1").arg(file); return false; }
+    return true;
+}
+
+QString Games::importProfile(const QString& gameId, const QString& file, QString* error, QString* fromGame) {
+    auto f = openProfile(file);
+    if (f->status() != QSettings::NoError ||
+        !(f->contains(QString(kProfilePrefix) + "actions") || f->contains(QString(kProfilePrefix) + "interval"))) {
+        if (error) *error = T("Это не профиль AutoQ.");
+        return QString();
+    }
+    const GameState def = defaultFor(gameId);
+    GameState st = readState(*f, kProfilePrefix, def);
+    bool ok = false;
+    const GameDef g = get(gameId, &ok);
+    if (ok) st.intervalMs = qMax(st.intervalMs, g.minIntervalMs);
+    const int m = f->value(QString(kProfilePrefix) + "mode", -1).toInt();
+    const bool ov = f->value(QString(kProfilePrefix) + "overlay", true).toBool();
+    if (fromGame) *fromGame = f->value("AutoQ/game").toString() == gameId ? QString()
+                                                                        : f->value("AutoQ/gameName").toString();
+    QString base = f->value("AutoQ/name").toString().trimmed();
+    if (!validProfileName(base, nullptr)) base = QFileInfo(file).completeBaseName().trimmed().left(50);
+    if (!validProfileName(base, nullptr)) base = T("Профиль");
+    // имя занято — «Имя (2)», «Имя (3)»…
+    QString name = base;
+    for (int i = 2; profileExists(gameId, name); ++i) name = QString("%1 (%2)").arg(base.left(50)).arg(i);
+    writeProfileFile(newProfilePath(gameId, name), gameId, name, st, (m >= 0 && m <= 2) ? m : -1, QString(), ov);
+    dropProfileCache(gameId);
+    return name;
 }
 
 // ---------------------------------------------------------------------------
@@ -640,49 +788,50 @@ void Games::setArmKey(const QString& gameId, const HotkeySpec& sp) {
     s->sync();
 }
 
-static QString overlayKey(const QString& gameId, const QString& profile) {
-    return profile.trimmed().isEmpty() ? gkey(gameId, "overlay")
-                                       : gkey(gameId, "profiles/" + storedProfileName(gameId, profile) + "/overlay");
-}
-
 bool Games::profileInOverlay(const QString& gameId, const QString& profile) {
-    if (!profile.trimmed().isEmpty() && !profileExists(gameId, profile)) return true;
-    return AppSettings::open()->value(overlayKey(gameId, profile), true).toBool();
+    if (profile.trimmed().isEmpty()) return AppSettings::open()->value(gkey(gameId, "overlay"), true).toBool();
+    const ProfileFile pf = findProfile(gameId, profile);
+    if (pf.path.isEmpty()) return true;
+    return openProfile(pf.path)->value(QString(kProfilePrefix) + "overlay", true).toBool();
 }
 
 void Games::setProfileInOverlay(const QString& gameId, const QString& profile, bool on) {
-    if (!profile.trimmed().isEmpty() && !profileExists(gameId, profile)) return;
-    auto s = AppSettings::open();
-    if (on) s->remove(overlayKey(gameId, profile));   // по умолчанию — да
-    else s->setValue(overlayKey(gameId, profile), false);
+    std::unique_ptr<QSettings> s;
+    QString key;
+    if (profile.trimmed().isEmpty()) {
+        s = AppSettings::open();
+        key = gkey(gameId, "overlay");
+    } else {
+        const ProfileFile pf = findProfile(gameId, profile);
+        if (pf.path.isEmpty()) return;
+        s = openProfile(pf.path);
+        key = QString(kProfilePrefix) + "overlay";
+    }
+    if (on) s->remove(key);   // по умолчанию — да
+    else s->setValue(key, false);
     s->sync();
 }
 
 HotkeySpec Games::profileKey(const QString& gameId, const QString& profile) {
-    if (!profileExists(gameId, profile)) return HotkeySpec{};
-    auto s = AppSettings::open();
-    return HotkeySpec::parse(s->value(gkey(gameId, "profiles/" + storedProfileName(gameId, profile) + "/hotkey")).toString());
+    const ProfileFile pf = findProfile(gameId, profile);
+    if (pf.path.isEmpty()) return HotkeySpec{};
+    return HotkeySpec::parse(openProfile(pf.path)->value(QString(kProfilePrefix) + "hotkey").toString());
 }
 
 void Games::setProfileKey(const QString& gameId, const QString& profile, const HotkeySpec& sp) {
-    if (!profileExists(gameId, profile)) return;
-    auto s = AppSettings::open();
-    const QString k = gkey(gameId, "profiles/" + storedProfileName(gameId, profile) + "/hotkey");
-    if (sp.isValid()) s->setValue(k, sp.toString());
-    else s->remove(k);
-    s->sync();
+    const ProfileFile pf = findProfile(gameId, profile);
+    if (pf.path.isEmpty()) return;
+    auto f = openProfile(pf.path);
+    const QString k = QString(kProfilePrefix) + "hotkey";
+    if (sp.isValid()) f->setValue(k, sp.toString());
+    else f->remove(k);
+    f->sync();
 }
 
 QString Games::activeProfile(const QString& gameId) {
-    auto s = AppSettings::open();
-    const QString n = s->value(gkey(gameId, "activeProfile")).toString();
+    const QString n = AppSettings::open()->value(gkey(gameId, "activeProfile")).toString();
     if (n.isEmpty()) return QString();
-    s->beginGroup(gkey(gameId, "profiles"));
-    const QStringList groups = s->childGroups();
-    s->endGroup();
-    for (const QString& g : groups)
-        if (g.compare(n, Qt::CaseInsensitive) == 0) return g;
-    return QString();
+    return findProfile(gameId, n).name;      // профиля больше нет — нет и активного
 }
 
 void Games::setActiveProfile(const QString& gameId, const QString& name) {
@@ -793,6 +942,25 @@ void Games::migrate() {
             else if (!s->contains(k)) s->setValue(k, false);
         }
         s->setValue("armedVersion", 2);
+    }
+    // 1.13: профили — отдельными файлами (раньше — внутри настроек)
+    for (const QString& id : s->value("games/order").toStringList() + s->value("games/knownBuiltins").toStringList()) {
+        s->beginGroup(gkey(id, "profiles"));
+        const QStringList names = s->childGroups();
+        s->endGroup();
+        if (names.isEmpty()) continue;
+        const GameState def = defaultFor(id);
+        for (const QString& name : names) {
+            const QString prefix = gkey(id, "profiles/" + name + "/");
+            if (validProfileName(name, nullptr) && !profileExists(id, name)) {
+                const int m = s->value(prefix + "mode", -1).toInt();
+                writeProfileFile(newProfilePath(id, name), id, name, readState(*s, prefix, def),
+                                 (m >= 0 && m <= 2) ? m : -1, s->value(prefix + "hotkey").toString(),
+                                 s->value(prefix + "overlay", true).toBool());
+                dropProfileCache(id);
+            }
+        }
+        s->remove(gkey(id, "profiles"));
     }
     s->sync();
 }

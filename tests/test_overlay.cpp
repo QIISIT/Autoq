@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
         CHECK(qAlpha(img.pixel(8, 8)) > 0);
     }
 
-    { auto st = AppSettings::open(); st->clear(); st->sync(); }
+    AppSettings::dropScope("AutoQTest", QString("ov_%1").arg(QCoreApplication::applicationPid()));
     std::printf("\n%d проверок пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

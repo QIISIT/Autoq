@@ -32,6 +32,7 @@
 #include <QPainter>
 #include <QTimer>
 #include <QDesktopServices>
+#include <QUrl>
 
 static QLabel* lbl(const QString& text, const char* obj) {
     auto* l = new QLabel(text);
@@ -336,6 +337,87 @@ QWidget* SettingsDialog::buildGeneralPage() {
         connect(vol, &QSlider::valueChanged, this, [volVal](int v) { Sounds::setVolume(v); volVal->setText(QString("%1%").arg(v)); });
         connect(vol, &QSlider::sliderReleased, this, []() { Sounds::preview(Sounds::sound(Sounds::On)); });
         connect(holdSw, &ToggleSwitch::toggled, this, [](bool v) { Sounds::setInHoldMode(v); });
+    }
+
+    // --- папка данных: где лежат настройки и профили (обычные файлы, без реестра)
+    lay->addWidget(lbl(T("Данные"), "fieldLabel"));
+    {
+        auto* pathRow = new QHBoxLayout();
+        pathRow->setSpacing(8);
+        auto* ic = new QLabel();
+        ic->setPixmap(AqIcons::ui("folder", Theme::t().muted, 16).pixmap(16, 16));
+        pathRow->addWidget(ic);
+        auto* path = new QLineEdit(QDir::toNativeSeparators(AppSettings::dataDir()));
+        path->setReadOnly(true);
+        path->setAccessibleName(T("Папка данных AutoQ"));
+        path->setToolTip(T("Здесь лежат настройки (settings.ini) и профили (папка profiles)"));
+        pathRow->addWidget(path, 1);
+        lay->addLayout(pathRow);
+        auto* note = lbl(QString(), "small");
+        note->setWordWrap(true);
+        lay->addWidget(note);
+        auto* btns = new QHBoxLayout();
+        btns->setSpacing(8);
+        auto* openBtn = new QPushButton(AqIcons::ui("folder", Theme::t().muted, 14), T("Открыть папку"));
+        auto* moveBtn = new QPushButton(T("Сменить папку…"));
+        auto* defBtn = new QPushButton(T("Вернуть по умолчанию"));
+        for (QPushButton* b : {openBtn, moveBtn, defBtn}) {
+            b->setObjectName("outline");
+            b->setCursor(Qt::PointingHandCursor);
+            btns->addWidget(b);
+        }
+        btns->addStretch(1);
+        lay->addLayout(btns);
+        auto refreshData = [path, note, moveBtn, defBtn]() {
+            path->setText(QDir::toNativeSeparators(AppSettings::dataDir()));
+            path->setCursorPosition(0);
+            const bool port = AppSettings::portable();
+            note->setText(port ? T("Портативный режим: всё хранится в папке AutoQ-data рядом с программой. "
+                                   "Чтобы хранить как обычно — удали или переименуй эту папку.")
+                               : T("settings.ini — настройки и игры, profiles — профили, по файлу на каждый. "
+                                   "Чтобы перенести AutoQ на другой ПК, скопируй папку целиком."));
+            moveBtn->setEnabled(!port);
+            defBtn->setVisible(AppSettings::customDataDir());
+        };
+        refreshData();
+        connect(openBtn, &QPushButton::clicked, this, []() {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(AppSettings::dataDir()));
+        });
+        // перенести в папку: текущие данные — туда; если там уже есть данные AutoQ — спросить
+        auto moveTo = [this, refreshData](QString dir) {
+            bool copy = true;
+            if (AppSettings::hasData(dir)) {
+                QMessageBox box(QMessageBox::Question, T("Папка данных"),
+                                T("В этой папке уже есть настройки AutoQ."), QMessageBox::NoButton, this);
+                box.setInformativeText(T("Взять их (AutoQ перезапустится) или заменить текущими?"));
+                QPushButton* take = box.addButton(T("Взять оттуда"), QMessageBox::AcceptRole);
+                QPushButton* replace = box.addButton(T("Заменить текущими"), QMessageBox::DestructiveRole);
+                box.addButton(T("Отмена"), QMessageBox::RejectRole);
+                box.setDefaultButton(take);
+                box.exec();
+                if (box.clickedButton() == take) copy = false;
+                else if (box.clickedButton() != replace) return;
+            }
+            QString err;
+            if (!AppSettings::setDataDir(dir, copy, &err)) {
+                QMessageBox::warning(this, T("Папка данных"),
+                                     T("Не получилось: нет доступа к «%1». Выбери другую папку.").arg(QDir::toNativeSeparators(err)));
+                return;
+            }
+            refreshData();
+            if (!copy) emit restartRequested();       // настройки сменились целиком — перечитать с нуля
+        };
+        connect(moveBtn, &QPushButton::clicked, this, [this, moveTo]() {
+            QString dir = QFileDialog::getExistingDirectory(this, T("Папка данных AutoQ"), AppSettings::dataDir());
+            if (dir.isEmpty()) return;
+            // выбрали непустую чужую папку (например D:\Games) — свою подпапку AutoQ внутри
+            const QDir d(dir);
+            if (!AppSettings::hasData(dir) && d.dirName().compare("AutoQ", Qt::CaseInsensitive) != 0 &&
+                !d.entryList(QDir::AllEntries | QDir::NoDotAndDotDot).isEmpty())
+                dir = d.filePath("AutoQ");
+            moveTo(QDir::cleanPath(dir));
+        });
+        connect(defBtn, &QPushButton::clicked, this, [moveTo]() { moveTo(AppSettings::defaultDataDir()); });
     }
 
     lay->addWidget(lbl(T("Первый запуск"), "fieldLabel"));

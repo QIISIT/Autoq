@@ -2,8 +2,8 @@
 // База игр: в списке только игры, которые добавил пользователь.
 // Встроенные (Genshin, Minecraft…) — шаблоны в окне «Добавить игру».
 // У каждой игры свой режим действий, правила окна, текущие настройки,
-// пресеты и профили. Всё хранится в QSettings (Linux: ~/.config/AutoQ,
-// Windows: реестр HKCU\Software\AutoQ).
+// пресеты и профили. Всё хранится файлами в папке данных AutoQ (см. AppSettings):
+// settings.ini — настройки и игры, profiles/<игра>/<профиль>.ini — профили.
 #include <QString>
 #include <QStringList>
 #include <QList>
@@ -13,9 +13,27 @@
 #include "winmatch.h"
 #include "keys.h"
 
+// Папка данных AutoQ — обычная видимая папка с файлами (без реестра):
+//   settings.ini — все настройки и игры, profiles/<игра>/<профиль>.ini — профили.
+// По умолчанию: Windows %APPDATA%\AutoQ, macOS ~/Library/Application Support/AutoQ,
+// Linux ~/.config/AutoQ. Можно выбрать свою (Настройки → Основные → Данные).
+// Папка AutoQ-data рядом с программой — портативный режим: всё хранится там.
+// Работает и до создания QApplication.
 namespace AppSettings {
-    void setScope(const QString& org, const QString& app);  // для тестов
-    std::unique_ptr<QSettings> open();
+    void setScope(const QString& org, const QString& app);  // для тестов: своя временная папка
+    void dropScope(const QString& org, const QString& app); // для тестов: удалить её
+    std::unique_ptr<QSettings> open();                      // settings.ini
+    QString dataDir();
+    QString defaultDataDir();
+    QString portableDir();                // <папка программы>/AutoQ-data
+    bool portable();                      // портативный режим
+    bool customDataDir();                 // выбрана своя папка (не по умолчанию)
+    QString settingsFile();
+    QString profilesDir();
+    bool hasData(const QString& dir);     // в папке уже есть настройки AutoQ
+    // Сменить папку данных ("" — по умолчанию). copyCurrent — перенести туда текущие
+    // настройки и профили; иначе взять то, что там уже лежит. error — путь, где не вышло
+    bool setDataDir(const QString& dir, bool copyCurrent, QString* error = nullptr);
 }
 
 // Общие настройки программы
@@ -130,6 +148,14 @@ namespace Games {
     void saveProfile(const QString& gameId, const QString& name, const GameState& st, int mode = -1);
     void removeProfile(const QString& gameId, const QString& name);
     bool renameProfile(const QString& gameId, const QString& from, const QString& to);
+    QString profileFile(const QString& gameId, const QString& name);   // путь к файлу профиля ("" — нет)
+    QString profilesFolder(const QString& gameId);                     // папка профилей игры
+    // Профиль в файл — поделиться или сохранить копию (без клавиши профиля)
+    bool exportProfile(const QString& gameId, const QString& name, const QString& file, QString* error = nullptr);
+    // Профиль из файла — в профили игры; вернёт имя (занято — «Имя (2)»), "" — не вышло.
+    // fromGame — название игры, для которой профиль делали (если другая)
+    QString importProfile(const QString& gameId, const QString& file, QString* error = nullptr,
+                          QString* fromGame = nullptr);
     bool validProfileName(const QString& name, QString* why);
     // профиль, с которым сейчас работаем ("" — без профиля)
     QString activeProfile(const QString& gameId);

@@ -439,7 +439,7 @@ static void testV15() {
     CHECK(Games::list().isEmpty());
 
     for (const QString& sc : {"v15_" + pid, "imp_" + pid, "empty_" + pid}) {
-        QSettings s("AutoQTest", sc); s.clear(); s.sync();
+        AppSettings::dropScope("AutoQTest", sc);
     }
 }
 
@@ -557,7 +557,7 @@ static void testV17() {
     Games::removeProfile("minecraft", "Копать быстро");
     CHECK(Games::activeProfile("minecraft").isEmpty());          // удалённый — больше не активный
     Games::setActiveProfile("minecraft", "Без режима");
-    { auto s = AppSettings::open(); s->remove("games/minecraft/profiles/Без режима"); s->sync(); }
+    QFile::remove(Games::profileFile("minecraft", "Без режима"));   // файл профиля удалили руками
     CHECK(Games::activeProfile("minecraft").isEmpty());          // профиля нет — нет и активного
     Games::setActiveProfile("minecraft", "");
     CHECK(Games::activeProfile("minecraft").isEmpty());
@@ -796,7 +796,7 @@ static void testV112() {
     Prefs::setMiniOnTop(false);
     CHECK(!Prefs::miniOnTop());
 
-    { QSettings s("AutoQTest", "v112_" + pid); s.clear(); s.sync(); }
+    { AppSettings::dropScope("AutoQTest", "v112_" + pid); }
 }
 
 // --- 1.13: кружок «используется», Tab в сочетаниях ---
@@ -853,7 +853,7 @@ static void testV113() {
     Sounds::setSound(Sounds::On, "нет-такого");
     CHECK(Sounds::sound(Sounds::On) == "ticks-up");     // неизвестный — по умолчанию
     { auto s = AppSettings::open(); s->clear(); s->sync(); }
-    for (const QString& sc : {"v113_" + pid, "snd_" + pid}) { QSettings s("AutoQTest", sc); s.clear(); s.sync(); }
+    for (const QString& sc : {"v113_" + pid, "snd_" + pid}) { AppSettings::dropScope("AutoQTest", sc); }
 
     // И1 «в такт с монитором»: кадры, длина цикла, сетка без накопления ошибки
     CHECK(qAbs(FrameSync::frameMs(144) - 6.9444) < 0.001 && FrameSync::frameMs(0) == 0);
@@ -906,7 +906,7 @@ static void testV113() {
         CHECK(Games::loadState(Games::get("genshin")).frameHz == 0);
         s->clear(); s->sync();
     }
-    { QSettings s("AutoQTest", "fs_" + pid); s.clear(); s.sync(); }
+    { AppSettings::dropScope("AutoQTest", "fs_" + pid); }
 
     // кликер в такте: 10 мс кадр, цикл 25 мс -> 3 кадра = 30 мс
     {
@@ -933,6 +933,68 @@ static void testV113() {
     }
 }
 
+// 1.13: папка данных — настройки в settings.ini, профили — по файлу
+static void testDataDir() {
+    const QString pid = QString::number(QCoreApplication::applicationPid());
+    AppSettings::setScope("AutoQTest", "dd_" + pid);
+    CHECK(AppSettings::settingsFile() == AppSettings::dataDir() + "/settings.ini");
+    { auto s = AppSettings::open(); s->clear(); s->setValue("x", 1); s->sync(); }
+    CHECK(QFile::exists(AppSettings::settingsFile()));
+    CHECK(!AppSettings::portable() && !AppSettings::customDataDir());
+    CHECK(!AppSettings::setDataDir(QDir::tempPath(), true));          // у тестов папка своя
+    Games::addBuiltin("genshin");
+    Games::addBuiltin("minecraft");
+    GameState st; st.intervalMs = 77; st.frameSync = true;
+    Games::saveProfile("genshin", "Быстро: 2x", st, 1);
+    const QString f = Games::profileFile("genshin", "быстро: 2X");
+    CHECK(f == AppSettings::profilesDir() + "/genshin/Быстро_ 2x.ini");   // «:» в имени файла нельзя
+    CHECK(Games::profiles("genshin") == QStringList{"Быстро: 2x"});        // а в имени профиля — можно
+    int mode = -1;
+    CHECK(Games::loadProfile("genshin", "Быстро: 2x", &mode).intervalMs == 77 && mode == 1);
+    Games::setProfileKey("genshin", "Быстро: 2x", HotkeySpec::parse("f8"));
+    Games::setProfileInOverlay("genshin", "Быстро: 2x", false);
+    st.intervalMs = 88;
+    Games::saveProfile("genshin", "быстро: 2x", st, 1);                    // тот же профиль
+    CHECK(Games::profiles("genshin").size() == 1 && Games::profileKey("genshin", "Быстро: 2x").toString() == "f8");
+    CHECK(!Games::profileInOverlay("genshin", "Быстро: 2x"));             // сохранение не сбросило
+    CHECK(Games::renameProfile("genshin", "Быстро: 2x", "Турбо"));
+    CHECK(!QFile::exists(f) && QFile::exists(AppSettings::profilesDir() + "/genshin/Турбо.ini"));
+    CHECK(Games::profileKey("genshin", "Турбо").toString() == "f8" && !Games::profileInOverlay("genshin", "Турбо"));
+    CHECK(Games::renameProfile("genshin", "Турбо", "ТУРБО") && Games::profiles("genshin") == QStringList{"ТУРБО"});
+    // файл положили руками — тоже профиль; мусор — нет
+    {
+        QFile junk(AppSettings::profilesDir() + "/genshin/readme.txt");
+        CHECK(junk.open(QIODevice::WriteOnly)); junk.write("hi"); junk.close();
+    }
+    CHECK(Games::profiles("genshin").size() == 1);
+    // экспорт и импорт: в другую игру, имя занято — «(2)», клавиша не переезжает
+    const QString out = AppSettings::dataDir() + "/export.ini";
+    CHECK(Games::exportProfile("genshin", "турбо", out));
+    QString err, from;
+    CHECK(Games::importProfile("minecraft", out, &err, &from) == "ТУРБО" && from == "Genshin Impact");
+    CHECK(Games::loadProfile("minecraft", "ТУРБО").intervalMs == 88 && Games::loadProfile("minecraft", "ТУРБО").frameSync);
+    CHECK(!Games::profileKey("minecraft", "ТУРБО").isValid() && !Games::profileInOverlay("minecraft", "ТУРБО"));
+    CHECK(Games::importProfile("minecraft", out) == "ТУРБО (2)");
+    CHECK(Games::importProfile("genshin", AppSettings::settingsFile(), &err).isEmpty() && !err.isEmpty());
+    CHECK(Games::importProfile("genshin", AppSettings::dataDir() + "/нет.ini", &err).isEmpty());
+    // удалить игру — удалить и её профили
+    CHECK(Games::remove("minecraft") && !QDir(AppSettings::profilesDir() + "/minecraft").exists());
+    // профили старого формата (внутри настроек) переезжают в файлы
+    {
+        auto s = AppSettings::open();
+        s->setValue("games/genshin/profiles/Старый/interval", 321);
+        s->setValue("games/genshin/profiles/Старый/mode", 2);
+        s->setValue("games/genshin/profiles/Старый/hotkey", "f9");
+        s->sync();
+    }
+    Games::migrate();
+    CHECK(Games::profileExists("genshin", "Старый") && Games::loadProfile("genshin", "Старый", &mode).intervalMs == 321);
+    CHECK(mode == 2 && Games::profileKey("genshin", "Старый").toString() == "f9");
+    CHECK(!AppSettings::open()->childGroups().contains("games") ||
+          !AppSettings::open()->allKeys().filter("/profiles/").size());
+    AppSettings::dropScope("AutoQTest", "dd_" + pid);
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     testKeys();
@@ -945,7 +1007,13 @@ int main(int argc, char** argv) {
     testV19();
     testV112();
     testV113();
+    testDataDir();
     testI18n();
+    {
+        const QString pid = QString::number(QCoreApplication::applicationPid());
+        for (const char* sc : {"t", "v15_", "imp_", "empty_", "modes_", "v17_", "v19_", "v112_", "v113_", "snd_", "fs_"})
+            AppSettings::dropScope("AutoQTest", QString::fromLatin1(sc) + pid);
+    }
     std::printf("\n%d проверок пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
