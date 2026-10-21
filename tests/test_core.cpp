@@ -9,6 +9,7 @@
 #include "i18n.h"
 #include "sounds.h"
 #include "framesync.h"
+#include "cardlayout.h"
 #include <thread>
 #include <cstdio>
 #include "keys.h"
@@ -995,6 +996,68 @@ static void testDataDir() {
     AppSettings::dropScope("AutoQTest", "dd_" + pid);
 }
 
+// Д.И.1: раскладка карточек — у каждой игры своя
+static void testCardLayout() {
+    const QString pid = QString::number(QCoreApplication::applicationPid());
+    AppSettings::setScope("AutoQTest", "cl_" + pid);
+    using namespace CardLayout;
+    const Layout def = defaults();
+    CHECK(def.size() == 4 && def[0].id == "actions" && def[1].id == "speed" && def[3].id == "profile");
+    CHECK(def[1].blocks == QStringList({"speed", "framesync"}));
+    CHECK(isDefault(def));
+    // старая настройка «порядок карточек» — порядок по умолчанию
+    AppSettings::open()->setValue("cardOrder", QStringList{"profile", "speed", "window"});
+    CHECK(defaults()[1].id == "profile" && defaults()[3].id == "window");
+    AppSettings::open()->remove("cardOrder");
+    // блок — в другую карточку, на нужное место
+    Layout l = def;
+    moveBlock(l, "framesync", "window", 1);
+    CHECK(l[2].blocks == QStringList({"window", "framesync", "capture"}) && l[1].blocks == QStringList({"speed"}));
+    moveBlock(l, "framesync", "window", 3);                    // внутри той же карточки — в конец
+    CHECK(l[2].blocks == QStringList({"window", "capture", "framesync"}));
+    // своя карточка: пустая, с названием; удалили — блоки домой
+    const QString c = addCustom(l, "  Моя   быстрая  ");
+    CHECK(c == "c1" && l.last().title == "Моя быстрая" && l.last().blocks.isEmpty());
+    CHECK(addCustom(l, "") == "c2" && l.last().title == "…");
+    moveBlock(l, "armed", c, -1);
+    moveBlock(l, "speed", c, 0);
+    CHECK(l[indexOf(l, c)].blocks == QStringList({"speed", "armed"}));
+    CHECK(cardOf(l, "armed") == c);
+    rename(l, c, "Главное");
+    rename(l, "speed", "Нельзя");                            // встроенные не переименовываются
+    CHECK(l[indexOf(l, c)].title == "Главное" && l[indexOf(l, "speed")].title.isEmpty());
+    // порядок карточек
+    moveCard(l, c, 1);
+    CHECK(l[1].id == c && l[0].id == "actions");
+    moveCard(l, "actions", l.size());
+    CHECK(l.last().id == "actions");
+    setCollapsed(l, "window", true);
+    // сохранение — у игры своё
+    save("genshin", l);
+    CHECK(load("genshin") == normalize(l));
+    CHECK(isDefault(load("minecraft")));
+    removeCustom(l, c);
+    CHECK(indexOf(l, c) < 0 && l[indexOf(l, "speed")].blocks.contains("speed") && l[indexOf(l, "profile")].blocks.contains("armed"));
+    CHECK(l[indexOf(l, "window")].collapsed);
+    // стандартная — ключа нет
+    save("genshin", defaults());
+    CHECK(!AppSettings::open()->contains("games/genshin/layout"));
+    // испорченное и чужое — в порядок: каждый блок ровно раз, встроенные на месте
+    bool ok = true;
+    const Layout bad = fromJson(R"([{"id":"speed","blocks":["actions","actions","nope"]},{"id":"x"},{"id":"c9","title":"","blocks":["speed"]}])", &ok);
+    CHECK(ok && bad.size() == 5 && indexOf(bad, "x") < 0);
+    CHECK(bad[indexOf(bad, "speed")].blocks == QStringList({"actions", "framesync"}));
+    CHECK(bad[indexOf(bad, "c9")].blocks == QStringList({"speed"}) && bad[indexOf(bad, "c9")].title == "…");
+    CHECK(bad[indexOf(bad, "actions")].blocks.isEmpty());
+    QStringList all;
+    for (const Card& cc : bad) all += cc.blocks;
+    CHECK(all.size() == blockIds().size() && QSet<QString>(all.begin(), all.end()).size() == blockIds().size());
+    fromJson("{не json", &ok);
+    CHECK(!ok);
+    CHECK(fromJson(toJson(l)) == normalize(l));
+    AppSettings::dropScope("AutoQTest", "cl_" + pid);
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     testKeys();
@@ -1008,6 +1071,7 @@ int main(int argc, char** argv) {
     testV112();
     testV113();
     testDataDir();
+    testCardLayout();
     testI18n();
     {
         const QString pid = QString::number(QCoreApplication::applicationPid());

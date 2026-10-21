@@ -27,6 +27,7 @@ set(CORE_SOURCES
     hotkey.cpp      hotkey.h
     sounds.cpp      sounds.h
     framesync.cpp   framesync.h
+    cardlayout.cpp  cardlayout.h
 )
 if(APPLE)
     list(APPEND CORE_SOURCES macsupport.mm macsupport.h)
@@ -52,6 +53,7 @@ set(APP_SOURCES
     windowpicker.cpp    windowpicker.h
     overlay.cpp         overlay.h
     widgets.cpp         widgets.h
+    board.cpp           board.h
     theme.cpp           theme.h
     autostart.cpp       autostart.h
     animations.cpp      animations.h

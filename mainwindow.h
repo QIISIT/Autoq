@@ -37,7 +37,7 @@ class CaptureCountdown;
 class MiniWindow;
 class OverlayWindow;
 class ActionsEditor;
-class CardFlow;
+class Board;
 class OnboardingPage;
 struct OverlayData;
 
@@ -93,15 +93,16 @@ private:
     QWidget* buildSidebar();
     QWidget* buildWelcome();
     QWidget* buildHeader();
-    QFrame* buildActionsCard();
-    QFrame* buildSpeedCard();
-    QFrame* buildWindowCard();
-    QFrame* buildProfileCard();
+    void buildActionsCard();
+    void buildSpeedCard();
+    void buildWindowCard();
+    void buildProfileCard();
     QWidget* buildStatusBar();
     void buildTray();
     void connectSignals();
     void connectMini();
-    void applyCardOrder();
+    void setLayoutEditing(bool on);  // режим редактирования карточек (Д.И.1)
+    void applyLayoutToAll();
 
     // --- игры ---
     void reloadGames(const QString& selectId);
@@ -265,7 +266,6 @@ private:
     StartButton* startBtn_;
 
     // --- 01 действия ---
-    QFrame* actionsCard_;
     QLabel* actionsTitle_;
     Segmented* modeSeg_;
     Segmented* singleSeg_;
@@ -273,7 +273,6 @@ private:
     ActionsEditor* actionsEdit_;
 
     // --- 02 скорость ---
-    QFrame* speedCard_;
     QLabel* rateLabel_;
     QLabel* rateCaption_;
     QSlider* slider_;
@@ -288,7 +287,6 @@ private:
     QLabel* perMinuteLabel_;
 
     // --- 03 окно игры ---
-    QFrame* windowCard_;
     ToggleSwitch* lockSwitch_;
     QLabel* statusBox_;
     ChipEditor* procEdit_;
@@ -298,8 +296,7 @@ private:
     CaptureCountdown* countdown_;
 
     // --- 04 профиль и запуск ---
-    QFrame* profileCard_;
-    CardFlow* cardFlow_;
+    Board* board_;
     QComboBox* profileBox_;
     QToolButton* renameProfileBtn_;
     QToolButton* profileOverlayBtn_;   // «показывать в оверлее КПС» у профиля

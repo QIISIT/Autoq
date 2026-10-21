@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "board.h"
+#include "cardlayout.h"
 #include "i18n.h"
 #include "appinfo.h"
 #include "autostart.h"
@@ -82,26 +84,6 @@ static QLabel* mkLabel(const QString& text, const char* obj) {
     auto* l = new QLabel(text);
     l->setObjectName(obj);
     return l;
-}
-
-static QFrame* mkCard(QVBoxLayout** layOut) {
-    auto* c = new QFrame();
-    c->setObjectName("card");
-    auto* lay = new QVBoxLayout(c);
-    lay->setContentsMargins(16, 14, 16, 16);
-    lay->setSpacing(10);
-    *layOut = lay;
-    return c;
-}
-
-static QHBoxLayout* cardHeader(const QString& number, QLabel* title) {
-    auto* h = new QHBoxLayout();
-    h->setSpacing(10);
-    h->addWidget(mkLabel(number, "num"));
-    title->setObjectName("cardTitle");
-    h->addWidget(title);
-    h->addStretch(1);
-    return h;
 }
 
 static QSpinBox* mkSpin(int lo, int hi, const char* obj = nullptr) {
@@ -232,14 +214,13 @@ void MainWindow::buildUi() {
     lay->setContentsMargins(24, 20, 24, 20);
     lay->setSpacing(14);
     lay->addWidget(buildHeader());
-    lay->addWidget(buildActionsCard());
+    // карточки — из блоков; раскладка у каждой игры своя (режим редактирования)
+    board_ = new Board();
+    buildActionsCard();
     buildSpeedCard();
     buildWindowCard();
     buildProfileCard();
-    // три карточки в ряд; в узком окне — в две или одну колонку
-    cardFlow_ = new CardFlow();
-    lay->addWidget(cardFlow_, 1);
-    applyCardOrder();
+    lay->addWidget(board_, 1);
 
     // на низких экранах — прокрутка
     auto* scroll = new QScrollArea();
@@ -254,7 +235,21 @@ void MainWindow::buildUi() {
     // 0 — «добавь первую игру», 1 — настройки выбранной игры
     pages_ = new QStackedWidget();
     pages_->addWidget(buildWelcome());
-    pages_->addWidget(scroll);
+    // полоса режима редактирования — над прокруткой, всегда на виду
+    auto* gamePage = new QWidget();
+    auto* gpl = new QVBoxLayout(gamePage);
+    gpl->setContentsMargins(0, 0, 0, 0);
+    gpl->setSpacing(0);
+    auto* barWrap = new QWidget();
+    auto* bwl = new QVBoxLayout(barWrap);
+    bwl->setContentsMargins(24, 14, 24, 0);
+    bwl->addWidget(board_->editBar());
+    barWrap->setVisible(false);
+    connect(board_, &Board::editModeChanged, barWrap, &QWidget::setVisible);
+    gpl->addWidget(barWrap);
+    gpl->addWidget(scroll, 1);
+    pages_->addWidget(gamePage);
+    board_->setAnimArea(pages_);
     body->addWidget(pages_, 1);
 
     rootLay->addLayout(body, 1);
@@ -265,16 +260,6 @@ void MainWindow::buildUi() {
     rootStack_->addWidget(onboarding_);
     setCentralWidget(rootStack_);
     setMinimumSize(900, 540);
-}
-
-void MainWindow::applyCardOrder() {
-    QList<QWidget*> cards;
-    for (const QString& id : Theme::cardOrder()) {
-        if (id == "speed") cards << speedCard_;
-        else if (id == "window") cards << windowCard_;
-        else if (id == "profile") cards << profileCard_;
-    }
-    cardFlow_->setCards(cards);
 }
 
 QWidget* MainWindow::buildSidebar() {
@@ -456,12 +441,14 @@ QWidget* MainWindow::buildHeader() {
     return w;
 }
 
-QFrame* MainWindow::buildActionsCard() {
-    QVBoxLayout* lay;
-    QFrame* card = mkCard(&lay);
-    actionsCard_ = card;
-    actionsTitle_ = new QLabel(T("Действия"));
-    auto* head = cardHeader("01", actionsTitle_);
+void MainWindow::buildActionsCard() {
+    BoardBlock* blk = board_->addBlock("actions", T("Действия"));
+    blk->wide = true;
+    actionsTitle_ = board_->titleLabel("actions");
+    auto* headW = new QWidget();
+    auto* head = new QHBoxLayout(headW);
+    head->setContentsMargins(0, 0, 0, 0);
+    head->setSpacing(10);
     modeSeg_ = new Segmented({T("По очереди"), T("Вместе"), T("Зажать")}, false);
     modeSeg_->setToolTip(T("Режим работы:\nПо очереди — действия одно за другим (скип диалогов: ЛКМ, потом F).\nВместе — нажать все сразу, как F3+A.\nЗажать — держать нажатыми, пока кликер включён (копать, бежать)."));
     modeSeg_->button(0)->setAccessibleName(T("Режим: по очереди"));
@@ -475,25 +462,22 @@ QFrame* MainWindow::buildActionsCard() {
     head->addWidget(mkLabel(T("Режим"), "small"));
     head->addWidget(modeSeg_);
     head->addWidget(singleSeg_);
-    lay->addLayout(head);
+    blk->setHead(headW);
+    QVBoxLayout* lay = blk->body();
 
     actionsEdit_ = new ActionsEditor();
     lay->addWidget(actionsEdit_);
     actionsHint_ = mkLabel(QString(), "faint");
     actionsHint_->setWordWrap(true);
     lay->addWidget(actionsHint_);
-    return card;
 }
 
-QFrame* MainWindow::buildSpeedCard() {
-    QVBoxLayout* lay;
-    QFrame* card = mkCard(&lay);
-    speedCard_ = card;
-    auto* head = cardHeader("02", new QLabel(T("Скорость")));
+void MainWindow::buildSpeedCard() {
+    BoardBlock* blk = board_->addBlock("speed", T("Скорость и интервал"));
     unitSeg_ = new Segmented({T("мс"), T("КПС"), T("КПМ")}, false);
     unitSeg_->setToolTip(T("В чём задавать скорость: интервал в миллисекундах, клики в секунду (КПС) или в минуту (КПМ)"));
-    head->addWidget(unitSeg_);
-    lay->addLayout(head);
+    blk->setHead(unitSeg_);
+    QVBoxLayout* lay = blk->body();
     auto* rate = new QHBoxLayout();
     rate->setSpacing(6);
     rateLabel_ = mkLabel("≈ 0", "rate");
@@ -534,7 +518,10 @@ QFrame* MainWindow::buildSpeedCard() {
     r2->addWidget(jitterBox_);
     lay->addLayout(r2);
 
-    // в такт с монитором: каждый клик — в свой кадр
+    // в такт с монитором: каждый клик — в свой кадр (отдельный блок, внизу карточки)
+    BoardBlock* fblk = board_->addBlock("framesync", T("Такт монитора"));
+    fblk->bottom = true;
+    lay = fblk->body();
     auto* r3 = new QHBoxLayout();
     r3->setSpacing(8);
     frameSyncSwitch_ = new ToggleSwitch();
@@ -564,7 +551,6 @@ QFrame* MainWindow::buildSpeedCard() {
     hzBox_->setAccessibleName(T("Частота кадров"));
     r4->addWidget(hzBox_);
     lay->addLayout(r4);
-    lay->addStretch(1);
     perMinuteLabel_ = mkLabel(QString(), "faint");
     perMinuteLabel_->setWordWrap(true);
     lay->addWidget(perMinuteLabel_);
@@ -572,19 +558,15 @@ QFrame* MainWindow::buildSpeedCard() {
         auto s = AppSettings::open();
         unitSeg_->setCurrent(qBound(0, s->value("speedUnit", 0).toInt(), 2));
     }
-    return card;
 }
 
-QFrame* MainWindow::buildWindowCard() {
-    QVBoxLayout* lay;
-    QFrame* card = mkCard(&lay);
-    windowCard_ = card;
-    auto* head = cardHeader("03", new QLabel(T("Окно игры")));
+void MainWindow::buildWindowCard() {
+    BoardBlock* blk = board_->addBlock("window", T("Какое окно — игра"));
     lockSwitch_ = new ToggleSwitch();
     lockSwitch_->setToolTip(T("Кликать только в выбранном окне игры.\nПока окно не выбрано — кликер не нажимает нигде."));
     lockSwitch_->setAccessibleName(T("Кликать только в окне игры"));
-    head->addWidget(lockSwitch_);
-    lay->addLayout(head);
+    blk->setHead(lockSwitch_);
+    QVBoxLayout* lay = blk->body();
 
     statusBox_ = mkLabel(QString(), "status");
     statusBox_->setWordWrap(true);
@@ -605,8 +587,10 @@ QFrame* MainWindow::buildWindowCard() {
     g->addWidget(mkLabel(T("заголовок"), "small"), 1, 0, Qt::AlignTop);
     g->addWidget(titleEdit_, 1, 1);
     lay->addLayout(g);
-    lay->addStretch(1);
 
+    BoardBlock* cblk = board_->addBlock("capture", T("Выбрать окно"));
+    cblk->bottom = true;
+    lay = cblk->body();
     lay->addWidget(mkLabel(T("Время на переключение в игру"), "small"));
     timeSeg_ = new TimeChoice();
     timeSeg_->setToolTip(T("Сколько секунд дать себе, чтобы переключиться в игру после «Выбрать окно»"));
@@ -620,14 +604,11 @@ QFrame* MainWindow::buildWindowCard() {
     countdown_ = new CaptureCountdown(checkBtn_, this);
     countdown_->setIdleText(T("Выбрать окно (%1 сек)").arg(Prefs::captureSeconds()));
     lay->addWidget(checkBtn_);
-    return card;
 }
 
-QFrame* MainWindow::buildProfileCard() {
-    QVBoxLayout* lay;
-    QFrame* card = mkCard(&lay);
-    profileCard_ = card;
-    lay->addLayout(cardHeader("04", new QLabel(T("Профиль и запуск"))));
+void MainWindow::buildProfileCard() {
+    BoardBlock* blk = board_->addBlock("profile", T("Профиль"));
+    QVBoxLayout* lay = blk->body();
     auto* prow = new QHBoxLayout();
     prow->setSpacing(6);
     profileBox_ = new QComboBox();
@@ -712,10 +693,10 @@ QFrame* MainWindow::buildProfileCard() {
     g->addWidget(resetProfileBtn_, 1, 0);
     g->addWidget(delProfileBtn_, 1, 1);
     lay->addLayout(g);
-    auto* div = new QFrame();
-    div->setObjectName("divider");
-    lay->addWidget(div);
 
+    BoardBlock* hblk = board_->addBlock("hotkey", T("Клавиша старт/стоп"));
+    hblk->setDivider(true);
+    lay = hblk->body();
     auto* hkCaption = mkLabel(T("Старт / стоп этой игры"), "muted");
     hkCaption->setToolTip(T("У каждой игры своя клавиша. Из списка (с поиском) или своё сочетание — любая буква, цифра, Ctrl+…, колёсико или Mouse 4/5"));
     lay->addWidget(hkCaption);
@@ -736,6 +717,17 @@ QFrame* MainWindow::buildProfileCard() {
     keyModeSeg_->setToolTip(T("Вкл / выкл: первое нажатие включает, второе выключает.\nПока держу: кликер работает, только пока клавиша зажата."));
     km->addWidget(keyModeSeg_, 1);
     lay->addLayout(km);
+    hotkeyStatus_ = mkLabel(QString(), "hint");
+    hotkeyStatus_->setWordWrap(true);
+    hotkeyStatus_->hide();
+    lay->addWidget(hotkeyStatus_);
+    hotkeyInfo_ = mkLabel(QString(), "small");
+    hotkeyInfo_->setWordWrap(true);
+    hotkeyInfo_->hide();
+    lay->addWidget(hotkeyInfo_);
+
+    BoardBlock* ablk = board_->addBlock("armed", T("Используется"));
+    lay = ablk->body();
     auto* ar = new QHBoxLayout();
     ar->setSpacing(8);
     armedSwitch_ = new ToggleSwitch();
@@ -747,16 +739,6 @@ QFrame* MainWindow::buildProfileCard() {
     arl->setToolTip(armedSwitch_->toolTip());
     ar->addWidget(arl, 1);
     lay->addLayout(ar);
-    hotkeyStatus_ = mkLabel(QString(), "hint");
-    hotkeyStatus_->setWordWrap(true);
-    hotkeyStatus_->hide();
-    lay->addWidget(hotkeyStatus_);
-    hotkeyInfo_ = mkLabel(QString(), "small");
-    hotkeyInfo_->setWordWrap(true);
-    hotkeyInfo_->hide();
-    lay->addWidget(hotkeyInfo_);
-    lay->addStretch(1);
-    return card;
 }
 
 QWidget* MainWindow::buildStatusBar() {
@@ -777,6 +759,10 @@ QWidget* MainWindow::buildStatusBar() {
 }
 
 void MainWindow::connectSignals() {
+    connect(board_, &Board::edited, this, [this]() {
+        if (hasGame()) CardLayout::save(game_.id, board_->cardLayout());
+    });
+    connect(board_, &Board::applyToAllRequested, this, &MainWindow::applyLayoutToAll);
     connect(gameList_, &QListWidget::currentRowChanged, this, &MainWindow::onGameRowChanged);
     connect(gameList_, &QListWidget::customContextMenuRequested, this, &MainWindow::showGameMenu);
     connect(addGameBtn_, &QPushButton::clicked, this, &MainWindow::addGame);
@@ -1012,6 +998,7 @@ void MainWindow::connectMini() {
 void MainWindow::refreshIcons() {
     const auto& t = Theme::t();
     const qreal dpr = devicePixelRatioF();
+    board_->refreshIcons();
     qApp->setWindowIcon(AqIcons::appIcon());
     brandLogo_->setPixmap(AqIcons::logo(26, dpr));
     for (QLabel* l : findChildren<QLabel*>())
@@ -1173,8 +1160,7 @@ void MainWindow::rebuildWelcome() {
 
 void MainWindow::addTemplate(const QString& id) {
     if (!Games::addBuiltin(id)) return;
-    Anim::transition(pages_, [this, id]() { reloadGames(id); },
-                     {actionsCard_, cardFlow_});
+    Anim::transition(pages_, [this, id]() { reloadGames(id); }, board_->visibleCards());
     notify(T("Игра «%1» добавлена.").arg(Games::get(id).name));
 }
 
@@ -1193,11 +1179,7 @@ void MainWindow::onGameRowChanged(int row) {
     cancelPending();
     countdown_->cancel();
     if (mini_) mini_->cancelCapture();
-    QList<QWidget*> cards{actionsCard_};
-    for (const QString& c : Theme::cardOrder())
-        cards << (c == "speed" ? static_cast<QWidget*>(speedCard_) : c == "window" ? static_cast<QWidget*>(windowCard_)
-                                                                   : static_cast<QWidget*>(profileCard_));
-    Anim::transition(pages_, [this, id]() { switchToGame(id); }, cards);
+    Anim::transition(pages_, [this, id]() { switchToGame(id); }, board_->visibleCards());
     rebuildTrayGames();
 }
 
@@ -1222,6 +1204,7 @@ void MainWindow::switchToGame(const QString& id) {
     game_ = g;
     Games::setCurrentId(g.id);
     cur_ = Games::loadState(g);
+    board_->setCardLayout(CardLayout::load(g.id));
     resultUntil_ = 0;
     rateHist_.clear();
     loading_ = true;
@@ -1261,7 +1244,7 @@ void MainWindow::addGame() {
     GameDef res = dlg.result();
     if (res.builtin) Games::addBuiltin(res.id);   // шаблон: чистая запись, затем правки из окна
     Games::save(res);
-    Anim::transition(pages_, [this, res]() { reloadGames(res.id); }, {actionsCard_, cardFlow_});
+    Anim::transition(pages_, [this, res]() { reloadGames(res.id); }, board_->visibleCards());
     notify(T("Игра «%1» добавлена.").arg(res.name));
 }
 
@@ -3034,6 +3017,30 @@ void MainWindow::showMini() {
     hide();
 }
 
+void MainWindow::setLayoutEditing(bool on) {
+    if (on && !hasGame()) {
+        notify(T("Сначала добавь игру: раскладка карточек у каждой игры своя."));
+        return;
+    }
+    if (on && mini_ && mini_->isVisible()) showMain();
+    board_->setEditMode(on);
+}
+
+void MainWindow::applyLayoutToAll() {
+    if (!hasGame()) return;
+    const QList<GameDef> games = Games::list();
+    if (games.size() < 2) {
+        notify(T("Других игр пока нет."));
+        return;
+    }
+    if (!askYesNo(dialogParent(), T("Раскладка для всех игр"),
+                  T("Сделать такую раскладку карточек у всех игр (%1)? Их нынешние раскладки заменятся.").arg(games.size()),
+                  T("Для всех игр"), T("Отмена")))
+        return;
+    for (const GameDef& g : games) CardLayout::save(g.id, board_->cardLayout());
+    notify(T("Теперь у всех игр раскладка как у «%1».").arg(game_.name));
+}
+
 void MainWindow::openSettings() { openSettingsPage(SettingsDialog::General); }
 void MainWindow::openOverlaySettings() { openSettingsPage(SettingsDialog::Overlay); }
 
@@ -3108,7 +3115,10 @@ void MainWindow::openSettingsPage(int page) {
         refreshLive();
     });
     connect(&dlg, &SettingsDialog::appearanceChanged, this, &MainWindow::appearanceChanged);
-    connect(&dlg, &SettingsDialog::cardOrderChanged, this, &MainWindow::applyCardOrder);
+    connect(&dlg, &SettingsDialog::editLayoutRequested, this, [this, &dlg]() {
+        dlg.accept();
+        QTimer::singleShot(0, this, [this]() { setLayoutEditing(true); });
+    });
     connect(&dlg, &SettingsDialog::onboardingRequested, this, [this, &dlg]() {
         dlg.accept();
         QTimer::singleShot(0, this, &MainWindow::startOnboarding);

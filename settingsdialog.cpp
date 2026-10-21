@@ -608,14 +608,27 @@ QWidget* SettingsDialog::buildAppearancePage() {
     bordersSeg_->setToolTip(T("Насколько заметны рамки карточек и полей"));
     eg->addWidget(bordersSeg_, r++, 1);
     eg->addWidget(lbl(T("Карточки"), "muted"), r, 0, Qt::AlignTop);
-    auto* orderW = new QWidget();
-    orderBox_ = new QVBoxLayout(orderW);
-    orderBox_->setContentsMargins(0, 0, 0, 0);
-    orderBox_->setSpacing(4);
-    eg->addWidget(orderW, r++, 1);
+    {
+        // раскладка карточек — прямо в главном окне: тянуть, сворачивать, свои карточки
+        auto* cw = new QWidget();
+        auto* cl = new QVBoxLayout(cw);
+        cl->setContentsMargins(0, 0, 0, 0);
+        cl->setSpacing(6);
+        auto* editBtn = new QPushButton(T("Режим редактирования"));
+        editBtn->setObjectName("outline");
+        editBtn->setIcon(AqIcons::ui("layout", Theme::t().text, 15));
+        editBtn->setCursor(Qt::PointingHandCursor);
+        editBtn->setToolTip(T("Закрыть настройки и расставить карточки прямо в окне"));
+        connect(editBtn, &QPushButton::clicked, this, &SettingsDialog::editLayoutRequested);
+        cl->addWidget(editBtn, 0, Qt::AlignLeft);
+        auto* cn = lbl(T("Перетаскивай карточки и блоки, создавай свои карточки, сворачивай ненужные. У каждой игры своя раскладка."), "small");
+        cn->setWordWrap(true);
+        cl->addWidget(cn);
+        eg->addWidget(cw, r++, 1);
+    }
     auto* edReset = new QPushButton(T("Сбросить редактор"));
     edReset->setObjectName("ghost");
-    edReset->setToolTip(T("Скругление, плотность, шрифты, рамки и порядок карточек — как у стиля"));
+    edReset->setToolTip(T("Скругление, плотность, шрифты и рамки — как у стиля"));
     eg->addWidget(edReset, r++, 0, 1, 2, Qt::AlignLeft);
     lay->addWidget(ed);
     auto* edNote = lbl(T("Мелкие элементы не исчезнут: размеры кнопок и полей подстраиваются, а при нехватке места карточки встают в две или одну колонку."), "small");
@@ -747,9 +760,6 @@ QWidget* SettingsDialog::buildAppearancePage() {
         a.displayFont = -1;
         a.textFont = -1;
         a.borders = 1;
-        Theme::setCardOrder(Theme::cardIds());
-        rebuildCardOrder();
-        emit cardOrderChanged();
         apply(a);
     });
     connect(scaleSeg_, &Segmented::changed, this, [this](int i) {
@@ -770,50 +780,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
         a.animSpeed = Theme::current().animSpeed;
         apply(a);
     });
-    rebuildCardOrder();
     return page;
-}
-
-void SettingsDialog::rebuildCardOrder() {
-    if (!orderBox_) return;
-    while (QLayoutItem* it = orderBox_->takeAt(0)) {
-        if (QWidget* w = it->widget()) { w->hide(); w->deleteLater(); }
-        if (QLayout* l = it->layout()) {
-            while (QLayoutItem* c = l->takeAt(0)) { if (c->widget()) { c->widget()->hide(); c->widget()->deleteLater(); } delete c; }
-        }
-        delete it;
-    }
-    const QStringList order = Theme::cardOrder();
-    const auto& t = Theme::t();
-    for (int i = 0; i < order.size(); ++i) {
-        auto* row = new QHBoxLayout();
-        row->setSpacing(6);
-        auto* n = lbl(QString("%1. %2").arg(i + 1).arg(Theme::cardLabel(order[i])), "muted");
-        row->addWidget(n, 1);
-        auto mk = [&](const char* icon, const QString& tip, int dir) {
-            auto* b = new QToolButton();
-            b->setObjectName("resetMini");
-            b->setFixedSize(24, 24);
-            b->setIcon(AqIcons::ui(icon, t.muted, 13, 2.2));
-            b->setToolTip(tip);
-            b->setAccessibleName(tip);
-            b->setCursor(Qt::PointingHandCursor);
-            const int j = i + dir;
-            b->setEnabled(j >= 0 && j < order.size());
-            connect(b, &QToolButton::clicked, this, [this, i, j]() {
-                QStringList o = Theme::cardOrder();
-                if (j < 0 || j >= o.size()) return;
-                o.swapItemsAt(i, j);
-                Theme::setCardOrder(o);
-                QTimer::singleShot(0, this, [this]() { rebuildCardOrder(); });
-                emit cardOrderChanged();
-            });
-            return b;
-        };
-        row->addWidget(mk("chevron-up", T("Выше (левее)"), -1));
-        row->addWidget(mk("chevron", T("Ниже (правее)"), 1));
-        orderBox_->addLayout(row);
-    }
 }
 
 void SettingsDialog::rebuildAnimDemo() {

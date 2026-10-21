@@ -35,7 +35,7 @@ signals:
     void restartRequested();
     void adminRestartRequested();   // Windows: «Перезапустить от имени администратора»
     void onboardingRequested();     // «Пройти первый запуск заново»
-    void cardOrderChanged();
+    void editLayoutRequested();   // «Режим редактирования» карточек — в главном окне
 
 private:
     QWidget* buildGeneralPage();
@@ -44,7 +44,6 @@ private:
     void apply(const Theme::Appearance& a);
     void refresh();                         // отметить выбранные цвета, перекрасить образцы
     void rebuildBgRow();
-    void rebuildCardOrder();
     void refreshEditor();
     void rebuildAnimDemo();
     QList<QToolButton*> makeSwatches(const QStringList& colors, QButtonGroup& group, QHBoxLayout* row);
@@ -90,7 +89,6 @@ private:
     Segmented* displayFontSeg_ = nullptr;
     Segmented* textFontSeg_ = nullptr;
     Segmented* bordersSeg_ = nullptr;
-    class QVBoxLayout* orderBox_ = nullptr;
     Segmented* scaleSeg_ = nullptr;
     QLabel* scaleNote_ = nullptr;
     QPushButton* scaleRestart_ = nullptr;

@@ -69,12 +69,6 @@ namespace Theme {
     double scaleClampNeeded();
     int minUsableGuiScale();                    // меньше этого на этих экранах нельзя (обычно 100 %)
 
-    // --- порядок карточек на главном экране ---
-    QStringList cardIds();                      // speed, window, profile
-    QString cardLabel(const QString& id);
-    QStringList cardOrder();
-    void setCardOrder(const QStringList& order);
-
     struct Tokens {
         bool light = false;
         QColor onRed;                           // текст на кнопке цвета акцента

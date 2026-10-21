@@ -148,6 +148,13 @@ QToolButton#popupX { background: transparent; border: none; border-radius: 6px; 
 QToolButton#popupX:hover { background: @field@; }
 QToolButton#resetMini { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 0; }
 QToolButton#resetMini:hover { border-color: @fieldBorder2@; background: @field@; }
+QFrame#card[editing="true"] { border: 1px dashed @red@; }
+QLabel#cardEmpty { color: @faint@; border: 1px dashed @fieldBorder2@; border-radius: 10px; padding: 14px; font-size: 12px; }
+QToolButton#cardTile { background: @card@; border: 1px solid @cardBorder@; border-radius: 10px; padding: 6px 12px; color: @text2@; font-size: 13px; font-weight: 600; }
+QToolButton#cardTile:hover { border-color: @fieldBorder2@; color: @text@; }
+QFrame#editBar { background: @card@; border: 1px solid @red@; border-radius: 12px; }
+QFrame#editBar QLabel { background: transparent; }
+QWidget#dropMarker { background: @red@; border-radius: 2px; }
 QFrame#editorBox { background: @fieldDeep@; border: 1px solid @fieldBorder@; border-radius: 12px; }
 QFrame#editorBox QLabel { background: transparent; }
 QLabel#rate { font-family: "@mono@"; font-size: 30px; font-weight: 700; color: @redHi@; }
@@ -697,33 +704,6 @@ int Theme::minUsableGuiScale() {
     for (int v : guiScaleChoices())
         if (base * v / 100.0 >= 0.999) return v;
     return 100;
-}
-
-// ---------------------------------------------------------------------------
-// Порядок карточек
-// ---------------------------------------------------------------------------
-QStringList Theme::cardIds() { return {"speed", "window", "profile"}; }
-
-QString Theme::cardLabel(const QString& id) {
-    if (id == "window") return T("Окно игры");
-    if (id == "profile") return T("Профиль и запуск");
-    return T("Скорость");
-}
-
-QStringList Theme::cardOrder() {
-    auto s = AppSettings::open();
-    QStringList out;
-    for (const QString& id : s->value("cardOrder").toStringList())
-        if (cardIds().contains(id) && !out.contains(id)) out << id;
-    for (const QString& id : cardIds())
-        if (!out.contains(id)) out << id;
-    return out;
-}
-
-void Theme::setCardOrder(const QStringList& order) {
-    auto s = AppSettings::open();
-    s->setValue("cardOrder", order);
-    s->sync();
 }
 
 // ---------------------------------------------------------------------------
