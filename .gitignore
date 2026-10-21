@@ -1,0 +1,4 @@
+build-*/
+dist-*/
+macos/cert/
+packaging/winget/manifests/
