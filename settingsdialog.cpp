@@ -609,21 +609,21 @@ QWidget* SettingsDialog::buildAppearancePage() {
     bordersSeg_ = new Segmented({T("Мягкие"), T("Обычные"), T("Чёткие")}, false);
     bordersSeg_->setToolTip(T("Насколько заметны рамки карточек и полей"));
     eg->addWidget(bordersSeg_, r++, 1);
-    eg->addWidget(lbl(T("Карточки"), "muted"), r, 0, Qt::AlignTop);
+    eg->addWidget(lbl(T("Интерфейс"), "muted"), r, 0, Qt::AlignTop);
     {
-        // раскладка карточек — прямо в главном окне: тянуть, сворачивать, свои карточки
+        // редактор интерфейса — прямо в главном окне: тянуть, менять размер и вид, прятать, шаблоны
         auto* cw = new QWidget();
         auto* cl = new QVBoxLayout(cw);
         cl->setContentsMargins(0, 0, 0, 0);
         cl->setSpacing(6);
-        auto* editBtn = new QPushButton(T("Режим редактирования"));
+        auto* editBtn = new QPushButton(T("Редактор интерфейса"));
         editBtn->setObjectName("outline");
         editBtn->setIcon(AqIcons::ui("layout", Theme::t().text, 15));
         editBtn->setCursor(Qt::PointingHandCursor);
-        editBtn->setToolTip(T("Закрыть настройки и расставить карточки прямо в окне"));
+        editBtn->setToolTip(T("Закрыть настройки и менять интерфейс прямо в окне"));
         connect(editBtn, &QPushButton::clicked, this, &SettingsDialog::editLayoutRequested);
         cl->addWidget(editBtn, 0, Qt::AlignLeft);
-        auto* cn = lbl(T("Перетаскивай карточки и блоки, создавай свои карточки, сворачивай ненужные. У каждой игры своя раскладка."), "small");
+        auto* cn = lbl(T("Перетаскивай карточки и блоки, тяни края карточек, меняй их вид и цвет, прячь лишнее, выбирай шаблон и место панели с играми. У каждой игры своя раскладка."), "small");
         cn->setWordWrap(true);
         cl->addWidget(cn);
         eg->addWidget(cw, r++, 1);

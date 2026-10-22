@@ -39,6 +39,9 @@ class OverlayWindow;
 class ActionsEditor;
 class Board;
 class OnboardingPage;
+class GameListDelegate;
+class QHBoxLayout;
+class QBoxLayout;
 struct OverlayData;
 
 // Кликер одной игры: у каждой игры свой — игры можно запускать вместе
@@ -92,7 +95,7 @@ private:
     void buildUi();
     QWidget* buildSidebar();
     QWidget* buildWelcome();
-    QWidget* buildHeader();
+    void buildHeader();            // шапка — тоже блоки: игра, счётчик, кнопки, «Старт»
     void buildActionsCard();
     void buildSpeedCard();
     void buildWindowCard();
@@ -101,7 +104,10 @@ private:
     void buildTray();
     void connectSignals();
     void connectMini();
-    void setLayoutEditing(bool on);  // режим редактирования карточек (Д.И.1)
+    void setLayoutEditing(bool on);  // редактор интерфейса (Д.И.1)
+    void applySidebarMode(int mode); // 0 слева, 1 справа, 2 узкая, 3 скрыта
+    void showSwitchMenu();           // панель скрыта: игры, «добавить», настройки — из шапки
+    void updateMonitor(bool full);   // блок «Монитор запуска» (full — и числа, иначе только шаг)
     void applyLayoutToAll();
 
     // --- игры ---
@@ -211,7 +217,6 @@ private:
     void syncOverlayUi();          // кнопки «оверлей вкл/выкл» в шапке, трее и мини-окне
     void appearanceChanged();      // тема/стиль сменились — перерисовать
     void finishOnboarding();
-    void updateResponsive();
 
     std::map<QString, std::unique_ptr<GameRunner>> runners_;
     GlobalHotkey* hotkey_ = nullptr;
@@ -242,6 +247,13 @@ private:
     QLabel* gameCount_;
     QToolButton* settingsBtn_;
     QLabel* emptyHint_;
+    QFrame* sidebar_ = nullptr;
+    QHBoxLayout* bodyLay_ = nullptr;
+    QBoxLayout* brandLay_ = nullptr;
+    QWidget* brandNames_ = nullptr;
+    QWidget* sideSection_ = nullptr;          // «МОИ ИГРЫ» и число
+    GameListDelegate* gameDelegate_ = nullptr;
+    int sideMode_ = 0;
 
     // --- страницы ---
     QStackedWidget* pages_;
@@ -249,13 +261,14 @@ private:
     QLabel* welcomeLogo_;
     QWidget* inner_ = nullptr;
     class QScrollArea* mainScroll_ = nullptr;
-    class QBoxLayout* headerLay_ = nullptr;
 
     // --- шапка ---
     QLabel* headerIcon_;
     ElideLabel* nameLabel_;
     QToolButton* editGameBtn_;
     QToolButton* delGameBtn_;
+    QToolButton* switchGameBtn_;      // панель скрыта — список игр из шапки
+    QToolButton* layoutBtn_;          // редактор интерфейса
     QToolButton* miniBtn_;
     QToolButton* overlayBtn_;
     QToolButton* presetBtn_;
@@ -272,6 +285,14 @@ private:
     Segmented* singleSeg_;
     QLabel* actionsHint_;
     ActionsEditor* actionsEdit_;
+
+    // --- монитор запуска ---
+    QLabel* monTime_;
+    QLabel* monState_;
+    QLabel* monCycles_;
+    QLabel* monPresses_;
+    QLabel* monRate_;
+    QLabel* monStep_;
 
     // --- 02 скорость ---
     QLabel* rateLabel_;

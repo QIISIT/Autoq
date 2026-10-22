@@ -194,8 +194,10 @@ public:
     enum Roles { IdRole = Qt::UserRole, SubRole, TileRole, TileActiveRole, ArmedRole, RunningRole, KeyRole };
     using QStyledItemDelegate::QStyledItemDelegate;
     void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& idx) const override;
-    QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return QSize(200, 54); }
-    static QRect circleRect(const QRect& itemRect);    // где кружок «используется»
+    QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return QSize(compact ? 56 : 200, 54); }
+    // где кружок «используется»; compact — узкая панель: только значок, кружок — точкой в углу
+    static QRect circleRect(const QRect& itemRect, bool compact = false);
+    bool compact = false;
 };
 
 // Карточки в ряд, которые сами перестраиваются в 2 или 1 колонку, когда окно узкое

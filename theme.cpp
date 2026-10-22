@@ -148,7 +148,19 @@ QToolButton#popupX { background: transparent; border: none; border-radius: 6px; 
 QToolButton#popupX:hover { background: @field@; }
 QToolButton#resetMini { background: transparent; border: 1px solid transparent; border-radius: 6px; padding: 0; }
 QToolButton#resetMini:hover { border-color: @fieldBorder2@; background: @field@; }
+QFrame#card[cstyle="1"] { border: 1px solid transparent; }
+QFrame#card[cstyle="2"] { border: 1px solid @red@; background: @redTint2@; }
+QFrame#card[cstyle="3"] { border: 1px solid transparent; background: transparent; }
 QFrame#card[editing="true"] { border: 1px dashed @red@; }
+QLabel#sizeTag { background: @red@; color: @onRed@; border-radius: 10px /*pill*/; padding: 3px 10px; font-size: 12px; font-weight: 700; }
+QToolButton#shieldEye { background: @red@; border: none; border-radius: 12px /*pill*/; padding: 0; }
+QToolButton#shieldEye:hover { background: @redHi@; }
+QFrame#sidebar[side="right"] { border-right: none; border-left: 1px solid @cardBorder@; }
+QLabel#monValue { font-family: "@mono@"; font-size: 18px; font-weight: 700; }
+QLabel#monState { background: @field@; border: 1px solid @fieldBorder@; border-radius: 11px /*pill*/; padding: 3px 10px; color: @text2@; font-size: 12px; font-weight: 600; }
+QLabel#monState[state="run"] { background: @redTint@; border-color: @red@; color: @redHi@; }
+QLabel#monState[state="wait"] { background: @redTint2@; border-color: @redLine@; color: @redSoft@; }
+QLabel#monState[state="warn"] { background: @warnBg@; border-color: @warnLine@; color: @text@; }
 QLabel#cardEmpty { color: @faint@; border: 1px dashed @fieldBorder2@; border-radius: 10px; padding: 14px; font-size: 12px; }
 QToolButton#cardTile { background: @card@; border: 1px solid @cardBorder@; border-radius: 10px; padding: 6px 12px; color: @text2@; font-size: 13px; font-weight: 600; }
 QToolButton#cardTile:hover { border-color: @fieldBorder2@; color: @text@; }
@@ -173,6 +185,7 @@ QLabel#status[state="bad"]  { background: @redTint@; border: 1px solid @red@; co
 QLabel#status[state="warn"] { background: @warnBg@; border: 1px solid @warnLine@; color: @text@; }
 
 QFrame#card QPushButton { padding: 5px 8px; }
+QFrame#card QPushButton#start { padding: 0 18px; }
 QFrame#slot { background: @field@; border: 1px solid @fieldBorder@; border-radius: 12px; }
 QFrame#slot QLabel { background: transparent; }
 QFrame#slot[active="true"] { border: 1px solid @red@; }
@@ -242,6 +255,8 @@ QComboBox:hover { border-color: @fieldBorder2@; }
 QComboBox:focus { border-color: @red@; }
 QComboBox::drop-down { border: none; width: 22px; }
 QComboBox::down-arrow { image: url("@chevron@"); width: 12px; height: 12px; }
+QPushButton[menuBtn="true"] { padding-right: 28px; }
+QPushButton[menuBtn="true"]::menu-indicator { image: url("@chevron@"); subcontrol-origin: padding; subcontrol-position: center right; right: 10px; width: 10px; height: 10px; }
 QComboBox QAbstractItemView { background: @card@; border: 1px solid @fieldBorder@; selection-background-color: @redTint@; selection-color: @text@; outline: none; padding: 4px; }
 QComboBox#kind { background: transparent; border: none; padding: 0 2px; min-height: 16px; color: @muted@; font-size: 11px; }
 QComboBox#kind::drop-down { width: 14px; }
@@ -350,6 +365,7 @@ QPushButton#accent[dirty="true"] { background: @red@; color: @onRed@; border: no
 const char* kQssGlass = R"QSS(
 QFrame#card { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @cardHi@, stop:1 @card@); border: 1px solid @glassLine@; }
 QFrame#sidebar { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @sideHi@, stop:1 @side@); border-right: 1px solid @glassLine@; }
+QFrame#sidebar[side="right"] { border-right: none; border-left: 1px solid @glassLine@; }
 QFrame#statusbar { background: @side@; }
 QFrame#slot { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @fieldHi@, stop:1 @field@); }
 QPushButton#start { border-radius: 28px; }
@@ -367,6 +383,8 @@ QLabel#section, QLabel#cardTitle, QLabel#counterCaption, QLabel#fieldLabel { fon
 QLabel#cardTitle { font-weight: 700; }
 QLabel#num { background: @red@; color: @onRed@; padding: 0 4px; }
 QFrame#sidebar { border-right: 1px solid @fieldBorder2@; }
+QFrame#sidebar[side="right"] { border-right: none; border-left: 1px solid @fieldBorder2@; }
+QFrame#card[cstyle="2"] { border-left: 3px solid @red@; }
 QFrame#statusbar { border-top: 1px solid @fieldBorder2@; }
 QPushButton#keyPick, QPushButton#keyPickMini { border-bottom: 2px solid @fieldBorder2@; }
 QPushButton#keyPickBig { border-bottom: 2px solid @fieldBorder2@; }
@@ -722,6 +740,7 @@ void Theme::applyDensity(QWidget* root) {
     const qreal f = densityFactor(current().density);
     QList<QLayout*> layouts = root->findChildren<QLayout*>();
     for (QLayout* l : layouts) {
+        if (l->property("aqManual").toBool()) continue;   // поля ставит сам виджет
         if (l->property("aqF").isValid() && qFuzzyCompare(l->property("aqF").toDouble(), f)) continue;
         if (!l->property("aqM").isValid()) {
             const QMargins m = l->contentsMargins();

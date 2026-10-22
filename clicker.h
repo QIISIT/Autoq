@@ -52,6 +52,7 @@ public:
     bool waitingStart() const { return waitingStart_; } // идёт «старт через N мс»
     int currentStep() const { return currentStep_; }    // шаг/действие, что идёт сейчас (-1 — пауза между циклами)
     unsigned long long cycleCount() const { return cycles_; }   // сколько кругов прошло
+    long long runMs() const;              // сколько идёт запуск, мс (после стопа — сколько шёл последний)
     int pauseReason() const { return pauseReason_; }     // 0 — нет, 1 — не окно игры, 2 — курсор вне игры
     bool inputAvailable() const;          // есть ли куда слать ввод (X11 на Linux, разрешение на macOS)
 
@@ -77,6 +78,7 @@ private:
     std::atomic<bool> waitingStart_{false};
     std::atomic<int> currentStep_{-1};
     std::atomic<unsigned long long> cycles_{0};
+    std::atomic<long long> startMs_{0}, stopMs_{0};
     std::atomic<int> pauseReason_{0};
     std::thread worker_;
     ClickerConfig config_;

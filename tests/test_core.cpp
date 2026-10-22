@@ -1072,23 +1072,30 @@ static void testCardLayout() {
     AppSettings::setScope("AutoQTest", "cl_" + pid);
     using namespace CardLayout;
     const Layout def = defaults();
-    CHECK(def.size() == 4 && def[0].id == "actions" && def[1].id == "speed" && def[3].id == "profile");
-    CHECK(def[1].blocks == QStringList({"speed", "framesync"}));
+    CHECK(def.size() == 6 && def[0].id == "head" && def[1].id == "actions" && def[2].id == "speed" &&
+          def[3].id == "window" && def[4].id == "profile" && def[5].id == kHidden);
+    CHECK(def[0].blocks == QStringList({"game", "counter", "tools", "start"}) && def[0].row &&
+          def[0].style == Clear && def[0].hideTitle && def[0].hideNumber);
+    CHECK(def[2].blocks == QStringList({"speed", "interval", "jitter", "framesync"}));
+    CHECK(def[3].blocks == QStringList({"window", "rules", "capture"}));
+    CHECK(def[4].blocks == QStringList({"profile", "preset", "hotkey", "keymode", "sounds", "armed"}));
+    CHECK(def[5].blocks == QStringList({"monitor"}) && hiddenBlocks(def) == QStringList({"monitor"}));
     CHECK(isDefault(def));
     // старая настройка «порядок карточек» — порядок по умолчанию
     AppSettings::open()->setValue("cardOrder", QStringList{"profile", "speed", "window"});
-    CHECK(defaults()[1].id == "profile" && defaults()[3].id == "window");
+    CHECK(defaults()[2].id == "profile" && defaults()[4].id == "window");
     AppSettings::open()->remove("cardOrder");
     // блок — в другую карточку, на нужное место
     Layout l = def;
     moveBlock(l, "framesync", "window", 1);
-    CHECK(l[2].blocks == QStringList({"window", "framesync", "capture"}) && l[1].blocks == QStringList({"speed"}));
-    moveBlock(l, "framesync", "window", 3);                    // внутри той же карточки — в конец
-    CHECK(l[2].blocks == QStringList({"window", "capture", "framesync"}));
-    // своя карточка: пустая, с названием; удалили — блоки домой
+    CHECK(l[3].blocks == QStringList({"window", "framesync", "rules", "capture"}) &&
+          l[2].blocks == QStringList({"speed", "interval", "jitter"}));
+    moveBlock(l, "framesync", "window", 4);                    // внутри той же карточки — в конец
+    CHECK(l[3].blocks == QStringList({"window", "rules", "capture", "framesync"}));
+    // своя карточка: пустая, с названием, перед служебной «hidden»; удалили — блоки домой
     const QString c = addCustom(l, "  Моя   быстрая  ");
-    CHECK(c == "c1" && l.last().title == "Моя быстрая" && l.last().blocks.isEmpty());
-    CHECK(addCustom(l, "") == "c2" && l.last().title == "…");
+    CHECK(c == "c1" && l[l.size() - 2].title == "Моя быстрая" && l[l.size() - 2].blocks.isEmpty() && l.last().id == kHidden);
+    CHECK(addCustom(l, "") == "c2" && l[l.size() - 2].title == "…");
     moveBlock(l, "armed", c, -1);
     moveBlock(l, "speed", c, 0);
     CHECK(l[indexOf(l, c)].blocks == QStringList({"speed", "armed"}));
@@ -1096,27 +1103,43 @@ static void testCardLayout() {
     rename(l, c, "Главное");
     rename(l, "speed", "Нельзя");                            // встроенные не переименовываются
     CHECK(l[indexOf(l, c)].title == "Главное" && l[indexOf(l, "speed")].title.isEmpty());
-    // порядок карточек
+    // порядок карточек: «hidden» всегда последняя
     moveCard(l, c, 1);
-    CHECK(l[1].id == c && l[0].id == "actions");
+    CHECK(l[1].id == c && l[0].id == "head" && l[2].id == "actions");
     moveCard(l, "actions", l.size());
-    CHECK(l.last().id == "actions");
+    CHECK(l[l.size() - 2].id == "actions" && l.last().id == kHidden);
+    moveCard(l, kHidden, 0);
+    CHECK(l.last().id == kHidden);
     setCollapsed(l, "window", true);
     // сохранение — у игры своё
     save("genshin", l);
     CHECK(load("genshin") == normalize(l));
     CHECK(isDefault(load("minecraft")));
+    // своя карточка с монитором: удалили — монитор в «Скрытые», остальное домой
+    moveBlock(l, "monitor", c, -1);
+    CHECK(hiddenBlocks(l).isEmpty());
     removeCustom(l, c);
-    CHECK(indexOf(l, c) < 0 && l[indexOf(l, "speed")].blocks.contains("speed") && l[indexOf(l, "profile")].blocks.contains("armed"));
+    CHECK(indexOf(l, c) < 0 && l[indexOf(l, "speed")].blocks.first() == "speed" &&
+          l[indexOf(l, "profile")].blocks.last() == "armed" && hiddenBlocks(l) == QStringList({"monitor"}));
     CHECK(l[indexOf(l, "window")].collapsed);
+    // спрятать и вернуть блок — на своё место
+    hideBlock(l, "jitter");
+    hideBlock(l, "game");
+    CHECK(hiddenBlocks(l) == QStringList({"monitor", "jitter", "game"}) && cardOf(l, "jitter") == kHidden);
+    showBlock(l, "jitter");
+    showBlock(l, "game");
+    CHECK(l[indexOf(l, "speed")].blocks == QStringList({"speed", "interval", "jitter"}));
+    CHECK(l[indexOf(l, "head")].blocks.first() == "game" && hiddenBlocks(l) == QStringList({"monitor"}));
+    showBlock(l, "nope");
+    CHECK(normalize(l) == l);
     // стандартная — ключа нет
     save("genshin", defaults());
     CHECK(!AppSettings::open()->contains("games/genshin/layout"));
     // испорченное и чужое — в порядок: каждый блок ровно раз, встроенные на месте
     bool ok = true;
     const Layout bad = fromJson(R"([{"id":"speed","blocks":["actions","actions","nope"]},{"id":"x"},{"id":"c9","title":"","blocks":["speed"]}])", &ok);
-    CHECK(ok && bad.size() == 5 && indexOf(bad, "x") < 0);
-    CHECK(bad[indexOf(bad, "speed")].blocks == QStringList({"actions", "framesync"}));
+    CHECK(ok && bad.size() == 7 && indexOf(bad, "x") < 0 && bad[0].id == "head" && bad.last().id == kHidden);
+    CHECK(bad[indexOf(bad, "speed")].blocks == QStringList({"actions", "interval", "jitter", "framesync"}));
     CHECK(bad[indexOf(bad, "c9")].blocks == QStringList({"speed"}) && bad[indexOf(bad, "c9")].title == "…");
     CHECK(bad[indexOf(bad, "actions")].blocks.isEmpty());
     QStringList all;
@@ -1125,6 +1148,47 @@ static void testCardLayout() {
     fromJson("{не json", &ok);
     CHECK(!ok);
     CHECK(fromJson(toJson(l)) == normalize(l));
+    // размеры, вид и цвет — в допустимых пределах
+    const Layout odd = fromJson(R"([{"id":"speed","span":9,"height":-5,"style":7,"color":"red","row":true},
+        {"id":"window","span":2,"height":99999,"style":2,"color":"#ABCDEF","hideTitle":true,"hideNumber":true}])");
+    const Card& os = odd[indexOf(odd, "speed")];
+    const Card& ow = odd[indexOf(odd, "window")];
+    CHECK(os.span == 4 && os.height == 0 && os.style == Normal && os.color.isEmpty() && os.row);
+    CHECK(ow.span == 2 && ow.height == kMaxHeight && ow.style == Accent && ow.color == "#abcdef" && ow.hideTitle && ow.hideNumber);
+    CHECK(fromJson(toJson(odd)) == odd);
+    // раскладка из 1.13 (без шапки и мелких блоков): шапка и новые блоки — на свои места
+    const Layout old = fromJson(R"([{"id":"actions","blocks":["actions"]},{"id":"profile","blocks":["profile","hotkey","sounds","armed"]},
+        {"id":"speed","blocks":["speed","framesync"]},{"id":"window","blocks":["window","capture"],"collapsed":true}])");
+    CHECK(old.size() == 6 && old[0].id == "head" && old[1].id == "actions" && old[2].id == "profile" && old[3].id == "speed");
+    CHECK(old[2].blocks == QStringList({"profile", "preset", "hotkey", "keymode", "sounds", "armed"}));
+    CHECK(old[3].blocks == QStringList({"speed", "interval", "jitter", "framesync"}));
+    CHECK(old[4].blocks == QStringList({"window", "rules", "capture"}) && old[4].collapsed);
+    CHECK(hiddenBlocks(old) == QStringList({"monitor"}));
+    // шаблоны: всё на месте, каждый блок ровно раз
+    for (int i = 0; i < kTemplates; ++i) {
+        int side = -1;
+        const Layout t = templateLayout(i, &side);
+        QStringList tb;
+        for (const Card& cc : t) tb += cc.blocks;
+        CHECK(normalize(t) == t && tb.size() == blockIds().size() && side >= 0 && side <= 3);
+        CHECK(!templateName(i).isEmpty());
+    }
+    int side = -1;
+    CHECK(templateLayout(0, &side) == defaults() && side == 0);
+    const Layout compact = templateLayout(1, &side);
+    CHECK(side == 2 && hiddenBlocks(compact).contains("jitter") && compact[indexOf(compact, "speed")].span == 2);
+    const Layout mon = templateLayout(2, &side);
+    CHECK(side == 0 && isCustom(mon[1].id) && mon[1].blocks == QStringList({"monitor"}) && mon[1].style == Accent &&
+          mon[1].span == 4 && hiddenBlocks(mon).isEmpty());
+    const Layout one = templateLayout(3, &side);
+    for (const Card& cc : one) CHECK(cc.id == kHidden || cc.span == 4);
+    // раскладка в файл и обратно (вместе с боковой панелью)
+    Layout back;
+    int backSide = -1;
+    CHECK(importJson(exportJson(mon, 2), &back, &backSide) && back == mon && backSide == 2);
+    CHECK(!importJson("[]", &back, &backSide) && !importJson(R"({"autoq":"profile","cards":[]})", &back, &backSide));
+    CHECK(!importJson("{не json", &back, &backSide));
+    CHECK(importJson(R"({"autoq":"layout","sidebar":9,"cards":[]})", &back, &backSide) && backSide == 3 && back == defaults());
     AppSettings::dropScope("AutoQTest", "cl_" + pid);
 }
 

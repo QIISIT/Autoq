@@ -168,6 +168,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     connectSignals();
     connectMini();
+    {
+        // боковая панель — общая для всех игр (редактор интерфейса)
+        const int side = qBound(0, AppSettings::open()->value("sidebarMode", 0).toInt(), 3);
+        board_->setSidebarMode(side);
+        applySidebarMode(side);
+    }
     reloadGames(Games::currentId());
     refreshIcons();
     syncOverlayUi();
@@ -181,6 +187,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(stepTimer_, &QTimer::timeout, this, [this]() {
         const bool run = hasGame() && clk().isRunning();
         actionsEdit_->setActiveStep(run ? clk().currentStep() : -1);
+        updateMonitor(false);
         if (!run) stepTimer_->stop();
     });
     refreshLive();
@@ -213,6 +220,7 @@ void MainWindow::buildUi() {
     rootLay->setSpacing(0);
 
     auto* body = new QHBoxLayout();
+    bodyLay_ = body;
     body->setContentsMargins(0, 0, 0, 0);
     body->setSpacing(0);
     body->addWidget(buildSidebar());
@@ -222,9 +230,9 @@ void MainWindow::buildUi() {
     auto* lay = new QVBoxLayout(inner_);
     lay->setContentsMargins(24, 20, 24, 20);
     lay->setSpacing(14);
-    lay->addWidget(buildHeader());
-    // карточки — из блоков; раскладка у каждой игры своя (режим редактирования)
+    // карточки — из блоков; раскладка у каждой игры своя (редактор интерфейса)
     board_ = new Board();
+    buildHeader();
     buildActionsCard();
     buildSpeedCard();
     buildWindowCard();
@@ -239,7 +247,6 @@ void MainWindow::buildUi() {
     scroll->setWidgetResizable(true);
     scroll->setFrameShape(QFrame::NoFrame);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);   // если окно совсем узкое
-    scroll->viewport()->installEventFilter(this);                  // ширина -> шапка в один или два ряда
 
     // 0 — «добавь первую игру», 1 — настройки выбранной игры
     pages_ = new QStackedWidget();
@@ -259,6 +266,7 @@ void MainWindow::buildUi() {
     gpl->addWidget(scroll, 1);
     pages_->addWidget(gamePage);
     board_->setAnimArea(pages_);
+    board_->setSideAnimArea(root);              // боковая панель меняется — переход по всему окну
     body->addWidget(pages_, 1);
 
     rootLay->addLayout(body, 1);
@@ -274,13 +282,15 @@ void MainWindow::buildUi() {
 QWidget* MainWindow::buildSidebar() {
     const qreal dpr = devicePixelRatioF();
     auto* side = new QFrame();
+    sidebar_ = side;
     side->setObjectName("sidebar");
     side->setFixedWidth(236);
     auto* lay = new QVBoxLayout(side);
     lay->setContentsMargins(12, 14, 12, 14);
     lay->setSpacing(4);
 
-    auto* brand = new QHBoxLayout();
+    auto* brand = new QBoxLayout(QBoxLayout::LeftToRight);
+    brandLay_ = brand;
     brand->setContentsMargins(8, 0, 2, 12);
     brand->setSpacing(9);
     brandLogo_ = new QLabel();
@@ -290,12 +300,23 @@ QWidget* MainWindow::buildSidebar() {
     auto* by = mkLabel("by " AQ_AUTHOR, "brandBy");
     brand->addWidget(brandLogo_);
     // «by Qisit» — под названием
-    auto* names = new QVBoxLayout();
+    brandNames_ = new QWidget();
+    auto* names = new QVBoxLayout(brandNames_);
+    names->setContentsMargins(0, 0, 0, 0);
     names->setSpacing(0);
     names->addWidget(name);
     names->addWidget(by);
-    brand->addLayout(names);
+    brand->addWidget(brandNames_);
     brand->addStretch(1);
+    // редактор интерфейса — рядом с настройками: он про всё окно, а не про игру
+    layoutBtn_ = new QToolButton();
+    layoutBtn_->setObjectName("icon");
+    layoutBtn_->setFixedSize(32, 32);
+    layoutBtn_->setCheckable(true);
+    layoutBtn_->setCursor(Qt::PointingHandCursor);
+    layoutBtn_->setToolTip(T("Редактор интерфейса: карточки, блоки, размеры, цвета, шаблоны"));
+    layoutBtn_->setAccessibleName(T("Редактор интерфейса"));
+    brand->addWidget(layoutBtn_);
     settingsBtn_ = new QToolButton();
     settingsBtn_->setObjectName("icon");
     settingsBtn_->setFixedSize(32, 32);
@@ -304,17 +325,19 @@ QWidget* MainWindow::buildSidebar() {
     brand->addWidget(settingsBtn_);
     lay->addLayout(brand);
 
-    auto* sec = new QHBoxLayout();
+    sideSection_ = new QWidget();
+    auto* sec = new QHBoxLayout(sideSection_);
     sec->setContentsMargins(8, 2, 8, 6);
     sec->addWidget(mkLabel(T("МОИ ИГРЫ"), "section"));
     sec->addStretch(1);
     gameCount_ = mkLabel("0", "sectionCount");
     sec->addWidget(gameCount_);
-    lay->addLayout(sec);
+    lay->addWidget(sideSection_);
 
     gameList_ = new QListWidget();
     gameList_->setObjectName("gameList");
-    gameList_->setItemDelegate(new GameListDelegate(gameList_));
+    gameDelegate_ = new GameListDelegate(gameList_);
+    gameList_->setItemDelegate(gameDelegate_);
     gameList_->setMouseTracking(true);
     gameList_->setSpacing(1);
     gameList_->setFrameShape(QFrame::NoFrame);
@@ -369,50 +392,44 @@ QWidget* MainWindow::buildWelcome() {
     return w;
 }
 
-QWidget* MainWindow::buildHeader() {
-    auto* w = new QWidget();
-    // слева — игра, справа — счётчик и кнопки; в узком окне правая часть встаёт под левую
-    headerLay_ = new QBoxLayout(QBoxLayout::LeftToRight, w);
-    headerLay_->setContentsMargins(0, 0, 0, 0);
-    headerLay_->setSpacing(14);
-    auto* left = new QHBoxLayout();
-    left->setSpacing(14);
-    auto* right = new QHBoxLayout();
-    right->setSpacing(14);
-    headerLay_->addLayout(left, 1);
-    headerLay_->addLayout(right);
-    QHBoxLayout* h = left;
+void MainWindow::buildHeader() {
+    // игра: значок, название, «изменить», «убрать»; занимает всё свободное место в ряду
+    BoardBlock* gblk = board_->addBlock("game", T("Игра"));
+    gblk->wide = true;
+    gblk->stretch = true;
+    gblk->rowMin = 300;
+    auto* h = new QHBoxLayout();
+    h->setSpacing(14);
     headerIcon_ = new QLabel();
     headerIcon_->setFixedSize(56, 56);
     h->addWidget(headerIcon_);
-
-    auto* col = new QVBoxLayout();
-    col->setSpacing(8);
     auto* nameRow = new QHBoxLayout();
     nameRow->setSpacing(8);
     nameLabel_ = new ElideLabel();
     nameLabel_->setObjectName("h1");
-    editGameBtn_ = new QToolButton();
-    editGameBtn_->setObjectName("icon");
-    editGameBtn_->setFixedSize(34, 34);
-    editGameBtn_->setToolTip(T("Изменить игру: значок, режим, процесс, заголовок окна"));
-    editGameBtn_->setAccessibleName(T("Изменить игру"));
-    delGameBtn_ = new QToolButton();
-    delGameBtn_->setObjectName("icon");
-    delGameBtn_->setFixedSize(34, 34);
-    delGameBtn_->setToolTip(T("Убрать игру из списка"));
-    delGameBtn_->setAccessibleName(T("Убрать игру"));
+    auto iconBtn = [](int size, const QString& tip, const QString& name) {
+        auto* b = new QToolButton();
+        b->setObjectName("icon");
+        b->setFixedSize(size, size);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setToolTip(tip);
+        b->setAccessibleName(name);
+        return b;
+    };
+    editGameBtn_ = iconBtn(34, T("Изменить игру: значок, режим, процесс, заголовок окна"), T("Изменить игру"));
+    delGameBtn_ = iconBtn(34, T("Убрать игру из списка"), T("Убрать игру"));
+    // боковая панель скрыта — игры, «добавить» и настройки отсюда
+    switchGameBtn_ = iconBtn(34, T("Другая игра, добавить игру, настройки"), T("Другая игра"));
+    switchGameBtn_->hide();
     nameRow->addWidget(nameLabel_, 1);
+    nameRow->addWidget(switchGameBtn_);
     nameRow->addWidget(editGameBtn_);
     nameRow->addWidget(delGameBtn_);
-    col->addStretch(1);
-    col->addLayout(nameRow);
-    col->addStretch(1);
-    h->addLayout(col, 1);
-    h = right;
-    h->addStretch(1);
+    h->addLayout(nameRow, 1);
+    gblk->body()->addLayout(h);
 
     // счётчик нажатий — в рамке, ярко: видно сразу
+    BoardBlock* cblk = board_->addBlock("counter", T("Счётчик нажатий"));
     counterBox_ = new QFrame();
     counterBox_->setObjectName("counterBox");
     counterBox_->setProperty("running", false);
@@ -427,27 +444,24 @@ QWidget* MainWindow::buildHeader() {
     counterRate_->hide();
     cnt->addWidget(counterRate_, 0, Qt::AlignRight);
     counterBox_->setMinimumWidth(130);
-    h->addWidget(counterBox_);
+    cblk->body()->addWidget(counterBox_);
 
-    overlayBtn_ = new QToolButton();
-    overlayBtn_->setObjectName("icon");
-    overlayBtn_->setFixedSize(40, 40);
+    // оверлей и мини-окно
+    BoardBlock* tblk = board_->addBlock("tools", T("Оверлей и мини-окно"));
+    auto* tools = new QHBoxLayout();
+    tools->setSpacing(10);
+    overlayBtn_ = iconBtn(40, T("Оверлей КПС поверх игры: когда показывать, настройки"), T("Оверлей КПС"));
     overlayBtn_->setCheckable(true);
-    overlayBtn_->setToolTip(T("Оверлей КПС поверх игры: когда показывать, настройки"));
-    overlayBtn_->setAccessibleName(T("Оверлей КПС"));
     overlayBtn_->setContextMenuPolicy(Qt::CustomContextMenu);
-    h->addWidget(overlayBtn_);
+    miniBtn_ = iconBtn(40, T("Мини-окно: всё нужное поверх игры"), T("Мини-окно"));
+    tools->addWidget(overlayBtn_);
+    tools->addWidget(miniBtn_);
+    tools->addStretch(1);
+    tblk->body()->addLayout(tools);
 
-    miniBtn_ = new QToolButton();
-    miniBtn_->setObjectName("icon");
-    miniBtn_->setFixedSize(40, 40);
-    miniBtn_->setToolTip(T("Мини-окно: всё нужное поверх игры"));
-    miniBtn_->setAccessibleName(T("Мини-окно"));
-    h->addWidget(miniBtn_);
-
+    BoardBlock* sblk = board_->addBlock("start", T("Кнопка «Старт»"));
     startBtn_ = new StartButton();
-    h->addWidget(startBtn_);
-    return w;
+    sblk->body()->addWidget(startBtn_);
 }
 
 void MainWindow::buildActionsCard() {
@@ -481,10 +495,44 @@ void MainWindow::buildActionsCard() {
     actionsHint_ = mkLabel(QString(), "faint");
     actionsHint_->setWordWrap(true);
     lay->addWidget(actionsHint_);
+
+    // монитор запуска: сколько идёт, сколько кругов и нажатий, какой шаг сейчас
+    // (по умолчанию спрятан — вернуть: редактор → «Скрытые» или шаблон «Монитор»)
+    BoardBlock* mblk = board_->addBlock("monitor", T("Монитор запуска"));
+    lay = mblk->body();
+    auto* top = new QHBoxLayout();
+    top->setSpacing(10);
+    monTime_ = mkLabel("00:00", "rate");
+    monTime_->setToolTip(T("Сколько идёт запуск (после стопа — сколько шёл последний)"));
+    monState_ = mkLabel(QString(), "monState");
+    top->addWidget(monTime_, 0, Qt::AlignBottom);
+    top->addWidget(monState_, 0, Qt::AlignVCenter);
+    top->addStretch(1);
+    lay->addLayout(top);
+    auto* mg = new QGridLayout();
+    mg->setHorizontalSpacing(18);
+    mg->setVerticalSpacing(0);
+    auto stat = [mg](int col, const QString& caption, const QString& tip) {
+        auto* c = mkLabel(caption, "small");
+        auto* v = mkLabel("0", "monValue");
+        c->setToolTip(tip);
+        v->setToolTip(tip);
+        mg->addWidget(c, 0, col);
+        mg->addWidget(v, 1, col);
+        return v;
+    };
+    monCycles_ = stat(0, T("Кругов"), T("Сколько раз цепочка прошла целиком"));
+    monPresses_ = stat(1, T("Нажатий"), T("Сколько нажатий за этот запуск"));
+    monRate_ = stat(2, T("Сейчас /с"), T("Сколько нажатий в секунду на самом деле (за последние 2 секунды)"));
+    mg->setColumnStretch(3, 1);
+    lay->addLayout(mg);
+    monStep_ = mkLabel(QString(), "muted");
+    monStep_->setWordWrap(true);
+    lay->addWidget(monStep_);
 }
 
 void MainWindow::buildSpeedCard() {
-    BoardBlock* blk = board_->addBlock("speed", T("Скорость и интервал"));
+    BoardBlock* blk = board_->addBlock("speed", T("Скорость"));
     unitSeg_ = new Segmented({T("мс"), T("КПС"), T("КПМ")}, false);
     unitSeg_->setToolTip(T("В чём задавать скорость: интервал в миллисекундах, клики в секунду (КПС) или в минуту (КПМ)"));
     blk->setHead(unitSeg_);
@@ -503,6 +551,9 @@ void MainWindow::buildSpeedCard() {
     slider_->setAccessibleName(T("Интервал"));
     lay->addWidget(slider_);
 
+    // точное число (интервал, КПС или КПМ — как выбрано у «Скорости»)
+    BoardBlock* iblk = board_->addBlock("interval", T("Интервал — числом"));
+    lay = iblk->body();
     auto* r1 = new QHBoxLayout();
     speedCaption_ = mkLabel(T("Интервал"), "muted");
     r1->addWidget(speedCaption_, 1);
@@ -516,6 +567,8 @@ void MainWindow::buildSpeedCard() {
     r1->addWidget(speedBox_);
     lay->addLayout(r1);
 
+    BoardBlock* jblk = board_->addBlock("jitter", T("Разброс"));
+    lay = jblk->body();
     auto* r2 = new QHBoxLayout();
     r2->setSpacing(8);
     randomizeSwitch_ = new ToggleSwitch();
@@ -571,7 +624,7 @@ void MainWindow::buildSpeedCard() {
 }
 
 void MainWindow::buildWindowCard() {
-    BoardBlock* blk = board_->addBlock("window", T("Какое окно — игра"));
+    BoardBlock* blk = board_->addBlock("window", T("Окно игры"));
     lockSwitch_ = new ToggleSwitch();
     lockSwitch_->setToolTip(T("Кликать только в выбранном окне игры.\nПока окно не выбрано — кликер не нажимает нигде."));
     lockSwitch_->setAccessibleName(T("Кликать только в окне игры"));
@@ -584,6 +637,8 @@ void MainWindow::buildWindowCard() {
     statusBox_->setMinimumHeight(34);
     lay->addWidget(statusBox_);
 
+    BoardBlock* rblk = board_->addBlock("rules", T("Процесс и заголовок"));
+    lay = rblk->body();
     auto* g = new QGridLayout();
     g->setHorizontalSpacing(6);
     g->setVerticalSpacing(6);
@@ -665,26 +720,9 @@ void MainWindow::buildProfileCard() {
     }
     prow->addWidget(profileMoreBtn_);
     lay->addLayout(prow);
-    // пресеты — готовые настройки игры
-    auto* presetRow = new QHBoxLayout();
-    presetRow->setSpacing(8);
-    presetRow->addWidget(mkLabel(T("Пресет"), "muted"));
-    presetBtn_ = new QToolButton();
-    presetBtn_->setObjectName("chip");
-    presetBtn_->setPopupMode(QToolButton::InstantPopup);
-    presetBtn_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    presetBtn_->setLayoutDirection(Qt::RightToLeft);    // стрелка справа от текста
-    presetBtn_->setToolTip(T("Готовые настройки для этой игры"));
-    presetBtn_->setAccessibleName(T("Пресет"));
-    presetMenu_ = new QMenu(presetBtn_);
-    presetBtn_->setMenu(presetMenu_);
-    presetRow->addWidget(presetBtn_);
-    presetRow->addStretch(1);
-    lay->addLayout(presetRow);
     profileState_ = mkLabel(QString(), "profileState");
     profileState_->setWordWrap(true);
     lay->addWidget(profileState_);
-
     auto* g = new QGridLayout();
     g->setSpacing(6);
     newProfileBtn_ = new QPushButton(T("Новый"));
@@ -704,6 +742,25 @@ void MainWindow::buildProfileCard() {
     g->addWidget(delProfileBtn_, 1, 1);
     lay->addLayout(g);
 
+    // пресеты — готовые настройки игры
+    BoardBlock* pblk = board_->addBlock("preset", T("Пресет"));
+    lay = pblk->body();
+    auto* presetRow = new QHBoxLayout();
+    presetRow->setSpacing(8);
+    presetRow->addWidget(mkLabel(T("Пресет"), "muted"));
+    presetBtn_ = new QToolButton();
+    presetBtn_->setObjectName("chip");
+    presetBtn_->setPopupMode(QToolButton::InstantPopup);
+    presetBtn_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    presetBtn_->setLayoutDirection(Qt::RightToLeft);    // стрелка справа от текста
+    presetBtn_->setToolTip(T("Готовые настройки для этой игры"));
+    presetBtn_->setAccessibleName(T("Пресет"));
+    presetMenu_ = new QMenu(presetBtn_);
+    presetBtn_->setMenu(presetMenu_);
+    presetRow->addWidget(presetBtn_);
+    presetRow->addStretch(1);
+    lay->addLayout(presetRow);
+
     BoardBlock* hblk = board_->addBlock("hotkey", T("Клавиша старт/стоп"));
     hblk->setDivider(true);
     lay = hblk->body();
@@ -721,12 +778,6 @@ void MainWindow::buildProfileCard() {
     hk->addWidget(captureBtn_);
     hk->addStretch(1);
     lay->addLayout(hk);
-    auto* km = new QHBoxLayout();
-    km->setSpacing(8);
-    keyModeSeg_ = new Segmented({T("Вкл / выкл"), T("Пока держу")}, false);
-    keyModeSeg_->setToolTip(T("Вкл / выкл: первое нажатие включает, второе выключает.\nПока держу: кликер работает, только пока клавиша зажата."));
-    km->addWidget(keyModeSeg_, 1);
-    lay->addLayout(km);
     hotkeyStatus_ = mkLabel(QString(), "hint");
     hotkeyStatus_->setWordWrap(true);
     hotkeyStatus_->hide();
@@ -735,6 +786,15 @@ void MainWindow::buildProfileCard() {
     hotkeyInfo_->setWordWrap(true);
     hotkeyInfo_->hide();
     lay->addWidget(hotkeyInfo_);
+
+    BoardBlock* kblk = board_->addBlock("keymode", T("Как работает клавиша"));
+    lay = kblk->body();
+    auto* km = new QHBoxLayout();
+    km->setSpacing(8);
+    keyModeSeg_ = new Segmented({T("Вкл / выкл"), T("Пока держу")}, false);
+    keyModeSeg_->setToolTip(T("Вкл / выкл: первое нажатие включает, второе выключает.\nПока держу: кликер работает, только пока клавиша зажата."));
+    km->addWidget(keyModeSeg_, 1);
+    lay->addLayout(km);
 
     // свой звук включения и выключения — у игры и у каждого профиля
     BoardBlock* sblk = board_->addBlock("sounds", T("Звуки старт/стоп"));
@@ -811,6 +871,21 @@ void MainWindow::connectSignals() {
         if (hasGame()) CardLayout::save(game_.id, board_->cardLayout());
     });
     connect(board_, &Board::applyToAllRequested, this, &MainWindow::applyLayoutToAll);
+    connect(board_, &Board::message, this, &MainWindow::notify);
+    connect(board_, &Board::sidebarModeChanged, this, [this](int mode) {
+        applySidebarMode(mode);
+        AppSettings::open()->setValue("sidebarMode", mode);
+    });
+    connect(board_, &Board::editModeChanged, this, [this](bool on) {
+        layoutBtn_->setChecked(on);
+        layoutBtn_->setIcon(AqIcons::ui("layout", on ? Theme::t().redHi : Theme::t().muted, 16));
+        updateMonitor(true);
+    });
+    connect(layoutBtn_, &QToolButton::clicked, this, [this]() {
+        layoutBtn_->setChecked(board_->editMode());   // переключает редактор, а не сама
+        QTimer::singleShot(0, this, [this]() { setLayoutEditing(!board_->editMode()); });
+    });
+    connect(switchGameBtn_, &QToolButton::clicked, this, &MainWindow::showSwitchMenu);
     connect(gameList_, &QListWidget::currentRowChanged, this, &MainWindow::onGameRowChanged);
     connect(gameList_, &QListWidget::customContextMenuRequested, this, &MainWindow::showGameMenu);
     connect(addGameBtn_, &QPushButton::clicked, this, &MainWindow::addGame);
@@ -1074,6 +1149,8 @@ void MainWindow::refreshIcons() {
     editGameBtn_->setIcon(AqIcons::ui("pencil", t.muted, 15));
     delGameBtn_->setIcon(AqIcons::ui("trash", t.muted, 15));
     miniBtn_->setIcon(AqIcons::ui("mini", t.muted, 17));
+    layoutBtn_->setIcon(AqIcons::ui("layout", layoutBtn_->isChecked() ? t.redHi : t.muted, 16));
+    switchGameBtn_->setIcon(AqIcons::ui("chevron", t.muted, 14, 2.2));
     overlayBtn_->setIcon(AqIcons::ui("gauge", overlayBtn_->isChecked() ? t.redHi : t.muted, 18, 1.9));
     if (overlay_) overlay_->update();
     actionsEdit_->refreshIcons();
@@ -1158,7 +1235,8 @@ void MainWindow::reloadGames(const QString& selectId) {
     if (!games.isEmpty()) gameList_->setCurrentRow(sel);
     gameCount_->setText(QString::number(games.size()));
     gameList_->setVisible(!games.isEmpty());
-    emptyHint_->setVisible(games.isEmpty());
+    emptyHint_->setVisible(games.isEmpty() && sideMode_ != 2);
+    sidebar_->setVisible(sideMode_ != 3 || games.isEmpty());     // скрыта — но без игр её не спрятать
     loading_ = false;
     // игр больше нет — их кликеры не нужны
     for (auto it = runners_.begin(); it != runners_.end();) {
@@ -1379,7 +1457,6 @@ void MainWindow::setArmed(const QString& id, bool on, bool announce) {
 
 bool MainWindow::eventFilter(QObject* o, QEvent* e) {
     if (o == hzBox_ && e->type() == QEvent::MouseButtonPress) fillHzBox();
-    if (mainScroll_ && o == mainScroll_->viewport() && e->type() == QEvent::Resize) updateResponsive();
     if (o == gameList_->viewport()) {
         if (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::MouseButtonDblClick) {
             auto* me = static_cast<QMouseEvent*>(e);
@@ -1388,7 +1465,7 @@ bool MainWindow::eventFilter(QObject* o, QEvent* e) {
             if (me->button() == Qt::RightButton) return true;
             if (QListWidgetItem* it = gameList_->itemAt(pos)) {
                 const QRect r = gameList_->visualItemRect(it);
-                if (me->button() == Qt::LeftButton && GameListDelegate::circleRect(r).contains(pos)) {
+                if (me->button() == Qt::LeftButton && GameListDelegate::circleRect(r, gameDelegate_->compact).contains(pos)) {
                     const QString id = it->data(GameListDelegate::IdRole).toString();
                     if (e->type() == QEvent::MouseButtonPress) setArmed(id, !Games::armed(id), true);
                     return true;                 // выбор игры не меняется
@@ -2814,6 +2891,74 @@ void MainWindow::updateHotkeyStatus() {
 }
 
 // ===========================================================================
+// Монитор запуска: время, круги, нажатия, текущий шаг
+// ===========================================================================
+void MainWindow::updateMonitor(bool full) {
+    if (!hasGame() || !board_->blockVisible("monitor")) return;
+    GameRunner* r = findRunner(game_.id);
+    const bool run = r && r->clicker.isRunning();
+    const bool hold = game_.mode == GameMode::Hold;
+    if (full) {
+        const long long ms = r ? r->clicker.runMs() : 0;
+        const long long sec = ms / 1000;
+        const QString time = sec >= 3600 ? QString("%1:%2:%3").arg(sec / 3600).arg(sec / 60 % 60, 2, 10, QChar('0')).arg(sec % 60, 2, 10, QChar('0'))
+                                         : QString("%1:%2").arg(sec / 60, 2, 10, QChar('0')).arg(sec % 60, 2, 10, QChar('0'));
+        monTime_->setText(time);
+        monCycles_->setText(hold ? QStringLiteral("—") : num(r ? static_cast<qint64>(r->clicker.cycleCount()) : 0));
+        monPresses_->setText(num(r ? static_cast<qint64>(r->clicker.clickCount()) : 0));
+        QString rate = QStringLiteral("—");
+        if (run && !hold && rateHist_.size() >= 2) {
+            const double dt = (rateHist_.last().t - rateHist_.first().t) / 1000.0;
+            if (dt > 0.2) rate = dec((rateHist_.last().n - rateHist_.first().n) / dt);
+        }
+        monRate_->setText(rate);
+        QString st;
+        QString kind = "none";
+        if (!run) st = ms > 0 ? T("Остановлен") : T("Ещё не запускали");
+        else if (r->clicker.waitingStart()) { st = T("Ждёт старта"); kind = "wait"; }
+        else if (!r->clicker.allowedNow()) {
+            st = r->clicker.pauseReason() == 2 ? T("Пауза: курсор вне игры") : T("Пауза: не окно игры");
+            kind = "warn";
+        } else { st = T("Работает"); kind = "run"; }
+        monState_->setText(st);
+        if (monState_->property("state").toString() != kind) {
+            monState_->setProperty("state", kind);
+            Theme::repolish(monState_);
+        }
+    }
+    // что жмётся сейчас
+    const GameMode mode = run ? r->def.mode : game_.mode;
+    const QList<ActionStep> list = run ? r->st.runList(mode) : cur_.runList(mode);
+    auto stepName = [mode](const ActionStep& a) {
+        if (mode != GameMode::Steps) return a.label();
+        return a.label() + (a.press == ActionStep::Up ? QStringLiteral(" ↑") : QStringLiteral(" ↓"));
+    };
+    QString text;
+    if (list.isEmpty()) {
+        text = QString();
+    } else if (mode == GameMode::Hold) {
+        QStringList l;
+        for (const ActionStep& a : list) l << a.label();
+        text = (run ? T("Зажато: %1") : T("Зажмёт: %1")).arg(l.join(" + "));
+    } else if (mode == GameMode::Combo && list.size() > 1) {
+        QStringList l;
+        for (const ActionStep& a : list) l << a.label();
+        text = T("Все сразу: %1").arg(l.join(" + "));
+    } else if (!run) {
+        text = list.size() == 1 ? T("Действие: %1").arg(stepName(list[0]))
+                                : T("В цепочке шагов: %1").arg(list.size());
+    } else {
+        const int step = r->clicker.currentStep();
+        if (r->clicker.waitingStart()) text = T("Сейчас: пауза «старт через»");
+        else if (step >= 0 && step < list.size())
+            text = list.size() == 1 ? T("Сейчас: %1").arg(stepName(list[step]))
+                                    : T("Сейчас: шаг %1 из %2 — %3").arg(step + 1).arg(list.size()).arg(stepName(list[step]));
+        else text = T("Сейчас: пауза перед повтором");
+    }
+    if (monStep_->text() != text) monStep_->setText(text);
+}
+
+// ===========================================================================
 // Живые показатели (раз в 0.5 с)
 // ===========================================================================
 void MainWindow::refreshLive() {
@@ -2844,6 +2989,7 @@ void MainWindow::refreshLive() {
         updateRate();
     }
     updateHotkeyStatus();
+    updateMonitor(true);
     if (run && stepTimer_ && !stepTimer_->isActive()) stepTimer_->start();
 
     const bool canProbe = probe_->available();
@@ -3150,6 +3296,80 @@ void MainWindow::showMini() {
     hide();
 }
 
+// Боковая панель с играми: слева, справа, узкая (только значки) или скрыта.
+// Общая для всех игр; меняется в редакторе интерфейса (Ещё → Боковая панель, шаблоны).
+void MainWindow::applySidebarMode(int mode) {
+    mode = qBound(0, mode, 3);
+    sideMode_ = mode;
+    const bool narrow = mode == 2;
+    // место: слева или справа от карточек
+    const int at = bodyLay_->indexOf(sidebar_);
+    const int want = mode == 1 ? bodyLay_->count() - 1 : 0;
+    if (at != want) {
+        bodyLay_->removeWidget(sidebar_);
+        bodyLay_->insertWidget(mode == 1 ? bodyLay_->count() : 0, sidebar_);
+    }
+    sidebar_->setProperty("side", mode == 1 ? "right" : "left");
+    Theme::repolish(sidebar_);
+    // узкая: только значки игр, логотип и кнопки — в столбик
+    sidebar_->setFixedWidth(narrow ? 84 : 236);
+    sidebar_->layout()->setContentsMargins(narrow ? 8 : 12, 14, narrow ? 8 : 12, 14);
+    brandLay_->setDirection(narrow ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
+    brandLay_->setContentsMargins(narrow ? 0 : 8, 0, narrow ? 0 : 2, 12);
+    brandLay_->setSpacing(narrow ? 6 : 9);
+    for (QWidget* w : {static_cast<QWidget*>(brandLogo_), brandNames_, static_cast<QWidget*>(layoutBtn_), static_cast<QWidget*>(settingsBtn_)})
+        brandLay_->setAlignment(w, narrow ? Qt::AlignHCenter : Qt::Alignment());
+    for (QLabel* l : brandNames_->findChildren<QLabel*>()) l->setAlignment(narrow ? Qt::AlignHCenter : Qt::AlignLeft);
+    sideSection_->setVisible(!narrow);
+    gameDelegate_->compact = narrow;
+    gameList_->doItemsLayout();
+    gameList_->viewport()->update();
+    const bool noGames = Games::list().isEmpty();
+    emptyHint_->setVisible(noGames && !narrow);
+    addGameBtn_->setText(narrow ? QString() : T("Добавить игру"));
+    addGameBtn_->setToolTip(narrow ? T("Добавить игру: готовую (Genshin, Minecraft…) или свою") : T("Готовые игры (Genshin, Minecraft…) или своя"));
+    // скрыта — игры, «добавить» и настройки из шапки (без игр панель всё равно видна)
+    sidebar_->setVisible(mode != 3 || noGames);
+    switchGameBtn_->setVisible(mode == 3);
+}
+
+void MainWindow::showSwitchMenu() {
+    QMenu m(this);
+    const auto& t = Theme::t();
+    const qreal dpr = devicePixelRatioF();
+    for (const GameDef& g : Games::list()) {
+        QAction* a = m.addAction(QIcon(AqIcons::gameTile(g.icon, QColor(g.color), g.image, 20, dpr, false, t.light)),
+                                 isRunning(g.id) ? T("%1 — работает").arg(g.name) : g.name);
+        if (g.id == game_.id) {                   // открытая — жирным
+            QFont f = a->font();
+            f.setBold(true);
+            a->setFont(f);
+        }
+        const QString id = g.id;
+        connect(a, &QAction::triggered, this, [this, id]() {
+            if (id == game_.id) return;
+            QTimer::singleShot(0, this, [this, id]() {
+                for (int i = 0; i < gameList_->count(); ++i)
+                    if (gameList_->item(i)->data(GameListDelegate::IdRole).toString() == id) { gameList_->setCurrentRow(i); break; }
+            });
+        });
+    }
+    m.addSeparator();
+    m.addAction(AqIcons::ui("plus", t.text, 14, 2.2), T("Добавить игру…"), this, [this]() {
+        QTimer::singleShot(0, this, &MainWindow::addGame);
+    });
+    m.addAction(AqIcons::ui("settings", t.text, 14, 1.8), T("Настройки…"), this, [this]() {
+        QTimer::singleShot(0, this, &MainWindow::openSettings);
+    });
+    m.addAction(AqIcons::ui("layout", t.text, 14), T("Редактор интерфейса"), this, [this]() {
+        QTimer::singleShot(0, this, [this]() { setLayoutEditing(true); });
+    });
+    m.addAction(T("Показать боковую панель"), this, [this]() { board_->setSidebarMode(0); });
+    switchGameBtn_->setDown(true);
+    m.exec(switchGameBtn_->mapToGlobal(QPoint(0, switchGameBtn_->height() + 4)));
+    switchGameBtn_->setDown(false);
+}
+
 void MainWindow::setLayoutEditing(bool on) {
     if (on && !hasGame()) {
         notify(T("Сначала добавь игру: раскладка карточек у каждой игры своя."));
@@ -3309,15 +3529,5 @@ void MainWindow::closeEvent(QCloseEvent* e) {
 
 void MainWindow::resizeEvent(QResizeEvent* e) {
     QMainWindow::resizeEvent(e);
-    updateResponsive();
 }
 
-// Узкое окно: шапка в два ряда (кнопки — под названием), чтобы ничего не обрезалось
-// и не появлялась прокрутка вбок; карточки CardFlow перестраивает сам
-void MainWindow::updateResponsive() {
-    if (!headerLay_ || !mainScroll_) return;
-    const int avail = mainScroll_->viewport()->width() - 48;
-    const bool narrow = avail < 780;
-    const auto dir = narrow ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight;
-    if (headerLay_->direction() != dir) headerLay_->setDirection(dir);
-}

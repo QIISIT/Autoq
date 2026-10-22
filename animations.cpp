@@ -97,8 +97,9 @@ void Anim::transition(QWidget* area, const std::function<void()>& change, const 
         change();
         return;
     }
-    for (QObject* o : area->children())          // прошлый переход ещё идёт — убираем его
-        if (auto* ov = dynamic_cast<TransitionOverlay*>(o)) { ov->hide(); ov->deleteLater(); }
+    // прошлый переход ещё идёт (здесь или внутри, например на странице) — убираем его
+    for (QWidget* w : area->findChildren<QWidget*>())
+        if (auto* ov = dynamic_cast<TransitionOverlay*>(w)) { ov->hide(); ov->deleteLater(); }
     const QPixmap before = area->grab();
     change();
     if (area->layout()) area->layout()->activate();

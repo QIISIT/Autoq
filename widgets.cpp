@@ -426,7 +426,12 @@ void CaptureCountdown::timerEvent(QTimerEvent*) {
 }
 
 // ---------------------------------------------------------------------------
-QRect GameListDelegate::circleRect(const QRect& r) {
+QRect GameListDelegate::circleRect(const QRect& r, bool compact) {
+    if (compact) {
+        // точка в правом верхнем углу значка (значок — по центру строки)
+        const int tileRight = r.center().x() + 17;
+        return QRect(tileRight - 8, r.top() + 2, 16, 16);
+    }
     return QRect(r.right() - 30, r.center().y() - 11, 22, 22);
 }
 
@@ -450,7 +455,8 @@ void GameListDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const
     }
     const QPixmap tile = idx.data(sel ? TileActiveRole : TileRole).value<QPixmap>();
     const int tileSize = 34;
-    const QRect tileRect(opt.rect.left() + 10, opt.rect.top() + (opt.rect.height() - tileSize) / 2, tileSize, tileSize);
+    const int tileX = compact ? opt.rect.center().x() - tileSize / 2 + 1 : opt.rect.left() + 10;
+    const QRect tileRect(tileX, opt.rect.top() + (opt.rect.height() - tileSize) / 2, tileSize, tileSize);
     // не используется (пустой кружок) — значок и название приглушены
     const bool unused = !armed && !running;
     p->setOpacity(unused ? 0.42 : 1.0);
@@ -475,6 +481,24 @@ void GameListDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const
     }
     p->setOpacity(1.0);
 
+    const auto* view = qobject_cast<const QAbstractItemView*>(opt.widget);
+    if (compact) {
+        // узкая панель: только значок; «работает» — красная рамка, «используется» — точка в углу
+        if (running) {
+            p->setPen(QPen(t.red, 2));
+            p->setBrush(Qt::NoBrush);
+            p->drawRoundedRect(QRectF(tileRect).adjusted(-3, -3, 3, 3), Theme::r(10), Theme::r(10));
+        }
+        const QRect cr = circleRect(opt.rect, true);
+        const QRectF c = QRectF(cr).adjusted(3, 3, -3, -3);
+        const bool overDot = hover && view && cr.contains(view->viewport()->mapFromGlobal(QCursor::pos()));
+        p->setPen(QPen(armed ? t.card : (overDot ? t.redHi : (t.light ? t.muted : QColor("#E6E6EA"))), armed ? 2.0 : 1.6));
+        p->setBrush(armed ? t.red : t.card);
+        p->drawEllipse(c);
+        p->restore();
+        return;
+    }
+
     const QRect circle = circleRect(opt.rect);
     const int textX = tileRect.right() + 13;
     const QRect textRect(textX, opt.rect.top() + 9, circle.left() - textX - 4, opt.rect.height() - 18);
@@ -496,7 +520,6 @@ void GameListDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const
 
     // кружок «используется»: закрашен — категорию можно запустить, пустой — нельзя никак
     const QRectF c = QRectF(circle).adjusted(4, 4, -4, -4);
-    const auto* view = qobject_cast<const QAbstractItemView*>(opt.widget);
     const bool overCircle = hover && view && circle.contains(view->viewport()->mapFromGlobal(QCursor::pos()));
     if (armed) {
         p->setPen(Qt::NoPen);

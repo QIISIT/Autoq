@@ -23,6 +23,12 @@
     #include <X11/extensions/XTest.h>
 #endif
 
+// монотонное время, мс (+1 — чтобы 0 значило «ещё не запускали»)
+static long long steadyMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count() + 1;
+}
+
 // ---------------------------------------------------------------------------
 // Низкоуровневая отправка: нажать / отпустить одно действие
 // ---------------------------------------------------------------------------
@@ -450,18 +456,28 @@ void Clicker::start() {
     pauseReason_ = 0;
     waitingStart_ = false;
     currentStep_ = -1;
+    startMs_ = steadyMs();
+    stopMs_ = 0;
     running_ = true;
     worker_ = std::thread(&Clicker::loop, this);
 }
 
 void Clicker::stop() {
     bool wasRunning = running_.exchange(false);
+    if (wasRunning) stopMs_ = steadyMs();
     if (worker_.joinable()) worker_.join();
 #ifdef _WIN32
     if (wasRunning) timeEndPeriod(1);
 #else
     (void)wasRunning;
 #endif
+}
+
+long long Clicker::runMs() const {
+    const long long from = startMs_;
+    if (!from) return 0;
+    const long long to = running_ ? steadyMs() : stopMs_.load();
+    return to > from ? to - from : 0;
 }
 
 void Clicker::setConfig(const ClickerConfig& cfg) {
