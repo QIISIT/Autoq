@@ -6,6 +6,8 @@
 #include "overlay.h"
 #include "games.h"
 #include "theme.h"
+#include "keycapturebutton.h"
+#include <QKeyEvent>
 
 static int g_fail = 0, g_pass = 0;
 #define CHECK(cond) do { if (cond) ++g_pass; else { ++g_fail; \
@@ -129,6 +131,59 @@ int main(int argc, char** argv) {
     }
 
     AppSettings::dropScope("AutoQTest", QString("ov_%1").arg(QCoreApplication::applicationPid()));
+    // «Своё сочетание»: одна клавиша — по отпусканию, две — «держу Tab, жму F»
+    {
+        KeyCaptureButton btn;
+        HotkeySpec got;
+        bool acc = false;
+        int fin = 0;
+        QObject::connect(&btn, &KeyCaptureButton::captureFinished, [&](bool a, const HotkeySpec& sp) { acc = a; got = sp; ++fin; });
+        auto key = [&](QEvent::Type t, int k, quint32 scan, Qt::KeyboardModifiers m = Qt::NoModifier, bool rep = false) {
+            QKeyEvent e(t, k, m, scan, 0, 0, QString(), rep);
+            QCoreApplication::sendEvent(&btn, &e);
+        };
+        auto start = [&]() { fin = 0; acc = false; got = HotkeySpec{}; btn.click(); CHECK(btn.isCapturing()); };
+        start();
+        key(QEvent::KeyPress, Qt::Key_Tab, 23);
+        key(QEvent::KeyPress, Qt::Key_Tab, 23, Qt::NoModifier, true);      // повтор — ждём дальше
+        CHECK(fin == 0 && btn.isCapturing());
+        key(QEvent::KeyPress, Qt::Key_F, 41);
+        CHECK(fin == 1 && acc && got.toString() == "tab+f" && got.display() == "Tab+F");
+        key(QEvent::KeyRelease, Qt::Key_F, 41);
+        key(QEvent::KeyRelease, Qt::Key_Tab, 23);
+        // одна клавиша — когда её отпустят
+        start();
+        key(QEvent::KeyPress, Qt::Key_F, 41);
+        CHECK(fin == 0);
+        key(QEvent::KeyRelease, Qt::Key_F, 41, Qt::NoModifier, true);      // повтор — не отпускание
+        CHECK(fin == 0);
+        key(QEvent::KeyRelease, Qt::Key_F, 41);
+        CHECK(fin == 1 && acc && got.toString() == "f" && !got.isChord());
+        // с Ctrl — сразу, как раньше
+        start();
+        key(QEvent::KeyPress, Qt::Key_Control, 37, Qt::ControlModifier);
+        key(QEvent::KeyPress, Qt::Key_F, 41, Qt::ControlModifier);
+        CHECK(fin == 1 && got.toString() == "ctrl+f");
+        key(QEvent::KeyRelease, Qt::Key_F, 41, Qt::ControlModifier);
+        key(QEvent::KeyRelease, Qt::Key_Control, 37);
+        // Shift+Tab, потом F — «shift+tab+f»; Esc — отмена
+        start();
+        key(QEvent::KeyPress, Qt::Key_Shift, 50, Qt::ShiftModifier);
+        key(QEvent::KeyPress, Qt::Key_Backtab, 23, Qt::ShiftModifier);
+        key(QEvent::KeyPress, Qt::Key_F, 41, Qt::ShiftModifier);
+        CHECK(fin == 1 && got.toString() == "shift+tab+f" && got.display() == "Shift+Tab+F");
+        key(QEvent::KeyRelease, Qt::Key_F, 41, Qt::ShiftModifier);
+        key(QEvent::KeyRelease, Qt::Key_Tab, 23, Qt::ShiftModifier);
+        start();
+        key(QEvent::KeyPress, Qt::Key_Escape, 9);
+        CHECK(fin == 1 && !acc && !btn.isCapturing());
+        // Shift+Tab держат, а отпускание пришло как Tab — тоже одна клавиша
+        start();
+        key(QEvent::KeyPress, Qt::Key_Backtab, 23, Qt::ShiftModifier);
+        key(QEvent::KeyRelease, Qt::Key_Tab, 0);
+        CHECK(fin == 1 && got.toString() == "shift+tab");
+    }
+
     std::printf("\n%d проверок пройдено, %d провалено\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

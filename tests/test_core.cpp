@@ -1232,6 +1232,31 @@ static void testV114() {
     CHECK(Games::renameProfile("genshin", imported, "Кик 2"));
     mode = -1;
     CHECK(Games::loadProfile("genshin", "Кик 2", &mode).steps == kick && mode == 3);
+
+    // клавиша старт/стоп из двух клавиш: «держу Tab, жму F»
+    const HotkeySpec tf = HotkeySpec::parse("tab+f");
+    CHECK(tf.isValid() && tf.isGlobalSafe() && tf.isChord() && tf.hold == "tab" && tf.key == "f" && tf.mods == 0);
+    CHECK(tf.toString() == "tab+f" && tf.display() == "Tab+F" && tf.passthrough());
+    CHECK(HotkeySpec::parse(tf.toString()) == tf && tf != HotkeySpec::parse("f") && tf != HotkeySpec::parse("e+f"));
+    const HotkeySpec stf = HotkeySpec::parse("Shift+Tab+F");
+    CHECK(stf.mods == ModShift && stf.hold == "tab" && stf.toString() == "shift+tab+f" && stf.display() == "Shift+Tab+F");
+    CHECK(HotkeySpec::parse("tab+ctrl+f6").toString() == "ctrl+tab+f6" && HotkeySpec::parse("tab+f6").passthrough());
+    const HotkeySpec ct = HotkeySpec::parse("ctrl+tab");                    // Ctrl — модификатор, не сочетание
+    CHECK(ct.isValid() && !ct.isChord() && ct.mods == ModCtrl && ct.key == "tab");
+    for (const char* bad : {"tab+tab", "tab+e+f", "tab+shift", "mouse:8+f", "tab+mouse:8", "capslock+f", "nosuch+f"})
+        CHECK(!HotkeySpec::parse(bad).isValid());
+    CHECK(HotkeySpec::parse("tab+shift").hold.isEmpty() && HotkeySpec::parse("tab+mouse:8").mods == 0);
+    HotkeySpec manual; manual.key = "f"; manual.hold = "f";
+    CHECK(!manual.isValid() && !manual.isGlobalSafe());
+    manual.hold = "shift";
+    CHECK(!manual.isValid());
+    manual.hold = "space";
+    CHECK(manual.isValid() && manual.display() == "Пробел+F");
+    // сочетание сохраняется у игры и в профиле
+    Games::setStartKey("genshin", tf);
+    CHECK(Games::startKey("genshin") == tf);
+    Games::setProfileKey("genshin", "Кик 2", stf);
+    CHECK(Games::profileKey("genshin", "Кик 2") == stf);
     { auto s = AppSettings::open(); s->clear(); s->sync(); }
 }
 

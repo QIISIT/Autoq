@@ -1,5 +1,7 @@
 #include "hotkey.h"
 #include <chrono>
+#include <algorithm>
+#include <iterator>
 
 #ifdef _WIN32
     #ifndef NOMINMAX
@@ -100,12 +102,17 @@ void GlobalHotkey::installX11ErrorHandler() {}
 // нажатие и пропускают его дальше — оно доходит до игры. Хуки вызываются в
 // потоке, который их поставил (пока он разбирает сообщения), — блокировки не нужны.
 namespace {
-struct LLBind { unsigned code = 0; int mods = 0; int id = 0; bool down = false; bool fired = false; };
+// hold — vk клавиши, которую держат («Tab+F»: hold = Tab, code = F); 0 — обычный хоткей
+struct LLBind { unsigned code = 0; int mods = 0; int id = 0; unsigned hold = 0; bool down = false; bool fired = false; };
 std::vector<LLBind> g_llKeys;    // клавиши: виртуальный код
 std::vector<LLBind> g_llMouse;   // кнопки мыши: 2, 8, 9
 std::vector<std::pair<int, bool>> g_llEvents;
+bool g_llDown[256] = {};         // что зажал человек (нажатия кликера — SendInput — не считаются)
 
 bool keyHeld(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
+// первая клавиша сочетания зажата: по хуку (не кликером) и по состоянию клавиатуры
+// (если отпускание хук пропустил — клавиша не «залипает»)
+bool holdOk(unsigned vk) { return vk < 256 && g_llDown[vk] && keyHeld(static_cast<int>(vk)); }
 
 int currentMods() {
     int m = 0;
@@ -117,15 +124,35 @@ int currentMods() {
 }
 
 void llEvent(std::vector<LLBind>& binds, unsigned code, bool down) {
-    for (LLBind& b : binds) {
-        if (b.code != code) continue;
-        if (down) {
+    if (down) {
+        // сначала сочетания «держу A, жму B»: сработало — обычный хоткей на B молчит
+        bool chord = false;
+        for (LLBind& b : binds) {
+            if (!b.hold || b.code != code) continue;
+            if (b.down) { chord = chord || b.fired; continue; }    // автоповтор
+            b.down = true;
+            if (holdOk(b.hold) && currentMods() == b.mods) {
+                b.fired = chord = true;
+                g_llEvents.push_back({b.id, true});
+            }
+        }
+        for (LLBind& b : binds) {
+            if (b.hold || b.code != code) continue;
             if (b.down) continue;              // автоповтор
             b.down = true;
-            if (currentMods() == b.mods) { b.fired = true; g_llEvents.push_back({b.id, true}); }
-        } else if (b.down) {
+            if (!chord && currentMods() == b.mods) { b.fired = true; g_llEvents.push_back({b.id, true}); }
+        }
+        return;
+    }
+    for (LLBind& b : binds) {
+        if (b.code == code && b.down) {
             b.down = false;
             if (b.fired) { b.fired = false; g_llEvents.push_back({b.id, false}); }
+        } else if (b.hold && b.hold == code && b.fired) {
+            // отпустили первую клавишу сочетания — тоже «отпущено» (B ещё зажата: снова
+            // сработает, только когда её нажмут заново)
+            b.fired = false;
+            g_llEvents.push_back({b.id, false});
         }
     }
 }
@@ -134,8 +161,11 @@ LRESULT CALLBACK llKeyboardProc(int code, WPARAM w, LPARAM l) {
     if (code == HC_ACTION) {
         const auto* k = reinterpret_cast<const KBDLLHOOKSTRUCT*>(l);
         // свои же нажатия (SendInput кликера) не считаем
-        if (!(k->flags & LLKHF_INJECTED))
-            llEvent(g_llKeys, k->vkCode, w == WM_KEYDOWN || w == WM_SYSKEYDOWN);
+        if (!(k->flags & LLKHF_INJECTED)) {
+            const bool down = w == WM_KEYDOWN || w == WM_SYSKEYDOWN;
+            if (k->vkCode < 256) g_llDown[k->vkCode] = down;
+            llEvent(g_llKeys, k->vkCode, down);
+        }
     }
     return CallNextHookEx(nullptr, code, w, l);
 }
@@ -177,10 +207,14 @@ void GlobalHotkey::loop() {
         registered.clear();
         if (kbHook) { UnhookWindowsHookEx(kbHook); kbHook = nullptr; }
         if (mouseHook) { UnhookWindowsHookEx(mouseHook); mouseHook = nullptr; }
+        // не оставить «зажатой»: и клавиши RegisterHotKey, и сквозные (хуки)
+        for (const auto* list : {&g_llKeys, &g_llMouse})
+            for (const LLBind& b : *list) if (b.fired) fire(b.id, false);
         g_llKeys.clear();
         g_llMouse.clear();
         g_llEvents.clear();
-        for (const Held& h : held) fire(h.id, false);  // не оставить «зажатой»
+        std::fill(std::begin(g_llDown), std::end(g_llDown), false);
+        for (const Held& h : held) fire(h.id, false);
         held.clear();
     };
     auto apply = [&]() {
@@ -199,7 +233,13 @@ void GlobalHotkey::loop() {
             const KeyDef* k = Keys::byName(sp.key);
             if (!k) { setStatus(id, Status::Invalid); continue; }
             if (sp.passthrough()) {
-                g_llKeys.push_back({k->winVK, sp.mods, id});
+                unsigned hold = 0;
+                if (sp.isChord()) {
+                    const KeyDef* h = Keys::byName(sp.hold);
+                    if (!h || !h->winVK) { setStatus(id, Status::Invalid); continue; }
+                    hold = h->winVK;
+                }
+                g_llKeys.push_back({k->winVK, sp.mods, id, hold});
                 continue;
             }
             UINT mods = MOD_NOREPEAT;     // удержание не дёргает старт/стоп много раз
@@ -236,6 +276,11 @@ void GlobalHotkey::loop() {
                 const int id = static_cast<int>(msg.wParam) - 1;
                 bool already = false;
                 for (const Held& h : held) already = already || h.id == id;
+                // эта же клавиша вторая в сочетании («Tab+F6»), и первая зажата — сработало сочетание
+                if (id >= 0 && id < static_cast<int>(regVk.size()))
+                    for (const LLBind& b : g_llKeys)
+                        already = already || (b.hold && b.code == regVk[static_cast<size_t>(id)] &&
+                                              holdOk(b.hold) && currentMods() == b.mods);
                 if (!already && id >= 0 && id < static_cast<int>(regVk.size())) {
                     held.push_back({id, regVk[static_cast<size_t>(id)]});
                     fire(id, true);
@@ -275,6 +320,7 @@ struct MacBind {
     int id = 0;
     bool mouse = false;
     int code = -1;        // kVK_* или номер кнопки мыши macOS (2 — средняя, 3/4 — боковые)
+    int hold = -1;        // kVK_* клавиши, которую держат («Tab+F»), -1 — обычный хоткей
     int mods = 0;
     bool pass = false;
     bool down = false;
@@ -287,7 +333,15 @@ struct MacTap {
     bool active = false;
     long long ownPid = 0;
     std::function<void(int, bool)> fire;
+    bool down[128] = {};  // что зажал человек (нажатия кликера не считаются)
 };
+
+// первая клавиша сочетания зажата: по перехвату и по состоянию клавиатуры системы
+// (пропустили отпускание — клавиша не «залипает»)
+bool macHoldOk(const MacTap* t, int code) {
+    return code >= 0 && code < 128 && t->down[code] &&
+           CGEventSourceKeyState(kCGEventSourceStateHIDSystemState, static_cast<CGKeyCode>(code));
+}
 
 int macMods(CGEventFlags f) {
     int m = 0;
@@ -304,7 +358,6 @@ CGEventRef macTapCallback(CGEventTapProxy, CGEventType type, CGEventRef ev, void
         if (t->port) CGEventTapEnable(t->port, true);   // система отключила — включаем обратно
         return ev;
     }
-    if (!t->active) return ev;
     const bool key = type == kCGEventKeyDown || type == kCGEventKeyUp;
     const bool mouse = type == kCGEventOtherMouseDown || type == kCGEventOtherMouseUp;
     if (!key && !mouse) return ev;
@@ -313,18 +366,40 @@ CGEventRef macTapCallback(CGEventTapProxy, CGEventType type, CGEventRef ev, void
     const int code = key ? static_cast<int>(CGEventGetIntegerValueField(ev, kCGKeyboardEventKeycode))
                          : static_cast<int>(CGEventGetIntegerValueField(ev, kCGMouseEventButtonNumber));
     const bool down = type == kCGEventKeyDown || type == kCGEventOtherMouseDown;
+    if (key && code >= 0 && code < 128) t->down[code] = down;   // и на паузе: первая клавиша сочетания
+    if (!t->active) return ev;
+    const bool repeat = down && key && CGEventGetIntegerValueField(ev, kCGKeyboardEventAutorepeat) != 0;
+    const int mods = macMods(CGEventGetFlags(ev));
     bool swallow = false;
-    for (MacBind& b : t->binds) {
-        if (b.mouse != mouse || b.code != code) continue;
-        if (down) {
-            const bool repeat = key && CGEventGetIntegerValueField(ev, kCGKeyboardEventAutorepeat) != 0;
-            if (macMods(CGEventGetFlags(ev)) != b.mods) continue;
-            if (!b.down && !repeat) {
-                b.down = true;
-                b.fired = true;
+    // сначала сочетания «держу A, жму B»: сработало — обычный хоткей на B молчит
+    bool chord = false;
+    if (down && key)
+        for (MacBind& b : t->binds) {
+            if (b.hold < 0 || b.mouse || b.code != code || mods != b.mods) continue;
+            if (b.down || repeat) { chord = chord || b.fired; continue; }
+            b.down = true;
+            if (macHoldOk(t, b.hold)) {
+                b.fired = chord = true;
                 if (t->fire) t->fire(b.id, true);
             }
-            if (!b.pass) { b.swallowUp = true; swallow = true; }   // забрали себе
+        }
+    for (MacBind& b : t->binds) {
+        if (!down && key && b.hold == code && b.fired) {
+            // отпустили первую клавишу сочетания — тоже «отпущено»
+            b.fired = false;
+            if (t->fire) t->fire(b.id, false);
+            continue;
+        }
+        if (b.mouse != mouse || b.code != code) continue;
+        if (down) {
+            if (b.hold >= 0) continue;          // сочетания — выше
+            if (mods != b.mods) continue;
+            if (!b.down && !repeat) {
+                b.down = true;
+                b.fired = !chord;
+                if (b.fired && t->fire) t->fire(b.id, true);
+            }
+            if (!b.pass && !chord) { b.swallowUp = true; swallow = true; }   // забрали себе
         } else {
             if (b.down) {
                 b.down = false;
@@ -375,6 +450,10 @@ void GlobalHotkey::loop() {
             } else {
                 b.code = Keys::macKeyCode(sp.key);
                 if (b.code < 0) { setStatus(id, Status::Invalid); continue; }
+                if (sp.isChord()) {
+                    b.hold = Keys::macKeyCode(sp.hold);
+                    if (b.hold < 0) { setStatus(id, Status::Invalid); continue; }
+                }
             }
             t.binds.push_back(b);
             setStatus(id, t.port ? Status::Ok : Status::Unavailable);
@@ -504,6 +583,7 @@ void GlobalHotkey::loop() {
         int mods = 0;
         bool mouse = false;
         int code = 0;          // KeyCode или номер кнопки мыши
+        int hold = 0;          // KeyCode клавиши, которую держат («Tab+F»), 0 — обычный хоткей
         bool grabbed = false;  // XGrabKey (иначе — сырые события)
         unsigned xmods = 0;
         bool down = false;
@@ -511,6 +591,15 @@ void GlobalHotkey::loop() {
     };
     std::vector<XBind> binds;
     bool rawSelected = false;
+    // зажата ли клавиша по мнению сервера (видит и XTEST — поэтому только вместе с pressed)
+    auto keymapDown = [&](int code) {
+        char keys[32] = {};
+        XQueryKeymap(d, keys);
+        return code > 0 && code < 256 && (keys[code / 8] & (1 << (code % 8))) != 0;
+    };
+    // первая клавиша сочетания зажата человеком (и сервер с этим согласен — пропущенное
+    // отпускание не оставит её «залипшей»)
+    auto holdOk = [&](int code) { return pressed.count(code) > 0 && keymapDown(code); };
 
     auto ungrab = [&]() {
         for (const XBind& b : binds) {
@@ -525,7 +614,13 @@ void GlobalHotkey::loop() {
     };
     auto apply = [&]() {
         ungrab();
-        pressed.clear();
+        // что за время паузы отпустили — забываем (зажатое осталось зажатым)
+        {
+            char keys[32] = {};
+            XQueryKeymap(d, keys);
+            for (auto it = pressed.begin(); it != pressed.end();)
+                it = (*it > 0 && *it < 256 && (keys[*it / 8] & (1 << (*it % 8)))) ? std::next(it) : pressed.erase(it);
+        }
         const QList<HotkeySpec> specs = bindings();
         active_ = specs;
         if (suspended_) { resetStatuses(Status::Suspended); return; }
@@ -549,6 +644,11 @@ void GlobalHotkey::loop() {
             const KeyCode kc = k ? XKeysymToKeycode(d, k->x11Sym) : 0;
             if (!kc) { setStatus(id, Status::Invalid); continue; }
             b.code = kc;
+            if (sp.isChord()) {
+                const KeyDef* h = Keys::byName(sp.hold);
+                b.hold = h ? XKeysymToKeycode(d, h->x11Sym) : 0;
+                if (!b.hold) { setStatus(id, Status::Invalid); continue; }
+            }
             if (sp.passthrough()) {
                 if (!xi2) { setStatus(id, Status::Unavailable); continue; }
                 needKeys = true;
@@ -579,14 +679,33 @@ void GlobalHotkey::loop() {
         (void)needKeys;
     };
 
+    // «держу A, жму B»: сработало ли сочетание на B (для обычного хоткея на той же клавише)
+    auto chordOn = [&](int code) {
+        for (const XBind& b : binds)
+            if (b.hold && !b.mouse && b.code == code && holdOk(b.hold) && modsNow() == b.mods) return true;
+        return false;
+    };
     auto rawEvent = [&](bool mouse, int code, bool down) {
+        bool chord = false;
+        if (down && !mouse)                         // сначала сочетания: сработало — обычный на B молчит
+            for (XBind& b : binds) {
+                if (!b.hold || b.mouse || b.code != code) continue;
+                if (b.down) { chord = chord || b.fired; continue; }
+                b.down = true;
+                if (holdOk(b.hold) && modsNow() == b.mods) { b.fired = chord = true; fire(b.id, true); }
+            }
         for (XBind& b : binds) {
+            if (!down && !mouse && b.hold && b.hold == code && b.fired) {
+                b.fired = false;                    // отпустили первую клавишу сочетания
+                fire(b.id, false);
+                continue;
+            }
             if (b.mouse != mouse || b.code != code) continue;
             if (b.grabbed && down) continue;        // нажатие перехваченной клавиши приходит через grab
             if (down) {
-                if (b.down) continue;
+                if (b.hold || b.down) continue;
                 b.down = true;
-                if (modsNow() == b.mods) { b.fired = true; fire(b.id, true); }
+                if (!chord && modsNow() == b.mods) { b.fired = true; fire(b.id, true); }
             } else if (b.down) {
                 b.down = false;
                 if (b.fired) { b.fired = false; fire(b.id, false); }
@@ -633,14 +752,16 @@ void GlobalHotkey::loop() {
             }
             if (ev.type == KeyPress) {
                 bool ours = false;
+                // клавиша — вторая в сочетании, и первая зажата: сработало сочетание
+                const bool chord = chordOn(static_cast<int>(ev.xkey.keycode));
                 for (XBind& b : binds)
                     if (b.grabbed && ev.xkey.keycode == static_cast<unsigned>(b.code) &&
                         (ev.xkey.state & relevant) == b.xmods) {
                         ours = true;
                         if (b.down) continue;
                         b.down = true;
-                        b.fired = true;
-                        fire(b.id, true);
+                        b.fired = !chord;
+                        if (b.fired) fire(b.id, true);
                     }
                 // Пока клавиша зажата, X держит всю клавиатуру у нас — нажатия кликера не
                 // дошли бы до игры (режим «пока держу»). Отпускаем клавиатуру сразу;

@@ -72,7 +72,7 @@ HotkeyDialog::HotkeyDialog(const QString& title, const QString& note, const Hotk
     connect(pick_, &KeyPicker::picked, this, [this](const QString& k) { HotkeySpec sp; sp.key = k; setSpec(sp); });
     connect(capture_, &KeyCaptureButton::captureStarted, this, [this]() {
         if (suspend_) suspend_(true);
-        hint_->setText(T("Нажми свою клавишу или сочетание (Esc — отмена)…"));
+        hint_->setText(T("Нажми свою клавишу, сочетание или две клавиши — зажми Tab и нажми F (Esc — отмена)…"));
         hint_->show();
     });
     connect(capture_, &KeyCaptureButton::captureFinished, this, [this](bool okk, const HotkeySpec& sp) {
@@ -87,7 +87,7 @@ HotkeyDialog::HotkeyDialog(const QString& title, const QString& note, const Hotk
 void HotkeyDialog::setSpec(const HotkeySpec& sp) {
     spec_ = sp;
     if (sp.isValid()) {
-        pick_->setCurrent(sp.key, sp.display());
+        pick_->setCurrent(sp.isChord() ? QString() : sp.key, sp.display());   // в списке сочетаний нет
         current_->setText(T("Сейчас: %1").arg(sp.display()));
     } else {
         pick_->setCurrent(QString(), T("выбрать…"));

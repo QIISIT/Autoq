@@ -1086,7 +1086,7 @@ void MainWindow::refreshIcons() {
     saveProfileBtn_->setIcon(AqIcons::ui("save", t.redHi, 14));
     resetProfileBtn_->setIcon(AqIcons::ui("undo", t.muted, 14));
     delProfileBtn_->setIcon(AqIcons::ui("trash", t.faint, 13));
-    hotkeyPick_->setCurrent(hotkeySpec_.key, hotkeySpec_.display());
+    hotkeyPick_->setCurrent(hotkeySpec_.isChord() ? QString() : hotkeySpec_.key, hotkeySpec_.display());
     presetBtn_->setIcon(AqIcons::ui("chevron", t.muted, 12, 2.4));
     startBtn_->refreshIcon();
     statusDot_->update();
@@ -2475,6 +2475,8 @@ QString MainWindow::startProblemFor(const GameDef& g, const GameState& st) const
     // действие = клавиша, которая что-то включает: кликер нажимал бы её сам
     for (const HkBinding& b : bindings_) {
         if (!(b.spec.mods == 0 || b.spec.mods == ModShift)) continue;
+        // сочетание из двух клавиш ловится только с клавиатуры человека — нажатия кликера его не включат
+        if (b.spec.isChord()) continue;
         for (const ActionStep& a : st.runList(g.mode)) {
             const bool same = b.spec.isMouse() ? (a.mouse && a.button == b.spec.mouseButton())
                                                : (!a.mouse && a.key.compare(b.spec.key, Qt::CaseInsensitive) == 0);
@@ -2528,7 +2530,8 @@ void MainWindow::onHotkeyEvent(const QString& specStr, bool down) {
     }
     if (capturingAnyKey()) return;
     // сквозная клавиша (буква, цифра) — пока печатают в окне AutoQ, это не команда
-    if (sp.passthrough() && !sp.isMouse() && QApplication::activeWindow()) {
+    // (две клавиши «Tab+F» так не печатают — это всегда команда)
+    if (sp.passthrough() && !sp.isMouse() && !sp.isChord() && QApplication::activeWindow()) {
         QWidget* fw = QApplication::focusWidget();
         if (fw && (qobject_cast<QLineEdit*>(fw) || qobject_cast<QAbstractSpinBox*>(fw) ||
                    fw->inherits("QAbstractItemView")))
@@ -2726,10 +2729,14 @@ void MainWindow::rebuildBindings() {
 void MainWindow::setHotkey(const HotkeySpec& sp, bool save) {
     if (!sp.isValid()) return;
     hotkeySpec_ = sp;
-    hotkeyPick_->setCurrent(sp.key, sp.display());
+    hotkeyPick_->setCurrent(sp.isChord() ? QString() : sp.key, sp.display());   // в списке сочетаний нет
     if (save && hasGame()) Games::setStartKey(game_.id, sp);
     hotkeyStatus_->hide();
-    if (sp.isMouse()) {
+    if (sp.isChord()) {
+        hotkeyInfo_->setText(T("«%1» — две клавиши: зажми %2 и нажми %3. Обе при этом нажимаются в игре как обычно.")
+                                 .arg(sp.display(), Keys::label(sp.hold), Keys::label(sp.key)));
+        hotkeyInfo_->show();
+    } else if (sp.isMouse()) {
         hotkeyInfo_->setText(T("«%1» — кнопка мыши: включает кликер и при этом нажимается в игре как обычно.")
                                  .arg(sp.display()));
         hotkeyInfo_->show();
@@ -2740,7 +2747,7 @@ void MainWindow::setHotkey(const HotkeySpec& sp, bool save) {
     } else {
         hotkeyInfo_->hide();
     }
-    if (mini_) mini_->setHotkey(sp.key, sp.display());
+    if (mini_) mini_->setHotkey(sp.isChord() ? QString() : sp.key, sp.display());
     rebuildBindings();
     updateTrayState();
     updateGameItems();
@@ -2749,7 +2756,7 @@ void MainWindow::setHotkey(const HotkeySpec& sp, bool save) {
 void MainWindow::onCaptureStarted() {
     // снимаем глобальные клавиши, иначе они сами перехватят нажатие
     suspendHotkeys(true);
-    hotkeyStatus_->setText(T("Нажми свою клавишу, сочетание или кнопку мыши (Esc — отмена)…"));
+    hotkeyStatus_->setText(T("Нажми свою клавишу, сочетание, две клавиши (зажми Tab и нажми F) или кнопку мыши (Esc — отмена)…"));
     hotkeyStatus_->show();
 }
 
@@ -2767,7 +2774,7 @@ void MainWindow::updateHotkeyStatus() {
             text = T("⚠ Клавиша %1 занята другой программой или системой — выбери другую.")
                        .arg(hotkeySpec_.display());
 #ifdef _WIN32
-            if (hotkeySpec_.key == "f12" && hotkeySpec_.mods == 0)
+            if (hotkeySpec_.key == "f12" && hotkeySpec_.mods == 0 && !hotkeySpec_.isChord())
                 text = T("⚠ F12 Windows резервирует под отладчик — выбери другую клавишу.");
 #endif
             break;
@@ -2787,6 +2794,17 @@ void MainWindow::updateHotkeyStatus() {
         default:
             break;
     }
+    // «Tab» на одном и «Tab+F» на другом: Tab срабатывает сразу, ещё до F
+    if (text.isEmpty())
+        for (const HkBinding& b : bindings_) {
+            if (b.spec.mods != hotkeySpec_.mods || b.spec.isChord() == hotkeySpec_.isChord()) continue;
+            const HotkeySpec& chord = b.spec.isChord() ? b.spec : hotkeySpec_;
+            const HotkeySpec& single = b.spec.isChord() ? hotkeySpec_ : b.spec;
+            if (chord.hold != single.key) continue;
+            text = T("⚠ «%1» и «%2» мешают друг другу: %1 срабатывает сразу, ещё до второй клавиши. Лучше выбрать другую.")
+                       .arg(single.display(), chord.display());
+            break;
+        }
     if (text.isEmpty()) {
         if (hotkeyStatus_->text().startsWith("⚠")) hotkeyStatus_->hide();
     } else {
@@ -2916,7 +2934,7 @@ void MainWindow::syncMini() {
                                       AqIcons::gameTile(g.icon, QColor(g.color), g.image, 22, 2.0, false, t.light)};
     mini_->setGames(items, game_.id);
     mini_->setState(cur_, game_.mode, game_.minIntervalMs);
-    mini_->setHotkey(hotkeySpec_.key, hotkeySpec_.display());
+    mini_->setHotkey(hotkeySpec_.isChord() ? QString() : hotkeySpec_.key, hotkeySpec_.display());
     updateMiniLive();
 }
 

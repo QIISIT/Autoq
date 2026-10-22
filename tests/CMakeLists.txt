@@ -7,7 +7,7 @@ add_executable(test_icons test_icons.cpp)
 target_link_libraries(test_icons PRIVATE aq_icons aq_core)
 
 # оверлей КПС (Qt Widgets, запускается с QT_QPA_PLATFORM=offscreen)
-add_executable(test_overlay test_overlay.cpp ../overlay.cpp ../overlay.h ../theme.cpp ../theme.h)
+add_executable(test_overlay test_overlay.cpp ../overlay.cpp ../overlay.h ../theme.cpp ../theme.h ../keycapturebutton.h)
 target_link_libraries(test_overlay PRIVATE aq_icons aq_core Qt6::Widgets)
 target_include_directories(test_overlay PRIVATE ${CMAKE_SOURCE_DIR})
 qt_add_resources(test_overlay "aq_fonts_test"

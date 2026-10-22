@@ -124,6 +124,21 @@ int main(int argc, char** argv) {
         QThread::msleep(args.value(2, "10").toInt() * 1000);
         return 0;
     }
+    // listen <секунд> <хоткей> [хоткей…] — печатать, какие хоткеи нажаты / отпущены
+    if (args[0] == "listen") {
+        QList<HotkeySpec> specs;
+        for (int i = 2; i < args.size(); ++i) specs << HotkeySpec::parse(args[i]);
+        GlobalHotkey hk([](const HotkeySpec& sp, bool down) {
+            std::printf("%s %s\n", qPrintable(sp.toString()), down ? "down" : "up");
+            std::fflush(stdout);
+        }, specs);
+        QThread::msleep(300);
+        for (int i = 0; i < specs.size(); ++i) std::printf("status %s=%d\n", qPrintable(specs[i].toString()), static_cast<int>(hk.status(i)));
+        std::printf("ready\n");
+        std::fflush(stdout);
+        QThread::msleep(args.value(1, "5").toInt() * 1000);
+        return 0;
+    }
     // state <клавиша> — зажата ли сейчас клавиша (проверка режима «Зажать»)
     if (args[0] == "state") {
         const KeyDef* k = Keys::byName(args.value(1));

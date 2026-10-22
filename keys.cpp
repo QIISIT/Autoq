@@ -295,12 +295,23 @@ int MouseButtons::fromItemName(const QString& name) {
 // ---------------------------------------------------------------------------
 int HotkeySpec::mouseButton() const { return MouseButtons::fromItemName(key); }
 
+bool HotkeySpec::holdAllowed(const QString& name) {
+    const KeyDef* k = Keys::byName(name);
+    if (!k) return false;
+    // модификаторы — это mods; CapsLock переключает раскладку/регистр — держать его неудобно
+    return k->qtKey != Qt::Key_Shift && k->qtKey != Qt::Key_Control && k->qtKey != Qt::Key_Alt &&
+           k->qtKey != Qt::Key_CapsLock;
+}
+
 bool HotkeySpec::isValid() const {
+    // сочетание — только из клавиш клавиатуры, и две разные
+    if (isChord() && (isMouse() || hold == key || !holdAllowed(hold))) return false;
     if (isMouse()) return MouseButtons::hotkeyAllowed(mouseButton());
     return Keys::byName(key) != nullptr;
 }
 
 bool HotkeySpec::isGlobalSafe() const {
+    if (isChord() && !isValid()) return false;
     if (isMouse()) return MouseButtons::hotkeyAllowed(mouseButton());
     const KeyDef* k = Keys::byName(key);
     if (!k) return false;
@@ -310,6 +321,8 @@ bool HotkeySpec::isGlobalSafe() const {
 }
 
 bool HotkeySpec::passthrough() const {
+    // «держу A, жму B»: ловим по хукам / сырым событиям — обе клавиши доходят до игры
+    if (isChord()) return isGlobalSafe();
     // кнопка мыши — всегда «сквозная»: нажатие доходит до игры
     if (isMouse()) return isGlobalSafe();
     // буква/цифра/знак без Ctrl, Alt и Win: ловим, не отнимая у программ
@@ -322,6 +335,7 @@ QString HotkeySpec::toString() const {
     if (mods & ModAlt)   s += "alt+";
     if (mods & ModShift) s += "shift+";
     if (mods & ModWin)   s += "win+";
+    if (isChord()) s += hold + "+";
     return s + key;
 }
 
@@ -338,6 +352,7 @@ QString HotkeySpec::display() const {
     if (mods & ModWin)   s += "Win+";
 #endif
     if (isMouse()) return s + MouseButtons::shortLabel(mouseButton());
+    if (isChord()) s += Keys::label(hold) + "+";
     return s + Keys::label(key);
 }
 
@@ -351,6 +366,8 @@ HotkeySpec HotkeySpec::parse(const QString& str) {
             else if (p == "alt") h.mods |= ModAlt;
             else if (p == "shift") h.mods |= ModShift;
             else if (p == "win" || p == "meta" || p == "super") h.mods |= ModWin;
+            // не модификатор — клавиша, которую держат («tab+f»); такая одна
+            else if (h.hold.isEmpty() && holdAllowed(p)) h.hold = p;
             else return HotkeySpec{}; // мусор в модификаторах
         } else if (p.startsWith("mouse:")) {
             h.key = MouseButtons::hotkeyAllowed(MouseButtons::fromItemName(p)) ? p : QString();
@@ -360,6 +377,8 @@ HotkeySpec HotkeySpec::parse(const QString& str) {
     }
     // сам модификатор основной клавишей хоткея быть не может ("ctrl+" и т.п.)
     if (h.key == "ctrl" || h.key == "alt" || h.key == "shift") h.key.clear();
-    if (h.key.isEmpty()) h.mods = 0;
+    // сочетание с кнопкой мыши или из одной и той же клавиши — не годится
+    if (h.isChord() && (h.isMouse() || h.hold == h.key)) h.key.clear();
+    if (h.key.isEmpty()) { h.mods = 0; h.hold.clear(); }
     return h;
 }

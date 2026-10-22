@@ -57,9 +57,15 @@ namespace MouseButtons {
 enum HotkeyMod { ModCtrl = 1, ModAlt = 2, ModShift = 4, ModWin = 8 };
 
 // Глобальный хоткей: клавиша + модификаторы. Хранится строкой "ctrl+alt+f7".
+// Сочетание из двух клавиш («держу Tab, жму F») — "tab+f": hold = "tab", key = "f".
 struct HotkeySpec {
     QString key;   // каноническое имя клавиши или кнопка мыши: "mouse:2", "mouse:8", "mouse:9"
     int mods = 0;
+    QString hold;  // клавиша, которую держат, пока жмут key ("" — обычный хоткей)
+
+    bool isChord() const { return !hold.isEmpty(); }
+    // годится ли клавиша быть первой в сочетании (не Shift/Ctrl/Alt, не CapsLock, не мышь)
+    static bool holdAllowed(const QString& name);
 
     bool isMouse() const { return key.startsWith("mouse:"); }
     int mouseButton() const;    // 0 — не мышь
@@ -69,10 +75,11 @@ struct HotkeySpec {
     bool isGlobalSafe() const;
     // Буква, цифра или знак без Ctrl/Alt/Win: хоткей «сквозной» — нажатие
     // доходит до игры и других программ (клавиша продолжает печататься).
+    // Сочетание из двух клавиш — всегда сквозное: обе доходят до игры.
     bool passthrough() const;
-    QString toString() const;   // "ctrl+alt+f7"
-    QString display() const;    // "Ctrl+Alt+F7"
+    QString toString() const;   // "ctrl+alt+f7", "tab+f"
+    QString display() const;    // "Ctrl+Alt+F7", "Tab+F"
     static HotkeySpec parse(const QString& s);
-    bool operator==(const HotkeySpec& o) const { return key == o.key && mods == o.mods; }
+    bool operator==(const HotkeySpec& o) const { return key == o.key && mods == o.mods && hold == o.hold; }
     bool operator!=(const HotkeySpec& o) const { return !(*this == o); }
 };
