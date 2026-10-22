@@ -10,7 +10,6 @@
 #include <QMimeData>
 #include <QPainter>
 #include <QMouseEvent>
-#include <QInputDialog>
 #include <QScrollArea>
 #include <QToolButton>
 #include <QPushButton>
@@ -225,6 +224,13 @@ private:
         if (b && b->stretch) return qMax(it->minimumSize().width(), forWrap ? b->rowMin : 0);
         return qMax(it->minimumSize().width(), it->sizeHint().width());
     }
+    // для переноса строк — ширины как вне редактора: ряды в редакторе те же, что на деле
+    static int wrapNeed(QLayoutItem* it) {
+        BoardBlock* b = blockOf(it);
+        if (!b) return needOf(it, true);
+        if (b->stretch) return qMax(b->plainWidth(false), b->rowMin);
+        return qMax(b->plainWidth(false), b->plainWidth(true));
+    }
     static int heightOf(QLayoutItem* it, int w) {
         const int h = it->hasHeightForWidth() ? it->heightForWidth(w) : it->sizeHint().height();
         return qMax(h, it->minimumSize().height());
@@ -236,7 +242,7 @@ private:
         int x = 0;
         for (QLayoutItem* it : items_) {
             if (it->isEmpty()) continue;
-            const int need = qMin(W, needOf(it, true));
+            const int need = qMin(W, wrapNeed(it));
             if (!cur.isEmpty() && x + sp_ + need > W) { lines << cur; cur.clear(); x = 0; }
             x += (cur.isEmpty() ? 0 : sp_) + need;
             cur << it;
@@ -255,7 +261,8 @@ private:
                 if (b && b->stretch) ++stretchers;
             }
             used += sp_ * (int(line.size()) - 1);
-            const int extra = qMax(0, W - used);
+            // в редакторе может не хватать на рамки блоков — тогда уже становятся растягивающиеся
+            const int extra = stretchers ? W - used : qMax(0, W - used);
             int left = r.x();
             if (stretchers) {
                 int given = 0, k = 0;
@@ -263,7 +270,7 @@ private:
                     BoardBlock* b = blockOf(line[i]);
                     if (!b || !b->stretch) continue;
                     const int add = ++k == stretchers ? extra - given : extra / stretchers;
-                    ws[i] += add;
+                    ws[i] = qMax(60, ws[i] + add);
                     given += add;
                 }
             } else if (li > 0) {
@@ -352,11 +359,16 @@ void BoardBlock::setEditing(bool on) {
 }
 
 QSize BoardBlock::minimumSizeHint() const {
-    // узкий блок (кнопки в шапке) в редактировании шире, чтобы ярлык с названием и глаз не налезали;
-    // широкому — его собственный минимум без полей редактора (8 + 8): колонок столько же, сколько на деле
+    // узкий блок (кнопки в шапке) в редактировании шире, чтобы ярлык с названием и глаз не налезали.
+    // Поля редактора (8 + 8) карточка берёт из своих (BoardCard::applySpec) — содержимое той же ширины
     QSize s = QWidget::minimumSizeHint();
-    if (editing_) s.setWidth(qMax(s.width() - 16, 150));
+    if (editing_) s.setWidth(qMax(s.width(), 150));
     return s;
+}
+
+int BoardBlock::plainWidth(bool hint) const {
+    const QSize s = hint ? QWidget::sizeHint() : QWidget::minimumSizeHint();
+    return editing_ ? s.width() - 16 : s.width();
 }
 
 void BoardBlock::resizeEvent(QResizeEvent* e) {
@@ -472,7 +484,9 @@ void BoardCard::applySpec(const CardLayout::Card& spec, bool editing, int number
     // прозрачная — без полей (как шапка), но в редактировании поля нужны под рамку
     const bool bare = spec.style == CardLayout::Clear && !editing;
     const int mh = bare ? 0 : Theme::sp(16), mt = bare ? 0 : Theme::sp(14);
-    mainLay_->setContentsMargins(mh, mt, mh, mh);
+    // в редактировании у блока поля 8 px — карточка отдаёт их из своих: содержимое той же ширины, что на деле
+    const int side = editing ? qMax(0, mh - 8) : mh;
+    mainLay_->setContentsMargins(side, mt, side, mh);
     setProperty("cstyle", spec.style);
     setProperty("editing", editing);
     // свой цвет — рамка (и лёгкий фон у акцентной и «без рамки»)
@@ -715,18 +729,19 @@ void Board::remember() {
     redo_.clear();
 }
 
-void Board::applyState(const State& s, bool animate) {
+void Board::applyState(const State& s, bool animate, const std::function<void()>& then) {
     if (resizeEdge_ >= 0) cancelResize();          // край тянули — раскладка уже другая
     const bool sideChanged = s.sidebar != sidebar_;
     // панель меняется в том же снимке, что и карточки (переход — по всему окну). Скрытая
     // панель появляется, когда прячут блок «Игра» (edited → MainWindow) — тоже по всему окну
-    auto apply = [this, s, sideChanged]() {
+    auto apply = [this, s, sideChanged, then]() {
         layout_ = s.layout;
         sidebar_ = s.sidebar;
         if (sideChanged) emit sidebarModeChanged(sidebar_);
         rebuild();
         updateBar();
         emit edited();                             // внутри: монитор и панель — уже в снимке «после»
+        if (then) then();
     };
     const bool wholeWindow = sideChanged || s.sidebar == 3;
     QWidget* area = wholeWindow && sideArea_ ? sideArea_.data() : animArea_.data();
@@ -734,13 +749,13 @@ void Board::applyState(const State& s, bool animate) {
     else apply();
 }
 
-void Board::change(const std::function<void(CardLayout::Layout&)>& f, bool animate) {
+void Board::change(const std::function<void(CardLayout::Layout&)>& f, bool animate, const std::function<void()>& then) {
     CardLayout::Layout l = layout_;
     f(l);
     l = CardLayout::normalize(l);
     if (l == layout_) return;
     remember();
-    applyState(State{l, sidebar_}, animate);
+    applyState(State{l, sidebar_}, animate, then);
 }
 
 bool Board::undo() {
@@ -853,11 +868,24 @@ int Board::columnsFor(int w) const {
     for (BoardCard* c : gridCards()) {
         if (c->wide() || specOf(c->id()).span > 0) continue;
         ++narrow;
-        need = qMax(need, c->minimumSizeHint().width());
+        // в редакторе — минимум, каким он был вне редактора (там первая шапка блока — в заголовке
+        // карточки), пока в карточке те же блоки: колонок столько же, сколько будет на деле
+        int m = c->minimumSizeHint().width();
+        if (edit_) {
+            const auto it = liveMin_.constFind(c->id());
+            if (it != liveMin_.constEnd() && it->first == blockIdsOf(c)) m = it->second;
+        }
+        need = qMax(need, m);
     }
     for (int cols = qMin(4, narrow); cols > 1; --cols)
         if (w >= cols * need + (cols - 1) * gap()) return cols;
     return 1;
+}
+
+QStringList Board::blockIdsOf(const BoardCard* c) {
+    QStringList ids;
+    for (const BoardBlock* b : c->blocks()) ids << b->id();
+    return ids;
 }
 
 QSize Board::minimumSizeHint() const {
@@ -872,6 +900,8 @@ void Board::doLayout() {
     if (laying_) return;
     laying_ = true;
     const int W = qMax(1, width()), g = gap();
+    if (!edit_)
+        for (BoardCard* c : gridCards()) liveMin_[c->id()] = {blockIdsOf(c), c->minimumSizeHint().width()};
     cols_ = columnsFor(W);
     // сетка в 12 долей: «сама» — как раньше (широкая — на всю строку, узкие делят
     // строку поровну), своя ширина — четвертями; не влезает содержимое — шире
@@ -984,6 +1014,7 @@ void Board::refreshIcons() {
         if (barUndo_) barUndo_->setIcon(AqIcons::ui("undo", t.text, 15, 2.0));
         if (barRedo_) barRedo_->setIcon(AqIcons::ui("redo", t.text, 15, 2.0));
         if (barHidden_) barHidden_->setIcon(AqIcons::ui("eye", t.text, 15, 2.0));
+        if (barAdd_) barAdd_->setIcon(AqIcons::ui("plus", t.text, 14));
     }
     rebuild();
 }
@@ -1044,7 +1075,7 @@ void Board::buildBar() {
     hiddenMenu_ = new QMenu(barHidden_);
     barHidden_->setMenu(hiddenMenu_);
     connect(hiddenMenu_, &QMenu::aboutToShow, this, &Board::fillHiddenMenu);
-    auto* add = new QPushButton(T("Новая карточка"));
+    auto* add = barAdd_ = new QPushButton(T("Новая карточка"));
     add->setIcon(AqIcons::ui("plus", Theme::t().text, 14));
     add->setToolTip(T("Пустая карточка со своим названием — перетащи в неё нужные блоки"));
     auto* more = new QPushButton(T("Ещё"));
@@ -1265,15 +1296,15 @@ void Board::showCardMenu(const QString& cardId, QToolButton* from, const QPoint&
 
 void Board::askNewCard() {
     bool ok = false;
-    const QString name = QInputDialog::getText(window(), T("Новая карточка"), T("Название карточки:"), QLineEdit::Normal,
-                                               T("Моя карточка"), &ok).simplified();
+    const QString name = askText(window(), T("Новая карточка"), T("Название карточки:"), T("Моя карточка"), &ok).simplified();
     if (!ok || name.isEmpty()) return;
     QString id;
-    change([&id, name](CardLayout::Layout& l) { id = CardLayout::addCustom(l, name); });
-    // показать новую карточку — она в конце
-    QTimer::singleShot(0, this, [this, id]() {
+    // показать новую карточку (она в конце) — внутри перехода: снимок «после» уже прокручен к ней
+    change([&id, name](CardLayout::Layout& l) { id = CardLayout::addCustom(l, name); }, true, [this, &id]() {
         BoardCard* c = cards_.value(id);
-        for (QWidget* p = parentWidget(); p && c; p = p->parentWidget())
+        if (!c) return;
+        for (int i = 0; i < 4; ++i) QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        for (QWidget* p = parentWidget(); p; p = p->parentWidget())
             if (auto* sa = qobject_cast<QScrollArea*>(p)) { sa->ensureWidgetVisible(c, 0, 40); break; }
     });
 }
@@ -1282,8 +1313,7 @@ void Board::askRename(const QString& cardId) {
     const int i = CardLayout::indexOf(layout_, cardId);
     if (i < 0) return;
     bool ok = false;
-    const QString name = QInputDialog::getText(window(), T("Переименовать карточку"), T("Название карточки:"),
-                                               QLineEdit::Normal, layout_[i].title, &ok).simplified();
+    const QString name = askText(window(), T("Переименовать карточку"), T("Название карточки:"), layout_[i].title, &ok).simplified();
     if (!ok || name.isEmpty()) return;
     change([cardId, name](CardLayout::Layout& l) { CardLayout::rename(l, cardId, name); });
 }

@@ -22,6 +22,7 @@
 #include <QTimer>
 #include <QRegularExpression>
 #include <QVBoxLayout>
+#include <QInputDialog>
 #include <QMessageBox>
 #include <QSlider>
 #include <QComboBox>
@@ -779,6 +780,18 @@ bool askYesNo(QWidget* parent, const QString& title, const QString& text,
     box.setEscapeButton(n);
     box.exec();
     return box.clickedButton() == y;
+}
+
+QString askText(QWidget* parent, const QString& title, const QString& label, const QString& value, bool* ok) {
+    QInputDialog d(parent);
+    d.setWindowTitle(title);
+    d.setLabelText(label);
+    d.setTextValue(value);
+    d.setOkButtonText(T("Готово"));
+    d.setCancelButtonText(T("Отмена"));
+    const bool accepted = d.exec() == QDialog::Accepted;
+    if (ok) *ok = accepted;
+    return accepted ? d.textValue() : QString();
 }
 
 // ---------------------------------------------------------------------------

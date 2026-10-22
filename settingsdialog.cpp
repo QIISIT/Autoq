@@ -50,12 +50,20 @@ static QString autoText_() {
 #endif
 }
 
+// значок кнопки цвета темы: запоминается на кнопке и перекрашивается в refresh() при смене темы
+static void themedIcon(QAbstractButton* b, const char* name, bool muted, int px) {
+    b->setProperty("aqIcon", QString::fromLatin1(name));
+    b->setProperty("aqIconMuted", muted);
+    b->setProperty("aqIconPx", px);
+    b->setIcon(AqIcons::ui(name, muted ? Theme::t().muted : Theme::t().text, px));
+}
+
 // маленькая кнопка «вернуть как было» рядом с ползунком
 static QToolButton* resetMini(const QString& tip) {
     auto* b = new QToolButton();
     b->setObjectName("resetMini");
     b->setFixedSize(24, 24);
-    b->setIcon(AqIcons::ui("reset", Theme::t().muted, 13, 2.0));
+    themedIcon(b, "reset", true, 13);
     b->setToolTip(tip);
     b->setAccessibleName(tip);
     b->setCursor(Qt::PointingHandCursor);
@@ -278,7 +286,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
             auto* play = new QToolButton();
             play->setObjectName("icon");
             play->setFixedSize(30, 30);
-            play->setIcon(AqIcons::ui("play", Theme::t().muted, 12));
+            themedIcon(play, "play", true, 12);
             play->setToolTip(T("Послушать"));
             play->setAccessibleName(T("Послушать"));
             g->addWidget(play, r, 2);
@@ -322,7 +330,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         };
         updMine();
         auto* mineDir = new QPushButton(T("Папка звуков"));
-        mineDir->setIcon(AqIcons::ui("folder", Theme::t().text, 14));
+        themedIcon(mineDir, "folder", false, 14);
         mineDir->setToolTip(T("Положи сюда файлы WAV — они появятся в списках звуков"));
         connect(mineDir, &QPushButton::clicked, this, []() {
             QDir().mkpath(Sounds::userDir());
@@ -360,7 +368,8 @@ QWidget* SettingsDialog::buildGeneralPage() {
         lay->addWidget(note);
         auto* btns = new QHBoxLayout();
         btns->setSpacing(8);
-        auto* openBtn = new QPushButton(AqIcons::ui("folder", Theme::t().muted, 14), T("Открыть папку"));
+        auto* openBtn = new QPushButton(T("Открыть папку"));
+        themedIcon(openBtn, "folder", true, 14);
         auto* moveBtn = new QPushButton(T("Сменить папку…"));
         auto* defBtn = new QPushButton(T("Вернуть по умолчанию"));
         for (QPushButton* b : {openBtn, moveBtn, defBtn}) {
@@ -618,7 +627,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
         cl->setSpacing(6);
         auto* editBtn = new QPushButton(T("Редактор интерфейса"));
         editBtn->setObjectName("outline");
-        editBtn->setIcon(AqIcons::ui("layout", Theme::t().text, 15));
+        themedIcon(editBtn, "layout", false, 15);
         editBtn->setCursor(Qt::PointingHandCursor);
         editBtn->setToolTip(T("Закрыть настройки и менять интерфейс прямо в окне"));
         connect(editBtn, &QPushButton::clicked, this, &SettingsDialog::editLayoutRequested);
@@ -933,6 +942,11 @@ void SettingsDialog::refresh() {
                             AqIcons::iconStyleNote(a.iconStyle));
     }
     headIcon_->setPixmap(AqIcons::uiPixmap("settings", t.redHi, 20, devicePixelRatioF(), 1.8));
+    for (QAbstractButton* b : findChildren<QAbstractButton*>()) {
+        const QString name = b->property("aqIcon").toString();
+        if (!name.isEmpty())
+            b->setIcon(AqIcons::ui(name, b->property("aqIconMuted").toBool() ? t.muted : t.text, b->property("aqIconPx").toInt()));
+    }
     refreshEditor();
     if (oNumAuto_) {
         paintColorButtons();

@@ -19,6 +19,8 @@ class QToolButton;
 bool askYesNo(QWidget* parent, const QString& title, const QString& text,
               const QString& yes = T("Да"), const QString& no = T("Нет"),
               bool defaultYes = true);
+// Ввод строки с русскими кнопками (QInputDialog::getText показал бы OK / Cancel)
+QString askText(QWidget* parent, const QString& title, const QString& label, const QString& value, bool* ok);
 
 // Переключатель (тумблер) вместо галочки
 class ToggleSwitch : public QAbstractButton {

@@ -340,6 +340,7 @@ struct MacTap {
     long long ownPid = 0;
     std::function<void(int, bool)> fire;
     bool down[128] = {};  // что зажал человек (нажатия кликера не считаются)
+    bool ownHeld[128] = {};   // нажатие забрали себе, а привязки пересобрали, пока клавиша зажата
 };
 
 // первая клавиша сочетания зажата: по перехвату и по состоянию клавиатуры системы
@@ -373,6 +374,12 @@ CGEventRef macTapCallback(CGEventTapProxy, CGEventType type, CGEventRef ev, void
                          : static_cast<int>(CGEventGetIntegerValueField(ev, kCGMouseEventButtonNumber));
     const bool down = type == kCGEventKeyDown || type == kCGEventOtherMouseDown;
     if (key && code >= 0 && code < 128) t->down[code] = down;   // и на паузе: первая клавиша сочетания
+    // нажатие забрали себе до пересборки привязок — его повторы и отпускание тоже наши
+    if (key && code >= 0 && code < 128 && t->ownHeld[code]) {
+        const bool rep = down && CGEventGetIntegerValueField(ev, kCGKeyboardEventAutorepeat) != 0;
+        if (!down || !rep) t->ownHeld[code] = false;
+        if (!down || rep) return nullptr;
+    }
     if (!t->active) return ev;
     const bool repeat = down && key && CGEventGetIntegerValueField(ev, kCGKeyboardEventAutorepeat) != 0;
     const int mods = macMods(CGEventGetFlags(ev));
@@ -440,7 +447,10 @@ void GlobalHotkey::loop() {
         CGEventTapEnable(t.port, true);
     };
     auto apply = [&]() {
-        for (const MacBind& b : t.binds) if (b.fired) fire(b.id, false);
+        for (const MacBind& b : t.binds) {
+            if (b.fired) fire(b.id, false);
+            if (!b.mouse && b.down && b.swallowUp && b.code >= 0 && b.code < 128) t.ownHeld[b.code] = true;
+        }
         t.active = false;
         t.binds.clear();
         const QList<HotkeySpec> specs = bindings();
@@ -681,6 +691,9 @@ void GlobalHotkey::loop() {
                 continue;
             }
             b.grabbed = true;
+            // зажатое через переустановку — уже нажато: его автоповтор не новое нажатие (иначе клавиша
+            // «используется», если её держать, переключала бы туда-сюда с частотой повтора)
+            b.down = pressed.count(b.code) > 0;
             binds.push_back(b);
             setStatus(id, Status::Ok);
         }

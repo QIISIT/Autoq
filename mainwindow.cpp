@@ -36,7 +36,6 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QMessageBox>
-#include <QInputDialog>
 #include <QDialog>
 #include <QLineEdit>
 #include <QCloseEvent>
@@ -2237,8 +2236,7 @@ void MainWindow::renameProfile() {
     const QString active = Games::activeProfile(game_.id);
     if (active.isEmpty()) return;
     bool ok = false;
-    const QString n = QInputDialog::getText(dialogParent(), T("Переименовать профиль"), T("Новое имя:"),
-                                            QLineEdit::Normal, active, &ok).trimmed();
+    const QString n = askText(dialogParent(), T("Переименовать профиль"), T("Новое имя:"), active, &ok).trimmed();
     if (!ok || n == active) return;
     QString why;
     if (!Games::validProfileName(n, &why)) { QMessageBox::warning(dialogParent(), T("Профиль"), why); return; }
@@ -2855,7 +2853,11 @@ void MainWindow::onCaptureFinished(bool accepted, const HotkeySpec& spec) {
 void MainWindow::updateHotkeyStatus() {
     if (!hotkey_ || captureBtn_->isCapturing() || !hasGame() || !hotkey_->applied()) return;
     QString text;
-    switch (hotkey_->statusOf(hotkeySpec_)) {
+    // клавиша не назначена нарочно (игра «не используется») — спрашивать систему не о чем:
+    // она ответила бы «недоступна», и вышло бы ложное «нет подключения к X11»
+    bool bound = false;
+    for (const HkBinding& b : bindings_) bound = bound || b.spec == hotkeySpec_;
+    switch (bound ? hotkey_->statusOf(hotkeySpec_) : GlobalHotkey::Status::Ok) {
         case GlobalHotkey::Status::Busy:
             text = T("⚠ Клавиша %1 занята другой программой или системой — выбери другую.")
                        .arg(hotkeySpec_.display());

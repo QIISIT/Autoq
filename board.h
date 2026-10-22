@@ -11,6 +11,7 @@
 //    Ctrl+Z / Ctrl+Y — отменить и вернуть.
 // Блоки — живые виджеты: при смене раскладки они только переезжают в другую карточку.
 #include <QFrame>
+#include <QHash>
 #include <QMap>
 #include <QPointer>
 #include <functional>
@@ -47,6 +48,7 @@ public:
     void placeHead(QHBoxLayout* cardHead, int index);   // nullptr — над самим блоком
     void setEditing(bool on);
     QSize minimumSizeHint() const override;   // в редактировании — не уже 150 (ярлык и глаз)
+    int plainWidth(bool hint) const;          // ширина как вне редактора (без полей 8 + 8 и без «не уже 150»)
 signals:
     void dragStarted(BoardBlock* b);
     void hideRequested(BoardBlock* b);
@@ -162,11 +164,14 @@ private:
     void rebuild();
     void doLayout();
     int columnsFor(int w) const;
+    static QStringList blockIdsOf(const BoardCard* c);
     QList<BoardCard*> gridCards() const;
     CardLayout::Card specOf(const QString& id) const;     // с учётом тянущегося края
     // поменять раскладку (с отменой); animate — плавно, через снимок
-    void change(const std::function<void(CardLayout::Layout&)>& f, bool animate = true);
-    void applyState(const State& s, bool animate);
+    // then — после правки, ещё внутри перехода (прокрутить к новой карточке и т. п.)
+    void change(const std::function<void(CardLayout::Layout&)>& f, bool animate = true,
+                const std::function<void()>& then = {});
+    void applyState(const State& s, bool animate, const std::function<void()>& then = {});
     void remember();                               // нынешнее — в историю отмен (перед правкой)
     void startDrag(QWidget* src, const QString& mime, const QString& id);
     bool findTarget(const QPoint& p);
@@ -198,6 +203,7 @@ private:
     QToolButton* barUndo_ = nullptr;
     QToolButton* barRedo_ = nullptr;
     QPushButton* barHidden_ = nullptr;
+    QPushButton* barAdd_ = nullptr;
     QMenu* hiddenMenu_ = nullptr;
     QMenu* templatesMenu_ = nullptr;
     QList<QShortcut*> editKeys_;                   // Ctrl+Z / Ctrl+Y — включены только в редакторе
@@ -206,6 +212,7 @@ private:
     bool edit_ = false;
     bool laying_ = false;
     int cols_ = 1;
+    QHash<QString, QPair<QStringList, int>> liveMin_;   // минимум карточки вне редактора (и с какими блоками)
     // перетаскивание: что тянем и куда встанет
     QString dragKind_, dragId_;
     QString targetCard_;

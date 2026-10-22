@@ -1,5 +1,6 @@
 #include "animations.h"
 #include "theme.h"
+#include <algorithm>
 #include <QApplication>
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -57,7 +58,10 @@ protected:
                 const qreal k = easeOut((ms - pc.delay) / 260.0);
                 if (k <= 0) continue;
                 p.setOpacity(k);
+                p.save();
+                p.setClipRect(pc.r);              // выезжает в своём месте — не на строку статуса и полосу редактора
                 p.drawPixmap(pc.r.topLeft() + QPoint(0, qRound((1 - k) * 28)), pc.pm);
+                p.restore();
             }
             return;
         }
@@ -117,11 +121,22 @@ void Anim::transition(QWidget* area, const std::function<void()>& change, const 
     QList<TransitionOverlay::Piece> pieces;
     if (st == "cascade") {
         QPainter p(&after);
-        int i = 0;
+        // только видимая часть карточки (прокрутка обрезает её снизу и под полосой редактора)
+        QList<QRect> rects;
         for (QWidget* c : cards) {
             if (!c || !c->isVisible()) continue;
-            const QRect r(c->mapTo(area, QPoint(0, 0)), c->size());
-            if (!area->rect().intersects(r)) continue;
+            QRect vis = area->rect();
+            for (QWidget* up = c->parentWidget(); up && up != area; up = up->parentWidget())
+                vis &= QRect(up->mapTo(area, QPoint(0, 0)), up->size());
+            const QRect r = QRect(c->mapTo(area, QPoint(0, 0)), c->size()) & vis;
+            if (!r.isEmpty()) rects << r;
+        }
+        // по очереди сверху вниз, слева направо — как карточки стоят после смены
+        std::sort(rects.begin(), rects.end(), [](const QRect& a, const QRect& b) {
+            return a.top() != b.top() ? a.top() < b.top() : a.left() < b.left();
+        });
+        int i = 0;
+        for (const QRect& r : rects) {
             pieces << TransitionOverlay::Piece{r, after.copy(QRect(r.topLeft() * after.devicePixelRatio(),
                                                                     r.size() * after.devicePixelRatio())), 40 + 70 * i++};
             pieces.last().pm.setDevicePixelRatio(after.devicePixelRatio());

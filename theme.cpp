@@ -296,7 +296,7 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }
 
 QMenu { background: @card@; border: 1px solid @fieldBorder@; padding: 6px; }
-QMenu::item { padding: 7px 26px 7px 12px; border-radius: 6px; font-size: 13px; }
+QMenu::item { padding: 7px 26px 7px 12px; border-radius: 6px; }
 QMenu::item:selected { background: @field@; }
 QMenu::item:disabled { color: @redSoft@; }
 QMenu::separator { height: 1px; background: @cardBorder@; margin: 4px 6px; }
