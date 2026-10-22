@@ -1189,6 +1189,8 @@ static void testCardLayout() {
     CHECK(!importJson("[]", &back, &backSide) && !importJson(R"({"autoq":"profile","cards":[]})", &back, &backSide));
     CHECK(!importJson("{не json", &back, &backSide));
     CHECK(importJson(R"({"autoq":"layout","sidebar":9,"cards":[]})", &back, &backSide) && backSide == 3 && back == defaults());
+    backSide = 1;      // в файле нет панели — остаётся как сейчас
+    CHECK(importJson(R"({"autoq":"layout","cards":[]})", &back, &backSide) && backSide == 1);
     AppSettings::dropScope("AutoQTest", "cl_" + pid);
 }
 

@@ -366,6 +366,6 @@ bool CardLayout::importJson(const QString& text, Layout* l, int* sidebar) {
     const QJsonObject o = d.object();
     if (o.value("autoq").toString() != "layout" || !o.value("cards").isArray()) return false;
     if (l) *l = normalize(cardsFrom(o.value("cards").toArray()));
-    if (sidebar) *sidebar = qBound(0, o.value("sidebar").toInt(), 3);
+    if (sidebar && o.value("sidebar").isDouble()) *sidebar = qBound(0, o.value("sidebar").toInt(), 3);   // нет — как сейчас
     return true;
 }

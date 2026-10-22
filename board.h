@@ -22,6 +22,7 @@ class QPushButton;
 class QVBoxLayout;
 class QHBoxLayout;
 class QMenu;
+class QShortcut;
 class FlowLayout;
 class RowFlow;
 class EdgeGrip;
@@ -199,6 +200,7 @@ private:
     QPushButton* barHidden_ = nullptr;
     QMenu* hiddenMenu_ = nullptr;
     QMenu* templatesMenu_ = nullptr;
+    QList<QShortcut*> editKeys_;                   // Ctrl+Z / Ctrl+Y — включены только в редакторе
     QPointer<QWidget> animArea_;
     QPointer<QWidget> sideArea_;
     bool edit_ = false;

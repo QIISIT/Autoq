@@ -215,6 +215,7 @@ void MainWindow::buildUi() {
     rootStack_->setProperty("toastBottom", 50);       // сообщения — над строкой состояния
     auto* root = new QWidget();
     root->setObjectName("root");
+    root_ = root;
     auto* rootLay = new QVBoxLayout(root);
     rootLay->setContentsMargins(0, 0, 0, 0);
     rootLay->setSpacing(0);
@@ -1305,7 +1306,7 @@ void MainWindow::rebuildWelcome() {
 
 void MainWindow::addTemplate(const QString& id) {
     if (!Games::addBuiltin(id)) return;
-    Anim::transition(pages_, [this, id]() { reloadGames(id); }, board_->visibleCards());
+    Anim::transition(pageArea(), [this, id]() { reloadGames(id); }, board_->visibleCards());
     notify(T("Игра «%1» добавлена.").arg(Games::get(id).name));
 }
 
@@ -1324,7 +1325,7 @@ void MainWindow::onGameRowChanged(int row) {
     cancelPending();
     countdown_->cancel();
     if (mini_) mini_->cancelCapture();
-    Anim::transition(pages_, [this, id]() { switchToGame(id); }, board_->visibleCards());
+    Anim::transition(pageArea(), [this, id]() { switchToGame(id); }, board_->visibleCards());
     rebuildTrayGames();
 }
 
@@ -1393,7 +1394,7 @@ void MainWindow::addGame() {
     GameDef res = dlg.result();
     if (res.builtin) Games::addBuiltin(res.id);   // шаблон: чистая запись, затем правки из окна
     Games::save(res);
-    Anim::transition(pages_, [this, res]() { reloadGames(res.id); }, board_->visibleCards());
+    Anim::transition(pageArea(), [this, res]() { reloadGames(res.id); }, board_->visibleCards());
     notify(T("Игра «%1» добавлена.").arg(res.name));
 }
 
@@ -3358,6 +3359,10 @@ void MainWindow::updateSidebarVisible() {
     const bool gameBlock = hasGame() && board_->blockVisible("game");
     sidebar_->setVisible(sideMode_ != 3 || gameList_->count() == 0 || !gameBlock);
     switchGameBtn_->setVisible(sideMode_ == 3);
+}
+
+QWidget* MainWindow::pageArea() const {
+    return sideMode_ == 3 && root_ ? root_ : static_cast<QWidget*>(pages_);
 }
 
 void MainWindow::showSwitchMenu() {

@@ -260,6 +260,9 @@ void GlobalHotkey::loop() {
                 setStatus(id, Status::Busy);
             }
         }
+        // зажатое через переустановку — уже нажато: его автоповтор не новое нажатие (иначе «Tab+1»
+        // у «используется», если держать 1, переключал бы туда-сюда с частотой повтора)
+        for (LLBind& b : g_llKeys) if (b.code < 256 && g_llDown[b.code]) b.down = true;
         if (!g_llKeys.empty()) {
             kbHook = SetWindowsHookExW(WH_KEYBOARD_LL, llKeyboardProc, GetModuleHandleW(nullptr), 0);
             for (const LLBind& b : g_llKeys) setStatus(b.id, kbHook ? Status::Ok : Status::Busy);
@@ -396,15 +399,16 @@ CGEventRef macTapCallback(CGEventTapProxy, CGEventType type, CGEventRef ev, void
         if (b.mouse != mouse || b.code != code) continue;
         if (down) {
             if (b.hold >= 0) continue;          // сочетания — выше
+            // повтор нажатия: как решили при нажатии, какие бы модификаторы ни были сейчас
+            // (Ctrl отпустили раньше Q — повторы Q всё равно наши, раз наше и отпускание)
+            if (b.down || repeat) { if (b.swallowUp) swallow = true; continue; }
             if (mods != b.mods) continue;
-            if (!b.down && !repeat) {
-                b.down = true;
-                b.fired = !chord;
-                if (b.fired && t->fire) t->fire(b.id, true);
-                // забрали себе нажатие — забираем и повторы, и отпускание; пропустили в игру
-                // (сработало сочетание) — пропускаем и их, иначе клавиша «залипнет» в игре
-                b.swallowUp = !b.pass && !chord;
-            }
+            b.down = true;
+            b.fired = !chord;
+            if (b.fired && t->fire) t->fire(b.id, true);
+            // забрали себе нажатие — забираем и повторы, и отпускание; пропустили в игру
+            // (сработало сочетание) — пропускаем и их, иначе клавиша «залипнет» в игре
+            b.swallowUp = !b.pass && !chord;
             if (b.swallowUp) swallow = true;
         } else {
             if (b.down) {

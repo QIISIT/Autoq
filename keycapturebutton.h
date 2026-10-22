@@ -69,11 +69,13 @@ protected:
                 }
             }
         }
-        if (capturing_ && (e->type() == QEvent::KeyPress || e->type() == QEvent::ShortcutOverride)) {
+        // записываем — ни одно сочетание окна (Ctrl+Z редактора и т. п.) не забирает клавишу себе
+        if (capturing_ && e->type() == QEvent::ShortcutOverride) { e->accept(); return true; }
+        if (capturing_ && e->type() == QEvent::KeyPress) {
             auto* ke = static_cast<QKeyEvent*>(e);
             if (ke->key() == Qt::Key_Tab || ke->key() == Qt::Key_Backtab) {
                 e->accept();
-                if (e->type() == QEvent::KeyPress) keyPressEvent(ke);
+                keyPressEvent(ke);
                 return true;
             }
         }

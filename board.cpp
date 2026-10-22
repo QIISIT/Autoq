@@ -353,9 +353,9 @@ void BoardBlock::setEditing(bool on) {
 
 QSize BoardBlock::minimumSizeHint() const {
     // узкий блок (кнопки в шапке) в редактировании шире, чтобы ярлык с названием и глаз не налезали;
-    // широкому — его собственный минимум (иначе в редакторе колонок больше, чем будет на деле)
+    // широкому — его собственный минимум без полей редактора (8 + 8): колонок столько же, сколько на деле
     QSize s = QWidget::minimumSizeHint();
-    if (editing_) s.setWidth(qMax(s.width(), 150));
+    if (editing_) s.setWidth(qMax(s.width() - 16, 150));
     return s;
 }
 
@@ -595,7 +595,8 @@ Board::Board(QWidget* parent) : QWidget(parent) {
     for (const QString& id : CardLayout::builtinCards()) card(id);
     buildBar();
     layout_ = CardLayout::defaults();
-    // отменить / вернуть — только в режиме редактирования и не пока тянут край.
+    // отменить / вернуть — только в режиме редактирования и не пока тянут край. Вне редактора
+    // выключены: иначе забирают Ctrl+Z у «Своего сочетания» и полей ввода.
     // Каждое сочетание — один раз: два QShortcut на одно сочетание «неоднозначны» и не срабатывают
     QList<QKeySequence> undoKeys = QKeySequence::keyBindings(QKeySequence::Undo);
     QList<QKeySequence> redoKeys = QKeySequence::keyBindings(QKeySequence::Redo);
@@ -607,6 +608,8 @@ Board::Board(QWidget* parent) : QWidget(parent) {
             used << k;
             auto* sc = new QShortcut(k, this);
             sc->setContext(Qt::WindowShortcut);
+            sc->setEnabled(false);
+            editKeys_ << sc;
             connect(sc, &QShortcut::activated, this, [this, isUndo]() {
                 if (!edit_ || !isVisible() || resizeEdge_ >= 0) return;
                 isUndo ? undo() : redo();
@@ -715,18 +718,20 @@ void Board::remember() {
 void Board::applyState(const State& s, bool animate) {
     if (resizeEdge_ >= 0) cancelResize();          // край тянули — раскладка уже другая
     const bool sideChanged = s.sidebar != sidebar_;
-    // панель меняется в том же снимке, что и карточки (переход — по всему окну)
+    // панель меняется в том же снимке, что и карточки (переход — по всему окну). Скрытая
+    // панель появляется, когда прячут блок «Игра» (edited → MainWindow) — тоже по всему окну
     auto apply = [this, s, sideChanged]() {
         layout_ = s.layout;
         sidebar_ = s.sidebar;
         if (sideChanged) emit sidebarModeChanged(sidebar_);
         rebuild();
+        updateBar();
+        emit edited();                             // внутри: монитор и панель — уже в снимке «после»
     };
-    QWidget* area = sideChanged && sideArea_ ? sideArea_.data() : animArea_.data();
+    const bool wholeWindow = sideChanged || s.sidebar == 3;
+    QWidget* area = wholeWindow && sideArea_ ? sideArea_.data() : animArea_.data();
     if (animate && area && Anim::style() != "none") Anim::transition(area, apply, {}, "fade");
     else apply();
-    updateBar();
-    emit edited();
 }
 
 void Board::change(const std::function<void(CardLayout::Layout&)>& f, bool animate) {
@@ -788,8 +793,9 @@ void Board::rebuild() {
                 tile->setCursor(Qt::PointingHandCursor);
                 tile->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
                 tile->setIcon(AqIcons::ui("chevron", Theme::t().muted, 13, 2.2));
-                tile->setText(number > 0 ? QString("%1  %2").arg(number, 2, 10, QChar('0')).arg(c->title()->text())
-                                         : c->title()->text());
+                QString name = c->title()->text();
+                name.replace('&', "&&");               // «R&D» — текст, а не Alt+D
+                tile->setText(number > 0 ? QString("%1  %2").arg(number, 2, 10, QChar('0')).arg(name) : name);
                 tile->setToolTip(T("Развернуть карточку"));
                 tile->setAccessibleName(T("Развернуть: %1").arg(c->title()->text()));
                 const QString id = spec.id;
@@ -956,6 +962,7 @@ void Board::setEditMode(bool on, bool animate) {
     // полоса редактирования (её обёртка — у главного окна) — в том же снимке, что и карточки
     auto apply = [this, on]() {
         edit_ = on;
+        for (QShortcut* sc : editKeys_) sc->setEnabled(on);
         bar_->setVisible(on);
         emit editModeChanged(on);
         rebuild();

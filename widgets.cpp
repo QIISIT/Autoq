@@ -665,6 +665,9 @@ void ChipEditor::rebuild() {
         connect(pick, &QToolButton::clicked, this, [this, pick]() { emit pickRequested(pick); });
         flow_->addWidget(pick);
     }
+    // показать сразу: addWidget показывает отложенно, и переход при смене игры снял бы пустые ряды
+    for (int i = 0; i < flow_->count(); ++i)
+        if (QWidget* w = flow_->itemAt(i)->widget()) w->show();
     updateGeometry();
 }
 

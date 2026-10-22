@@ -108,6 +108,8 @@ private:
     void applySidebarMode(int mode); // 0 слева, 1 справа, 2 узкая, 3 скрыта
     void showSwitchMenu();           // панель скрыта: игры, «добавить», настройки — из шапки
     void updateSidebarVisible();     // скрытая панель всё же видна, если без неё не добраться до игр
+    // где идёт переход при смене игры: при скрытой панели она может появиться — тогда по всему окну
+    QWidget* pageArea() const;
     void updateMonitor(bool full);   // блок «Монитор запуска» (full — и числа, иначе только шаг)
     void applyLayoutToAll();
 
@@ -258,6 +260,7 @@ private:
 
     // --- страницы ---
     QStackedWidget* pages_;
+    QWidget* root_ = nullptr;        // боковая панель + страницы
     QGridLayout* welcomeGrid_;
     QLabel* welcomeLogo_;
     QWidget* inner_ = nullptr;
