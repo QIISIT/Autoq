@@ -45,6 +45,7 @@ public:
     void showDivider(bool on) { if (divider_) divider_->setVisible(on); }
     void placeHead(QHBoxLayout* cardHead, int index);   // nullptr — над самим блоком
     void setEditing(bool on);
+    QSize minimumSizeHint() const override;   // в редактировании — не уже 150 (ярлык и глаз)
 signals:
     void dragStarted(BoardBlock* b);
     void hideRequested(BoardBlock* b);
@@ -59,6 +60,7 @@ private:
     QWidget* head_ = nullptr;
     QWidget* divider_ = nullptr;
     QWidget* shield_ = nullptr;   // в режиме редактирования — поверх блока, за него тянут
+    bool editing_ = false;
 };
 
 class BoardCard : public QFrame {
@@ -125,7 +127,7 @@ public:
     void setCardLayout(const CardLayout::Layout& l);
     const CardLayout::Layout& cardLayout() const { return layout_; }
     bool blockVisible(const QString& block) const;   // не в «Скрытых» и карточка не свёрнута
-    void setEditMode(bool on);
+    void setEditMode(bool on, bool animate = true);
     bool editMode() const { return edit_; }
     QWidget* editBar() const { return bar_; }      // полоса режима редактирования — над прокруткой
     QList<QWidget*> visibleCards() const;          // для каскада при смене игры
@@ -133,7 +135,8 @@ public:
     void setSideAnimArea(QWidget* w) { sideArea_ = w; }   // переход, когда меняется боковая панель
     // боковая панель с играми: 0 слева, 1 справа, 2 узкая (только значки), 3 скрыта (общая для всех игр)
     int sidebarMode() const { return sidebar_; }
-    void setSidebarMode(int mode);                 // без истории отмен (загрузка настроек)
+    // record — с историей отмен (кнопка в шапке); без — загрузка настроек
+    void setSidebarMode(int mode, bool record = false);
     void refreshIcons();
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
@@ -163,6 +166,7 @@ private:
     // поменять раскладку (с отменой); animate — плавно, через снимок
     void change(const std::function<void(CardLayout::Layout&)>& f, bool animate = true);
     void applyState(const State& s, bool animate);
+    void remember();                               // нынешнее — в историю отмен (перед правкой)
     void startDrag(QWidget* src, const QString& mime, const QString& id);
     bool findTarget(const QPoint& p);
     void buildBar();
@@ -177,6 +181,7 @@ private:
     void beginResize(BoardCard* c, int edge);
     void moveResize(const QPoint& global);
     void endResize();
+    void cancelResize();                           // раскладку сменили, пока тянули край
 
     QMap<QString, BoardBlock*> blocks_;
     QMap<QString, BoardCard*> cards_;
@@ -207,4 +212,7 @@ private:
     QString resizeId_;
     int resizeEdge_ = -1;
     int previewSpan_ = -1, previewHeight_ = -1;
+    QPoint resizeOrigin_;                          // левый верхний угол карточки, когда начали тянуть
+    QPoint resizePress_;                           // где нажали (до порога перетаскивания край не двигается)
+    bool resizeDragging_ = false;
 };

@@ -107,6 +107,7 @@ private:
     void setLayoutEditing(bool on);  // редактор интерфейса (Д.И.1)
     void applySidebarMode(int mode); // 0 слева, 1 справа, 2 узкая, 3 скрыта
     void showSwitchMenu();           // панель скрыта: игры, «добавить», настройки — из шапки
+    void updateSidebarVisible();     // скрытая панель всё же видна, если без неё не добраться до игр
     void updateMonitor(bool full);   // блок «Монитор запуска» (full — и числа, иначе только шаг)
     void applyLayoutToAll();
 

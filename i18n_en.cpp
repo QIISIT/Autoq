@@ -1093,8 +1093,8 @@ extern const AqTranslation kAqEnglish[] = {
      "Takes effect after restarting AutoQ (tray icon → Quit, then start it again)."},
     {"Нажми и переключись в игру — AutoQ выберет её окно и будет кликать только в нём",
      "Click and switch to the game — AutoQ will pick its window and click only there"},
-    {"Здесь будут твои игры.\nДобавь первую — кнопкой ниже\nили выбери из готовых справа.",
-     "Your games will be here.\nAdd the first one with the button below\nor pick a ready-made one on the right."},
+    {"Здесь будут твои игры.\nДобавь первую — кнопкой ниже\nили выбери из готовых.",
+     "Your games will be here.\nAdd the first one with the button below\nor pick a ready-made one."},
     {"клавиша действия совпадает с клавишей старт/стоп (%1) — кликер выключал бы сам себя.",
      "an action key matches the start/stop key (%1) — the clicker would turn itself off."},
     {"✓ Взято: процесс «%1», заголовок «%2». Заголовок можно сократить до постоянной части.",
@@ -2123,5 +2123,9 @@ extern const AqTranslation kAqEnglish[] = {
      "Close settings and change the interface right in the window"},
     {"Перетаскивай карточки и блоки, тяни края карточек, меняй их вид и цвет, прячь лишнее, выбирай шаблон и место панели с играми. У каждой игры своя раскладка.",
      "Drag cards and blocks, pull card edges, change their look and color, hide extras, pick a template and where the games bar goes. Each game has its own layout."},
+    {"Раскладка загружена — такая уже стоит.",
+     "Layout loaded — it is already in use."},
+    {"Сейчас: пауза — ничего не нажимается",
+     "Now: paused — nothing is pressed"},
 };
 extern const int kAqEnglishCount = sizeof(kAqEnglish) / sizeof(kAqEnglish[0]);

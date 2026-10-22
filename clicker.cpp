@@ -246,8 +246,9 @@ void Clicker::countAction(int i) {
 // отпустили к концу круга (или круг прервался: стоп, ушли из игры) — отпускаем сами,
 // чтобы ничего не осталось зажатым. «Отпустить» без «нажать» — пропускается: иначе
 // отпустилась бы кнопка, которую держит сам игрок.
-void Clicker::doSteps(const ClickerConfig& cfg) {
+bool Clicker::doSteps(const ClickerConfig& cfg) {
     const int n = cfg.actions.size();
+    bool whole = true;
     const QList<ActionStep> inputs = Steps::pressedInputs(cfg.actions);
     std::vector<ActionStep> down;
     auto heldAt = [&down](const ActionStep& a) {
@@ -256,7 +257,7 @@ void Clicker::doSteps(const ClickerConfig& cfg) {
     };
     for (int i = 0; i < n; ++i) {
         // за паузу могли нажать «Стоп» или переключиться из игры
-        if (!running_ || (i > 0 && !allowedFor(cfg))) { if (running_) allowedNow_ = false; break; }
+        if (!running_ || (i > 0 && !allowedFor(cfg))) { if (running_) allowedNow_ = false; whole = false; break; }
         currentStep_ = i;
         const ActionStep& a = cfg.actions[i];
         const int k = heldAt(a);
@@ -274,18 +275,22 @@ void Clicker::doSteps(const ClickerConfig& cfg) {
         if (i + 1 < n) {
             // что-то зажато — пауза с проверкой окна: ушли из игры — отпускаем сразу
             if (down.empty()) sleepWhileRunning(a.afterMs);
-            else if (!waitHeld(a.afterMs, cfg)) break;
+            else if (!waitHeld(a.afterMs, cfg)) { whole = false; break; }
         }
     }
     for (auto it = down.rbegin(); it != down.rend(); ++it) sendAction(display_, *it, false);
     currentStep_ = -1;
+    return whole && running_;
 }
 
 void Clicker::doCycle(const ClickerConfig& cfg) {
     const int n = cfg.actions.size();
     if (n == 0) return;
-    cycles_ += 1;
-    if (cfg.steps) { doSteps(cfg); return; }
+    // круг засчитываем, когда он прошёл целиком (стоп или уход из игры посреди круга — не в счёт)
+    if (cfg.steps) {
+        if (doSteps(cfg)) cycles_ += 1;
+        return;
+    }
     if (cfg.simultaneous && n > 1) {
         // комбинация: зажать все, подержать, отпустить в обратном порядке (как F3+A)
         int holdMs = 0;
@@ -293,15 +298,17 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
             sendAction(display_, a, true);
             holdMs = std::max(holdMs, a.holdMs);
         }
-        waitHeld(holdMs, cfg);                 // ушли из игры — отпускаем, не дожидаясь конца
+        const bool stayed = waitHeld(holdMs, cfg);   // ушли из игры — отпускаем, не дожидаясь конца
         for (int i = n - 1; i >= 0; --i) sendAction(display_, cfg.actions[i], false);
         clickCount_ += 1;
         for (int i = 0; i < n; ++i) countAction(i);
+        if (stayed) cycles_ += 1;
         return;
     }
+    bool whole = true;
     for (int i = 0; i < n; ++i) {
         // за паузу могли переключиться из игры — следующее действие только в окно игры
-        if (i > 0 && (!running_ || !allowedFor(cfg))) { allowedNow_ = false; break; }
+        if (i > 0 && (!running_ || !allowedFor(cfg))) { allowedNow_ = false; whole = false; break; }
         currentStep_ = i;
         const ActionStep& a = cfg.actions[i];
         sendAction(display_, a, true);
@@ -310,10 +317,11 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
         sendAction(display_, a, false);
         countAction(i);
         clickCount_ += 1;
-        if (!stayed) break;
+        if (!stayed) { whole = false; break; }
         if (i + 1 < n) sleepWhileRunning(a.afterMs);
     }
     currentStep_ = -1;
+    if (whole && running_) cycles_ += 1;
 }
 
 bool Clicker::allowedFor(const ClickerConfig& cfg) {

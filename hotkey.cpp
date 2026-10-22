@@ -213,7 +213,10 @@ void GlobalHotkey::loop() {
         g_llKeys.clear();
         g_llMouse.clear();
         g_llEvents.clear();
-        std::fill(std::begin(g_llDown), std::end(g_llDown), false);
+        // что человек держит прямо сейчас (Tab у «Tab+F») — помним и через переустановку хуков:
+        // повторы идут от последней нажатой клавиши, новое «нажато» для Tab хук может не увидеть.
+        // Отпущенное за это время — забываем (как на Linux: там зажатое сверяется с XQueryKeymap)
+        for (int vk = 0; vk < 256; ++vk) g_llDown[vk] = g_llDown[vk] && keyHeld(vk);
         for (const Held& h : held) fire(h.id, false);
         held.clear();
     };
@@ -398,8 +401,11 @@ CGEventRef macTapCallback(CGEventTapProxy, CGEventType type, CGEventRef ev, void
                 b.down = true;
                 b.fired = !chord;
                 if (b.fired && t->fire) t->fire(b.id, true);
+                // забрали себе нажатие — забираем и повторы, и отпускание; пропустили в игру
+                // (сработало сочетание) — пропускаем и их, иначе клавиша «залипнет» в игре
+                b.swallowUp = !b.pass && !chord;
             }
-            if (!b.pass && !chord) { b.swallowUp = true; swallow = true; }   // забрали себе
+            if (b.swallowUp) swallow = true;
         } else {
             if (b.down) {
                 b.down = false;

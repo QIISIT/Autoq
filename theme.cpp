@@ -158,6 +158,7 @@ QToolButton#shieldEye:hover { background: @redHi@; }
 QFrame#sidebar[side="right"] { border-right: none; border-left: 1px solid @cardBorder@; }
 QLabel#monValue { font-family: "@mono@"; font-size: 18px; font-weight: 700; }
 QLabel#monState { background: @field@; border: 1px solid @fieldBorder@; border-radius: 11px /*pill*/; padding: 3px 10px; color: @text2@; font-size: 12px; font-weight: 600; }
+QLabel#monState[state="none"] { background: @field@; }
 QLabel#monState[state="run"] { background: @redTint@; border-color: @red@; color: @redHi@; }
 QLabel#monState[state="wait"] { background: @redTint2@; border-color: @redLine@; color: @redSoft@; }
 QLabel#monState[state="warn"] { background: @warnBg@; border-color: @warnLine@; color: @text@; }

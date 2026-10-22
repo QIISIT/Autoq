@@ -19,6 +19,7 @@
 #include <QMenu>
 #include <QTimer>
 #include <QShortcut>
+#include <QCursor>
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
@@ -338,14 +339,24 @@ void BoardBlock::setEditing(bool on) {
     // в редактировании — поля вокруг блока и место под ярлык с названием и глаз сверху
     caption_->setVisible(!on);
     layout()->setContentsMargins(on ? 8 : 0, on ? 34 : 0, on ? 8 : 0, on ? 8 : 0);
-    // узкий блок (кнопки в шапке) — шире, чтобы ярлык с названием и глаз не налезали
-    setMinimumWidth(on ? 150 : 0);
+    if (editing_ != on) {
+        editing_ = on;
+        updateGeometry();                      // минимальная ширина в редактировании другая
+    }
     if (on && !shield_) shield_ = new BlockShield(this);
     if (!shield_) return;
     static_cast<BlockShield*>(shield_)->refreshIcon();
     shield_->setGeometry(rect());
     shield_->setVisible(on);
     if (on) shield_->raise();
+}
+
+QSize BoardBlock::minimumSizeHint() const {
+    // узкий блок (кнопки в шапке) в редактировании шире, чтобы ярлык с названием и глаз не налезали;
+    // широкому — его собственный минимум (иначе в редакторе колонок больше, чем будет на деле)
+    QSize s = QWidget::minimumSizeHint();
+    if (editing_) s.setWidth(qMax(s.width(), 150));
+    return s;
 }
 
 void BoardBlock::resizeEvent(QResizeEvent* e) {
@@ -377,6 +388,7 @@ BoardCard::BoardCard(const QString& id, QWidget* parent) : QFrame(parent), id_(i
     num_->setObjectName("num");
     title_ = new QLabel(CardLayout::isBuiltin(id) ? builtinName(id) : QString());
     title_->setObjectName("cardTitle");
+    title_->setTextFormat(Qt::PlainText);       // название своей карточки — как написано (и из файла раскладки)
     settings_ = miniButton(T("Вид карточки: ширина, высота, рамка, цвет, заголовок"));
     settings_->hide();
     rename_ = miniButton(T("Переименовать карточку"));
@@ -583,19 +595,24 @@ Board::Board(QWidget* parent) : QWidget(parent) {
     for (const QString& id : CardLayout::builtinCards()) card(id);
     buildBar();
     layout_ = CardLayout::defaults();
-    // отменить / вернуть — только в режиме редактирования
-    auto shortcut = [this](const QKeySequence& k, bool isUndo) {
-        auto* s = new QShortcut(k, this);
-        s->setContext(Qt::WindowShortcut);
-        connect(s, &QShortcut::activated, this, [this, isUndo]() {
-            if (!edit_ || !isVisible()) return;
-            isUndo ? undo() : redo();
-        });
-    };
-    shortcut(QKeySequence::Undo, true);
-    shortcut(QKeySequence::Redo, false);
-    shortcut(QKeySequence(Qt::CTRL | Qt::Key_Y), false);
-    shortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z), false);
+    // отменить / вернуть — только в режиме редактирования и не пока тянут край.
+    // Каждое сочетание — один раз: два QShortcut на одно сочетание «неоднозначны» и не срабатывают
+    QList<QKeySequence> undoKeys = QKeySequence::keyBindings(QKeySequence::Undo);
+    QList<QKeySequence> redoKeys = QKeySequence::keyBindings(QKeySequence::Redo);
+    redoKeys << QKeySequence(Qt::CTRL | Qt::Key_Y) << QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z);
+    QList<QKeySequence> used;
+    for (int isUndo = 1; isUndo >= 0; --isUndo) {
+        for (const QKeySequence& k : isUndo ? undoKeys : redoKeys) {
+            if (k.isEmpty() || used.contains(k)) continue;
+            used << k;
+            auto* sc = new QShortcut(k, this);
+            sc->setContext(Qt::WindowShortcut);
+            connect(sc, &QShortcut::activated, this, [this, isUndo]() {
+                if (!edit_ || !isVisible() || resizeEdge_ >= 0) return;
+                isUndo ? undo() : redo();
+            });
+        }
+    }
 }
 
 BoardBlock* Board::addBlock(const QString& id, const QString& name) {
@@ -663,6 +680,7 @@ QLabel* Board::titleLabel(const QString& cardId) const {
 }
 
 void Board::setCardLayout(const CardLayout::Layout& l) {
+    if (resizeEdge_ >= 0) cancelResize();
     layout_ = CardLayout::normalize(l);
     undo_.clear();
     redo_.clear();
@@ -676,14 +694,26 @@ bool Board::blockVisible(const QString& block) const {
     return i >= 0 && !layout_[i].collapsed;
 }
 
-void Board::setSidebarMode(int mode) {
+void Board::setSidebarMode(int mode, bool record) {
     mode = qBound(0, mode, 3);
     if (mode == sidebar_) return;
+    if (record) {                                  // как правка в редакторе: Ctrl+Z вернёт
+        remember();
+        applyState(State{layout_, mode}, true);
+        return;
+    }
     sidebar_ = mode;
     emit sidebarModeChanged(mode);
 }
 
+void Board::remember() {
+    undo_ << State{layout_, sidebar_};
+    while (undo_.size() > kUndoMax) undo_.removeFirst();
+    redo_.clear();
+}
+
 void Board::applyState(const State& s, bool animate) {
+    if (resizeEdge_ >= 0) cancelResize();          // край тянули — раскладка уже другая
     const bool sideChanged = s.sidebar != sidebar_;
     // панель меняется в том же снимке, что и карточки (переход — по всему окну)
     auto apply = [this, s, sideChanged]() {
@@ -704,15 +734,14 @@ void Board::change(const std::function<void(CardLayout::Layout&)>& f, bool anima
     f(l);
     l = CardLayout::normalize(l);
     if (l == layout_) return;
-    undo_ << State{layout_, sidebar_};
-    while (undo_.size() > kUndoMax) undo_.removeFirst();
-    redo_.clear();
+    remember();
     applyState(State{l, sidebar_}, animate);
 }
 
 bool Board::undo() {
     if (undo_.isEmpty()) return false;
     redo_ << State{layout_, sidebar_};
+    while (redo_.size() > kUndoMax) redo_.removeFirst();
     applyState(undo_.takeLast(), true);
     return true;
 }
@@ -720,6 +749,7 @@ bool Board::undo() {
 bool Board::redo() {
     if (redo_.isEmpty()) return false;
     undo_ << State{layout_, sidebar_};
+    while (undo_.size() > kUndoMax) undo_.removeFirst();
     applyState(redo_.takeLast(), true);
     return true;
 }
@@ -769,6 +799,7 @@ void Board::rebuild() {
                     });
                 });
                 stripLay_->addWidget(tile);
+                tile->show();                      // сразу (addWidget показал бы позже — переход снял бы пустую полосу)
             }
         } else {
             c->show();
@@ -919,21 +950,22 @@ void Board::resizeEvent(QResizeEvent* e) {
     doLayout();
 }
 
-void Board::setEditMode(bool on) {
+void Board::setEditMode(bool on, bool animate) {
     if (on == edit_) return;
-    if (resizeEdge_ >= 0) endResize();
+    if (resizeEdge_ >= 0) cancelResize();
+    // полоса редактирования (её обёртка — у главного окна) — в том же снимке, что и карточки
     auto apply = [this, on]() {
         edit_ = on;
         bar_->setVisible(on);
+        emit editModeChanged(on);
         rebuild();
     };
     // поле ввода в карточке забрало бы Ctrl+Z себе — в редакторе фокус не в блоках
     if (on)
         if (QWidget* f = QApplication::focusWidget(); f && isAncestorOf(f)) f->clearFocus();
     // история отмен — та же, пока открыта эта игра (её сбрасывает только смена игры)
-    if (animArea_ && Anim::style() != "none") Anim::transition(animArea_, apply, {}, "fade");
+    if (animate && animArea_ && Anim::style() != "none") Anim::transition(animArea_, apply, {}, "fade");
     else apply();
-    emit editModeChanged(on);
 }
 
 void Board::refreshIcons() {
@@ -1022,8 +1054,7 @@ void Board::buildBar() {
             grp->addAction(a);
             connect(a, &QAction::triggered, this, [this, i]() {
                 if (i == sidebar_) return;
-                undo_ << State{layout_, sidebar_};
-                redo_.clear();
+                remember();
                 applyState(State{layout_, i}, false);
             });
         }
@@ -1103,9 +1134,7 @@ void Board::fillTemplatesMenu() {
                 int side = 0;
                 const CardLayout::Layout l = CardLayout::templateLayout(i, &side);
                 if (l == layout_ && side == sidebar_) return;
-                undo_ << State{layout_, sidebar_};
-                while (undo_.size() > kUndoMax) undo_.removeFirst();
-                redo_.clear();
+                remember();
                 applyState(State{l, side}, true);
                 emit message(T("Шаблон «%1». Не то — Ctrl+Z.").arg(CardLayout::templateName(i)));
             });
@@ -1139,8 +1168,11 @@ void Board::importLayout() {
         emit message(T("Это не файл раскладки AutoQ."));
         return;
     }
-    undo_ << State{layout_, sidebar_};
-    redo_.clear();
+    if (l == layout_ && side == sidebar_) {
+        emit message(T("Раскладка загружена — такая уже стоит."));
+        return;
+    }
+    remember();
     applyState(State{l, side}, true);
     emit message(T("Раскладка загружена. Не то — Ctrl+Z."));
 }
@@ -1257,23 +1289,40 @@ void Board::beginResize(BoardCard* c, int edge) {
     resizeId_ = c->id();
     resizeEdge_ = edge;
     previewSpan_ = previewHeight_ = -1;
+    // меряем от того места, где карточка была в начале: превью может перенести её в другой ряд
+    resizeOrigin_ = c->mapTo(this, QPoint(0, 0));
+    resizePress_ = QCursor::pos();
+    resizeDragging_ = false;
+}
+
+void Board::cancelResize() {
+    resizeId_.clear();
+    resizeEdge_ = -1;
+    previewSpan_ = previewHeight_ = -1;
+    resizeDragging_ = false;
+    sizeTag_->hide();
 }
 
 void Board::moveResize(const QPoint& global) {
     BoardCard* c = cards_.value(resizeId_);
     if (resizeEdge_ < 0 || !c) return;
+    // щелчок с дрожанием руки — не перетаскивание (и двойной щелчок по краю не ломается)
+    if (!resizeDragging_) {
+        if ((global - resizePress_).manhattanLength() < QApplication::startDragDistance()) return;
+        resizeDragging_ = true;
+    }
     const QPoint p = mapFromGlobal(global);
-    const QRect r(c->mapTo(this, QPoint(0, 0)), c->size());
+    const QPoint o = resizeOrigin_;
     const int W = qMax(1, width()), g = gap();
     QString tag;
     if (resizeEdge_ == 0) {
-        const int w = qMax(1, p.x() - r.left());
+        const int w = qMax(1, p.x() - o.x());
         const int span = qBound(1, qRound((w + g) * 4.0 / (W + g)), 4);
         if (span != previewSpan_) { previewSpan_ = span; doLayout(); }
         tag = spanName(span);
     } else {
         const int minH = c->minimumSizeHint().height();
-        int h = qBound(0, (p.y() - r.top() + 5) / 10 * 10, CardLayout::kMaxHeight);
+        int h = qBound(0, (p.y() - o.y() + 5) / 10 * 10, CardLayout::kMaxHeight);
         if (h <= minH + 4) h = 0;                       // меньше содержимого — «по содержимому»
         if (h != previewHeight_) { previewHeight_ = h; doLayout(); }
         tag = h > 0 ? T("Высота %1").arg(h) : T("Высота по содержимому");
@@ -1291,11 +1340,10 @@ void Board::moveResize(const QPoint& global) {
 void Board::endResize() {
     const QString id = resizeId_;
     const int edge = resizeEdge_, span = previewSpan_, h = previewHeight_;
-    resizeId_.clear();
-    resizeEdge_ = -1;
-    previewSpan_ = previewHeight_ = -1;
-    sizeTag_->hide();
-    if (id.isEmpty() || (edge == 0 ? span : h) < 0) { doLayout(); return; }
+    const bool dragged = resizeDragging_;
+    cancelResize();
+    // не тянули (просто щёлкнули) — ничего не меняем; то же значение change() и сам не запишет
+    if (id.isEmpty() || !dragged || (edge == 0 ? span : h) < 0) { doLayout(); return; }
     // раскладку меняем после обработчика (рамка — внутри карточки)
     QTimer::singleShot(0, this, [this, id, edge, span, h]() {
         change([id, edge, span, h](CardLayout::Layout& l) {

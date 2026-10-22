@@ -51,7 +51,7 @@ public:
     bool allowedNow() const { return allowedNow_; }     // окно подходит — кликер жмёт
     bool waitingStart() const { return waitingStart_; } // идёт «старт через N мс»
     int currentStep() const { return currentStep_; }    // шаг/действие, что идёт сейчас (-1 — пауза между циклами)
-    unsigned long long cycleCount() const { return cycles_; }   // сколько кругов прошло
+    unsigned long long cycleCount() const { return cycles_; }   // сколько кругов прошло целиком
     long long runMs() const;              // сколько идёт запуск, мс (после стопа — сколько шёл последний)
     int pauseReason() const { return pauseReason_; }     // 0 — нет, 1 — не окно игры, 2 — курсор вне игры
     bool inputAvailable() const;          // есть ли куда слать ввод (X11 на Linux, разрешение на macOS)
@@ -63,7 +63,7 @@ public:
 private:
     void loop();
     void doCycle(const ClickerConfig& cfg);
-    void doSteps(const ClickerConfig& cfg);
+    bool doSteps(const ClickerConfig& cfg);      // true — круг прошёл целиком
     bool allowedFor(const ClickerConfig& cfg);   // можно ли жать прямо сейчас (окно, курсор)
     void releaseHeld();
     void sleepWhileRunning(int ms);

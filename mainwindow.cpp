@@ -286,11 +286,13 @@ QWidget* MainWindow::buildSidebar() {
     side->setObjectName("sidebar");
     side->setFixedWidth(236);
     auto* lay = new QVBoxLayout(side);
+    lay->setProperty("aqManual", true);        // поля и отступы ставит applySidebarMode (с учётом плотности)
     lay->setContentsMargins(12, 14, 12, 14);
     lay->setSpacing(4);
 
     auto* brand = new QBoxLayout(QBoxLayout::LeftToRight);
     brandLay_ = brand;
+    brand->setProperty("aqManual", true);
     brand->setContentsMargins(8, 0, 2, 12);
     brand->setSpacing(9);
     brandLogo_ = new QLabel();
@@ -348,7 +350,7 @@ QWidget* MainWindow::buildSidebar() {
     gameList_->setToolTip(T("Кружок справа — «используется»: закрашен — категорию можно запустить (кнопкой, клавишей, из трея), даже когда открыта другая. Пустой — запустить нельзя никак.\nПравая кнопка мыши — запустить, клавиши, изменить, удалить."));
     gameList_->viewport()->installEventFilter(this);
     lay->addWidget(gameList_, 1);
-    emptyHint_ = mkLabel(T("Здесь будут твои игры.\nДобавь первую — кнопкой ниже\nили выбери из готовых справа."), "faint");
+    emptyHint_ = mkLabel(T("Здесь будут твои игры.\nДобавь первую — кнопкой ниже\nили выбери из готовых."), "faint");
     emptyHint_->setAlignment(Qt::AlignCenter);
     emptyHint_->setWordWrap(true);
     emptyHint_->hide();
@@ -869,6 +871,8 @@ QWidget* MainWindow::buildStatusBar() {
 void MainWindow::connectSignals() {
     connect(board_, &Board::edited, this, [this]() {
         if (hasGame()) CardLayout::save(game_.id, board_->cardLayout());
+        updateMonitor(true);                  // монитор могли только что вернуть из «Скрытых»
+        updateSidebarVisible();               // блок «Игра» спрятали при скрытой панели — панель нужна
     });
     connect(board_, &Board::applyToAllRequested, this, &MainWindow::applyLayoutToAll);
     connect(board_, &Board::message, this, &MainWindow::notify);
@@ -1191,6 +1195,7 @@ void MainWindow::refreshIcons() {
 
 void MainWindow::appearanceChanged() {
     statusBox_->setProperty("state", QString());   // перерисовать
+    applySidebarMode(sideMode_);                   // плотность сменилась — поля боковой панели
     refreshIcons();
     refreshLive();
     gameList_->viewport()->update();
@@ -1236,7 +1241,6 @@ void MainWindow::reloadGames(const QString& selectId) {
     gameCount_->setText(QString::number(games.size()));
     gameList_->setVisible(!games.isEmpty());
     emptyHint_->setVisible(games.isEmpty() && sideMode_ != 2);
-    sidebar_->setVisible(sideMode_ != 3 || games.isEmpty());     // скрыта — но без игр её не спрятать
     loading_ = false;
     // игр больше нет — их кликеры не нужны
     for (auto it = runners_.begin(); it != runners_.end();) {
@@ -1250,6 +1254,7 @@ void MainWindow::reloadGames(const QString& selectId) {
     rebuildWelcome();
     rebuildTrayGames();
     updateGameItems();
+    updateSidebarVisible();          // скрыта — но без игр её не спрятать
 }
 
 void MainWindow::updateGameItems() {
@@ -1331,7 +1336,7 @@ void MainWindow::switchToGame(const QString& id) {
         cancelPending();
         game_ = GameDef{};
         cur_ = GameState{};
-        board_->setEditMode(false);           // редактировать нечего
+        board_->setEditMode(false, false);    // редактировать нечего (без перехода: страница меняется сразу)
         pages_->setCurrentIndex(0);
         rebuildBindings();
         updateProfileState();
@@ -1341,11 +1346,14 @@ void MainWindow::switchToGame(const QString& id) {
         return;
     }
     pages_->setCurrentIndex(1);
-    if (g.id != game_.id) cancelPending();     // отсчёт «выбрать окно» шёл для другой игры
+    const bool sameGame = g.id == game_.id;
+    if (!sameGame) cancelPending();            // отсчёт «выбрать окно» шёл для другой игры
     game_ = g;
     Games::setCurrentId(g.id);
     cur_ = Games::loadState(g);
-    board_->setCardLayout(CardLayout::load(g.id));
+    // та же игра (изменили её или убрали другую) — раскладка и история отмен остаются
+    if (!sameGame) board_->setCardLayout(CardLayout::load(g.id));
+    updateSidebarVisible();
     resultUntil_ = 0;
     rateHist_.clear();
     loading_ = true;
@@ -2936,6 +2944,10 @@ void MainWindow::updateMonitor(bool full) {
     QString text;
     if (list.isEmpty()) {
         text = QString();
+    } else if (run && r->clicker.waitingStart()) {
+        text = T("Сейчас: пауза «старт через»");
+    } else if (run && !r->clicker.allowedNow()) {
+        text = T("Сейчас: пауза — ничего не нажимается");
     } else if (mode == GameMode::Hold) {
         QStringList l;
         for (const ActionStep& a : list) l << a.label();
@@ -2949,8 +2961,7 @@ void MainWindow::updateMonitor(bool full) {
                                 : T("В цепочке шагов: %1").arg(list.size());
     } else {
         const int step = r->clicker.currentStep();
-        if (r->clicker.waitingStart()) text = T("Сейчас: пауза «старт через»");
-        else if (step >= 0 && step < list.size())
+        if (step >= 0 && step < list.size())
             text = list.size() == 1 ? T("Сейчас: %1").arg(stepName(list[step]))
                                     : T("Сейчас: шаг %1 из %2 — %3").arg(step + 1).arg(list.size()).arg(stepName(list[step]));
         else text = T("Сейчас: пауза перед повтором");
@@ -3311,12 +3322,21 @@ void MainWindow::applySidebarMode(int mode) {
     }
     sidebar_->setProperty("side", mode == 1 ? "right" : "left");
     Theme::repolish(sidebar_);
-    // узкая: только значки игр, логотип и кнопки — в столбик
+    // узкая: только значки игр, логотип и кнопки — в столбик (поля — с учётом плотности)
     sidebar_->setFixedWidth(narrow ? 84 : 236);
-    sidebar_->layout()->setContentsMargins(narrow ? 8 : 12, 14, narrow ? 8 : 12, 14);
+    sidebar_->layout()->setContentsMargins(Theme::sp(narrow ? 8 : 12), Theme::sp(14), Theme::sp(narrow ? 8 : 12), Theme::sp(14));
+    sidebar_->layout()->setSpacing(Theme::sp(4));
     brandLay_->setDirection(narrow ? QBoxLayout::TopToBottom : QBoxLayout::LeftToRight);
-    brandLay_->setContentsMargins(narrow ? 0 : 8, 0, narrow ? 0 : 2, 12);
-    brandLay_->setSpacing(narrow ? 6 : 9);
+    brandLay_->setContentsMargins(narrow ? 0 : Theme::sp(8), 0, narrow ? 0 : Theme::sp(2), Theme::sp(12));
+    brandLay_->setSpacing(Theme::sp(narrow ? 6 : 9));
+    // распорка между названием и кнопками: в ряду — тянется, в столбике — нет
+    // (иначе без игр кнопки уезжают на середину панели); setDirection её переворачивает — ставим после
+    if (QSpacerItem* sp = brandLay_->itemAt(2) ? brandLay_->itemAt(2)->spacerItem() : nullptr) {
+        if (narrow) sp->changeSize(0, 0, QSizePolicy::Minimum, QSizePolicy::Fixed);
+        else sp->changeSize(0, 0, QSizePolicy::Expanding, QSizePolicy::Minimum);
+        brandLay_->setStretch(2, narrow ? 0 : 1);
+        brandLay_->invalidate();
+    }
     for (QWidget* w : {static_cast<QWidget*>(brandLogo_), brandNames_, static_cast<QWidget*>(layoutBtn_), static_cast<QWidget*>(settingsBtn_)})
         brandLay_->setAlignment(w, narrow ? Qt::AlignHCenter : Qt::Alignment());
     for (QLabel* l : brandNames_->findChildren<QLabel*>()) l->setAlignment(narrow ? Qt::AlignHCenter : Qt::AlignLeft);
@@ -3324,13 +3344,20 @@ void MainWindow::applySidebarMode(int mode) {
     gameDelegate_->compact = narrow;
     gameList_->doItemsLayout();
     gameList_->viewport()->update();
-    const bool noGames = Games::list().isEmpty();
-    emptyHint_->setVisible(noGames && !narrow);
+    emptyHint_->setVisible(gameList_->count() == 0 && !narrow);
     addGameBtn_->setText(narrow ? QString() : T("Добавить игру"));
     addGameBtn_->setToolTip(narrow ? T("Добавить игру: готовую (Genshin, Minecraft…) или свою") : T("Готовые игры (Genshin, Minecraft…) или своя"));
-    // скрыта — игры, «добавить» и настройки из шапки (без игр панель всё равно видна)
-    sidebar_->setVisible(mode != 3 || noGames);
-    switchGameBtn_->setVisible(mode == 3);
+    updateSidebarVisible();
+    // применить сразу: при смене через шаблон это внутри перехода, и снимок «после» — уже с новой панелью
+    sidebar_->layout()->activate();
+}
+
+// Скрытая панель: игры, «добавить» и настройки — кнопкой у названия игры. Нет игр или блок
+// «Игра» спрятан (свёрнут) — панель всё равно видна, иначе к ним не добраться
+void MainWindow::updateSidebarVisible() {
+    const bool gameBlock = hasGame() && board_->blockVisible("game");
+    sidebar_->setVisible(sideMode_ != 3 || gameList_->count() == 0 || !gameBlock);
+    switchGameBtn_->setVisible(sideMode_ == 3);
 }
 
 void MainWindow::showSwitchMenu() {
@@ -3364,7 +3391,9 @@ void MainWindow::showSwitchMenu() {
     m.addAction(AqIcons::ui("layout", t.text, 14), T("Редактор интерфейса"), this, [this]() {
         QTimer::singleShot(0, this, [this]() { setLayoutEditing(true); });
     });
-    m.addAction(T("Показать боковую панель"), this, [this]() { board_->setSidebarMode(0); });
+    m.addAction(T("Показать боковую панель"), this, [this]() {
+        QTimer::singleShot(0, this, [this]() { board_->setSidebarMode(0, true); });
+    });
     switchGameBtn_->setDown(true);
     m.exec(switchGameBtn_->mapToGlobal(QPoint(0, switchGameBtn_->height() + 4)));
     switchGameBtn_->setDown(false);

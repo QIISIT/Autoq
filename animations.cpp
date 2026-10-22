@@ -97,12 +97,22 @@ void Anim::transition(QWidget* area, const std::function<void()>& change, const 
         change();
         return;
     }
-    // прошлый переход ещё идёт (здесь или внутри, например на странице) — убираем его
-    for (QWidget* w : area->findChildren<QWidget*>())
-        if (auto* ov = dynamic_cast<TransitionOverlay*>(w)) { ov->hide(); ov->deleteLater(); }
+    // прошлый переход ещё идёт — убираем его: здесь, внутри (на странице) и снаружи
+    // (по всему окну — его снимок лежал бы поверх нового перехода)
+    auto drop = [](QObject* o) {
+        if (auto* ov = dynamic_cast<TransitionOverlay*>(o)) { ov->hide(); ov->deleteLater(); }
+    };
+    for (QWidget* w : area->findChildren<QWidget*>()) drop(w);
+    for (QWidget* up = area->parentWidget(); up; up = up->isWindow() ? nullptr : up->parentWidget())
+        for (QObject* o : up->children()) drop(o);
     const QPixmap before = area->grab();
     change();
-    if (area->layout()) area->layout()->activate();
+    // раскладки, которые change() только запросил (карточки, боковая панель, ряд действий), —
+    // применить сейчас, иначе «после» снимется со старым расположением и в конце всё прыгнет
+    for (int i = 0; i < 4; ++i) {
+        QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+        if (area->layout()) area->layout()->activate();
+    }
     QPixmap after = area->grab();
     QList<TransitionOverlay::Piece> pieces;
     if (st == "cascade") {
@@ -160,6 +170,7 @@ Toast::Toast(QWidget* host) : QFrame(host), host_(host) {
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(14, 9, 14, 9);
     text_ = new QLabel();
+    text_->setTextFormat(Qt::PlainText);      // в тексте бывают названия игр и файлов
     text_->setWordWrap(true);
     lay->addWidget(text_);
     timer_ = new QTimer(this);

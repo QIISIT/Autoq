@@ -113,8 +113,16 @@ void ActionsEditor::setState(const QList<ActionStep>& list, GameMode mode, int s
     startMs_ = qBound(0, startMs, kMaxStartDelayMs);
     minIntervalMs_ = qMax(1, minIntervalMs);
     intervalMs_ = qBound(minIntervalMs_, intervalMs, 60000);
-    if (builtCount_ != actions_.size() || builtMode_ != mode_) rebuild();
-    else updateValues();
+    if (builtCount_ != actions_.size() || builtMode_ != mode_) {
+        rebuild();
+    } else {
+        // ряд не пересобирается, а минимум интервала у другой игры (или после правки игры) другой
+        if (repeatSpin_ && repeatSpin_->minimum() != minIntervalMs_) {
+            QSignalBlocker b(repeatSpin_);
+            repeatSpin_->setMinimum(minIntervalMs_);
+        }
+        updateValues();
+    }
 }
 
 void ActionsEditor::setTimes(int startMs, int intervalMs) {
@@ -335,6 +343,10 @@ void ActionsEditor::rebuild() {
         });
         flow_->addWidget(add_);
     }
+    // сразу видны: addWidget показывает их только на следующем круге событий,
+    // и переход при смене игры снял бы пустой ряд
+    for (int i = 0; i < flow_->count(); ++i)
+        if (QWidget* w = flow_->itemAt(i)->widget()) w->show();
     refreshIcons();
     updateValues();
     updateGeometry();
