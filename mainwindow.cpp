@@ -99,6 +99,7 @@ static QSpinBox* mkSpin(int lo, int hi, const char* obj = nullptr) {
 
 // single — у игры одно действие: тогда «по очереди» и «вместе» — одно и то же (повтор)
 static QString modeSubtitle(GameMode m, bool single = false) {
+    if (m == GameMode::Steps) return T("по шагам");
     if (single) return m == GameMode::Hold ? T("зажать") : T("повтор");
     switch (m) {
         case GameMode::Combo: return T("вместе");
@@ -174,6 +175,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     liveTimer_ = new QTimer(this);
     connect(liveTimer_, &QTimer::timeout, this, &MainWindow::refreshLive);
     liveTimer_->start(500);
+    // подсветка шага, который кликер жмёт сейчас, — чаще остального «живого»
+    stepTimer_ = new QTimer(this);
+    stepTimer_->setInterval(50);
+    connect(stepTimer_, &QTimer::timeout, this, [this]() {
+        const bool run = hasGame() && clk().isRunning();
+        actionsEdit_->setActiveStep(run ? clk().currentStep() : -1);
+        if (!run) stepTimer_->stop();
+    });
     refreshLive();
 
     // первый запуск — сначала выбор оформления и анимаций
@@ -449,16 +458,18 @@ void MainWindow::buildActionsCard() {
     auto* head = new QHBoxLayout(headW);
     head->setContentsMargins(0, 0, 0, 0);
     head->setSpacing(10);
-    modeSeg_ = new Segmented({T("По очереди"), T("Вместе"), T("Зажать")}, false);
-    modeSeg_->setToolTip(T("Режим работы:\nПо очереди — действия одно за другим (скип диалогов: ЛКМ, потом F).\nВместе — нажать все сразу, как F3+A.\nЗажать — держать нажатыми, пока кликер включён (копать, бежать)."));
+    modeSeg_ = new Segmented({T("По очереди"), T("Вместе"), T("Зажать"), T("По шагам")}, false);
+    modeSeg_->setToolTip(T("Режим работы:\nПо очереди — действия одно за другим (скип диалогов: ЛКМ, потом F).\nВместе — нажать все сразу, как F3+A.\nЗажать — держать нажатыми, пока кликер включён (копать, бежать).\nПо шагам — каждый шаг только нажимает ↓ или только отпускает ↑ (кикфлипы, отмены)."));
     modeSeg_->button(0)->setAccessibleName(T("Режим: по очереди"));
     modeSeg_->button(1)->setAccessibleName(T("Режим: вместе"));
     modeSeg_->button(2)->setAccessibleName(T("Режим: зажать"));
-    // одно действие — свой выбор из двух: повторять или зажать
-    singleSeg_ = new Segmented({T("Повторять"), T("Зажать")}, false);
-    singleSeg_->setToolTip(T("Одно действие:\nПовторять — нажимать снова и снова с выбранным интервалом.\nЗажать — держать нажатым, пока кликер включён.\nДобавь ещё действие — появятся режимы «По очереди» и «Вместе»."));
+    modeSeg_->button(3)->setAccessibleName(T("Режим: по шагам"));
+    // одно действие — свой выбор: повторять, зажать или расписать по шагам
+    singleSeg_ = new Segmented({T("Повторять"), T("Зажать"), T("По шагам")}, false);
+    singleSeg_->setToolTip(T("Одно действие:\nПовторять — нажимать снова и снова с выбранным интервалом.\nЗажать — держать нажатым, пока кликер включён.\nПо шагам — отдельно «нажать ↓» и «отпустить ↑», с паузами между шагами.\nДобавь ещё действие — появятся режимы «По очереди» и «Вместе»."));
     singleSeg_->button(0)->setAccessibleName(T("Режим: повторять"));
     singleSeg_->button(1)->setAccessibleName(T("Режим: зажать"));
+    singleSeg_->button(2)->setAccessibleName(T("Режим: по шагам"));
     head->addWidget(mkLabel(T("Режим"), "small"));
     head->addWidget(modeSeg_);
     head->addWidget(singleSeg_);
@@ -844,16 +855,29 @@ void MainWindow::connectSignals() {
     connect(singleSeg_, &Segmented::changed, this, [this](int i) {
         if (loading_) return;
         if (i == 1) setGameMode(GameMode::Hold);
-        else if (game_.mode == GameMode::Hold) setGameMode(GameMode::Sequence);
+        else if (i == 2) setGameMode(GameMode::Steps);
+        else if (game_.mode == GameMode::Hold || game_.mode == GameMode::Steps) setGameMode(GameMode::Sequence);
     });
     connect(actionsEdit_, &ActionsEditor::changed, this, [this]() {
         if (loading_) return;
-        const bool wasMulti = cur_.multi();
-        cur_.actions = actionsEdit_->actions();
-        // стало одно действие: «вместе» — то же, что «повторять»
-        if (wasMulti && !cur_.multi() && game_.mode == GameMode::Combo) {
-            game_.mode = GameMode::Sequence;
-            Games::save(game_);
+        if (game_.mode == GameMode::Steps) {
+            cur_.steps = actionsEdit_->actions();
+        } else {
+            const bool wasMulti = cur_.multi();
+            cur_.actions = actionsEdit_->actions();
+            // стало одно действие: «вместе» — то же, что «повторять»
+            if (wasMulti && !cur_.multi() && game_.mode == GameMode::Combo) {
+                game_.mode = GameMode::Sequence;
+                Games::save(game_);
+            }
+        }
+        cur_.startDelayMs = actionsEdit_->startDelay();
+        // «повтор через» — тот же интервал, что в карточке «Скорость»
+        const int iv = qBound(game_.minIntervalMs, actionsEdit_->interval(), 60000);
+        if (iv != cur_.intervalMs) {
+            cur_.intervalMs = iv;
+            syncSlider();
+            syncSpeedBox();
         }
         applyModeLayout();
         commit();
@@ -1453,20 +1477,54 @@ void MainWindow::setGameMode(GameMode m, bool announce) {
 
 void MainWindow::applyModeLayout() {
     const GameMode m = game_.mode;
+    const bool steps = m == GameMode::Steps;
     const bool multi = cur_.multi();
     {
         QSignalBlocker b(modeSeg_);
         modeSeg_->setCurrent(static_cast<int>(m));
         QSignalBlocker b2(singleSeg_);
-        singleSeg_->setCurrent(m == GameMode::Hold ? 1 : 0);
+        singleSeg_->setCurrent(m == GameMode::Hold ? 1 : steps ? 2 : 0);
     }
-    modeSeg_->setVisible(multi);
-    singleSeg_->setVisible(!multi);
+    // «По шагам» — всегда полный выбор режимов: в нём шагов обычно несколько
+    modeSeg_->setVisible(multi || steps);
+    singleSeg_->setVisible(!multi && !steps);
     if (QListWidgetItem* it = gameList_->currentItem())
         if (hasGame()) it->setData(GameListDelegate::SubRole, modeSubtitle(m, !multi));
     const bool hold = (m == GameMode::Hold);
+    updateActionsHint();
+    // в режиме «Зажать» интервал не нужен
+    for (QWidget* w : {static_cast<QWidget*>(slider_), static_cast<QWidget*>(speedBox_),
+                       static_cast<QWidget*>(randomizeSwitch_), static_cast<QWidget*>(jitterBox_),
+                       static_cast<QWidget*>(unitSeg_), static_cast<QWidget*>(frameSyncSwitch_)})
+        w->setEnabled(!hold);
+    if (!hold) jitterBox_->setEnabled(cur_.randomize);
+    hzBox_->setEnabled(!hold && cur_.frameSync);
+    {
+        const bool wasLoading = loading_;
+        loading_ = true;
+        actionsEdit_->setState(steps ? cur_.runList(m) : cur_.actions, m, cur_.startDelayMs,
+                               cur_.intervalMs, game_.minIntervalMs);
+        loading_ = wasLoading;
+    }
+}
+
+// Заголовок и подсказка под действиями (интервал в них — живой: меняют в «Скорости»)
+void MainWindow::updateActionsHint() {
+    const GameMode m = game_.mode;
+    const bool multi = cur_.multi();
+    const bool hold = (m == GameMode::Hold);
     const QString every = T("повтор каждые %1 мс").arg(num(cur_.intervalMs));
-    if (!multi) {
+    if (m == GameMode::Steps) {
+        const QList<ActionStep> list = cur_.runList(m);
+        actionsTitle_->setText(T("По шагам ↓ ↑"));
+        QString hint = T("Каждый круг: шаги один за другим, с паузами между ними · %1. Стрелка на шаге: ↓ — нажать, ↑ — отпустить.").arg(every);
+        if (!Steps::strayUps(list).isEmpty())
+            hint += ' ' + T("Шаги с пунктиром пропускаются: «отпустить» без «нажать» раньше.");
+        const QList<ActionStep> left = Steps::leftDown(list);
+        if (!left.isEmpty())
+            hint += ' ' + T("Не отпущено за круг: %1 — отпустится само в конце круга.").arg(actionsLabel(left, 0, int(left.size())));
+        actionsHint_->setText(hint);
+    } else if (!multi) {
         actionsTitle_->setText(hold ? T("Одно действие — зажать") : T("Одно действие — повторять"));
         actionsHint_->setText(hold
             ? T("Пока кликер включён — кнопка зажата. Ушёл из игры — отпускается, вернулся — снова зажата.")
@@ -1484,19 +1542,6 @@ void MainWindow::applyModeLayout() {
             actionsTitle_->setText(T("Действия по очереди"));
             actionsHint_->setText(T("Каждый цикл: действия одно за другим, с паузами между ними · %1.").arg(every));
             break;
-    }
-    // в режиме «Зажать» интервал не нужен
-    for (QWidget* w : {static_cast<QWidget*>(slider_), static_cast<QWidget*>(speedBox_),
-                       static_cast<QWidget*>(randomizeSwitch_), static_cast<QWidget*>(jitterBox_),
-                       static_cast<QWidget*>(unitSeg_), static_cast<QWidget*>(frameSyncSwitch_)})
-        w->setEnabled(!hold);
-    if (!hold) jitterBox_->setEnabled(cur_.randomize);
-    hzBox_->setEnabled(!hold && cur_.frameSync);
-    {
-        const bool wasLoading = loading_;
-        loading_ = true;
-        actionsEdit_->setActions(cur_.actions, m);
-        loading_ = wasLoading;
     }
 }
 
@@ -1534,7 +1579,7 @@ void MainWindow::syncSpeedBox() {
     loading_ = true;
     const int unit = qMax(0, unitSeg_->current());
     const int minMs = qMax(1, game_.minIntervalMs);
-    const bool multi = cur_.multi() && game_.mode != GameMode::Hold;
+    const bool multi = (cur_.multi() && game_.mode != GameMode::Hold) || game_.mode == GameMode::Steps;
     if (unit == 1) {
         speedBox_->setDecimals(cur_.intervalMs > 2000 ? 2 : 1);
         speedBox_->setRange(0.02, 1000.0 / minMs);
@@ -1562,12 +1607,14 @@ void MainWindow::syncSpeedBox() {
 
 ClickerConfig MainWindow::buildConfig(const GameDef& g, const GameState& st, const WindowInfo& w) {
     ClickerConfig c;
-    c.actions = st.actions;
+    c.actions = st.runList(g.mode);
+    c.steps = g.mode == GameMode::Steps && !c.actions.isEmpty();
     if (c.actions.isEmpty()) c.actions = {ActionStep{}};
     c.simultaneous = (g.mode == GameMode::Combo);
     c.hold = (g.mode == GameMode::Hold);
-    if (g.mode != GameMode::Sequence)
+    if (g.mode != GameMode::Sequence && g.mode != GameMode::Steps)
         for (ActionStep& a : c.actions) a.afterMs = 0;
+    c.startDelayMs = st.startDelayMs;
     c.intervalMs = qMax(st.intervalMs, g.minIntervalMs);
     c.randomize = st.randomize;
     c.jitterMs = st.jitterMs;
@@ -1643,6 +1690,8 @@ void MainWindow::commit() {
     Games::saveState(game_.id, cur_);   // сразу на диск — переживёт выключение ПК
     pushConfig();
     if (game_.mode != GameMode::Hold) jitterBox_->setEnabled(cur_.randomize);
+    actionsEdit_->setTimes(cur_.startDelayMs, cur_.intervalMs);   // интервал могли поменять в «Скорости»
+    updateActionsHint();
     updateRate();
     updatePresetLabel();
     updateProfileState();
@@ -1656,9 +1705,15 @@ void MainWindow::commit() {
 
 double MainWindow::perSecond(const GameDef& g, const GameState& st) const {
     if (g.mode == GameMode::Hold) return 0;
-    const int n = qMax(1, int(st.actions.size()));
+    const QList<ActionStep> list = st.runList(g.mode);
+    // «По шагам»: нажатие — каждый шаг «нажать»
+    int n = qMax(1, int(list.size()));
+    if (g.mode == GameMode::Steps) {
+        n = 0;
+        for (const ActionStep& a : list) n += a.press != ActionStep::Up;
+    }
     const bool combo = g.mode == GameMode::Combo && n > 1;
-    double cycle = FrameSync::cycleMs(st.actions, qMax(st.intervalMs, g.minIntervalMs), g.mode == GameMode::Combo);
+    double cycle = FrameSync::cycleMs(list, qMax(st.intervalMs, g.minIntervalMs), g.mode == GameMode::Combo);
     if (st.frameSync) {                 // в такт: целое число кадров на цикл
         const double f = FrameSync::frameMs(syncHz(st, boundHandle(g.id)));
         cycle = FrameSync::frames(cycle, f) * f;
@@ -1686,7 +1741,7 @@ void MainWindow::updateRate() {
         QString t;
         if (cur_.frameSync) {
             const double hz = syncHz(cur_, boundHandle(game_.id)), f = FrameSync::frameMs(hz);
-            const int fr = FrameSync::frames(FrameSync::cycleMs(cur_.actions, qMax(cur_.intervalMs, game_.minIntervalMs),
+            const int fr = FrameSync::frames(FrameSync::cycleMs(cur_.runList(game_.mode), qMax(cur_.intervalMs, game_.minIntervalMs),
                                                                 game_.mode == GameMode::Combo), f);
             QString every = everyFrames(fr);
             if (cur_.randomize && cur_.jitterMs > 0) every = T("в среднем ") + every;
@@ -1724,6 +1779,9 @@ void MainWindow::applyPreset(int index) {
     cur_.frameHz = keep.frameHz;
     cur_.soundOn = keep.soundOn;
     cur_.soundOff = keep.soundOff;
+    // шаги и «старт через» в пресетах не хранятся — свои не теряем
+    cur_.steps = keep.steps;
+    cur_.startDelayMs = keep.startDelayMs;
     if (l[index].mode >= 0 && gameModeFromInt(l[index].mode) != game_.mode) {
         game_.mode = gameModeFromInt(l[index].mode);
         Games::save(game_);
@@ -1743,6 +1801,8 @@ void MainWindow::updatePresetLabel() {
         a.frameHz = b.frameHz;
         a.soundOn = b.soundOn;
         a.soundOff = b.soundOff;
+        if (game_.mode != GameMode::Steps) a.steps = b.steps;   // не в «По шагам» шаги не жмутся
+        a.startDelayMs = b.startDelayMs;
         a.intervalMs = qMax(a.intervalMs, game_.minIntervalMs);
         const bool modeOk = p.mode < 0 || gameModeFromInt(p.mode) == game_.mode;
         if (a == b && modeOk) { name = p.name; break; }
@@ -2014,6 +2074,8 @@ void MainWindow::newProfile(int base) {
         st.frameHz = cur_.frameHz;
         st.soundOn = cur_.soundOn;
         st.soundOff = cur_.soundOff;
+        st.steps = cur_.steps;
+        st.startDelayMs = cur_.startDelayMs;
         st.intervalMs = qMax(st.intervalMs, game_.minIntervalMs);
         if (p.mode >= 0) mode = gameModeFromInt(p.mode);
     }
@@ -2340,11 +2402,11 @@ QString MainWindow::focusRunnerId() const {
     return run.isEmpty() ? game_.id : run.first();
 }
 
-QString MainWindow::actionsLabel(const GameState& st, int from, int to) const {
+QString MainWindow::actionsLabel(const QList<ActionStep>& list, int from, int to) const {
     QStringList l;
-    for (int i = from; i < to && i < st.actions.size(); ++i) {
+    for (int i = from; i < to && i < list.size(); ++i) {
         if (l.size() == 3) { l << QString("+%1").arg(to - i); break; }
-        l << st.actions[i].label();
+        l << list[i].label();
     }
     return l.join(" · ");
 }
@@ -2361,6 +2423,7 @@ OverlayData MainWindow::overlayData() {
         e.key = id;
         e.running = r && r->clicker.isRunning();
         e.pending = isCur && pendingStart_;
+        e.starting = r && r->clicker.waitingStart();
         e.allowed = r && r->clicker.allowedNow();
         e.pauseReason = r ? r->clicker.pauseReason() : 0;
         e.hold = g.mode == GameMode::Hold;
@@ -2369,8 +2432,10 @@ OverlayData MainWindow::overlayData() {
             for (int i = 1; i < Clicker::kCounters; ++i) e.c2 += r->clicker.actionCount(i);
             e.total = r->clicker.clickCount();
         }
-        e.a1 = actionsLabel(st, 0, 1);
-        e.a2 = st.multi() ? actionsLabel(st, 1, st.actions.size()) : QString();
+        // в «По шагам» — каждая клавиша, которую шаги нажимают (так их считает кликер)
+        const QList<ActionStep> pl = st.pressList(g.mode);
+        e.a1 = actionsLabel(pl, 0, 1);
+        e.a2 = pl.size() > 1 ? actionsLabel(pl, 1, pl.size()) : QString();
         e.game = g.name;
         e.profile = Games::activeProfile(id);
         return e;
@@ -2410,7 +2475,7 @@ QString MainWindow::startProblemFor(const GameDef& g, const GameState& st) const
     // действие = клавиша, которая что-то включает: кликер нажимал бы её сам
     for (const HkBinding& b : bindings_) {
         if (!(b.spec.mods == 0 || b.spec.mods == ModShift)) continue;
-        for (const ActionStep& a : st.actions) {
+        for (const ActionStep& a : st.runList(g.mode)) {
             const bool same = b.spec.isMouse() ? (a.mouse && a.button == b.spec.mouseButton())
                                                : (!a.mouse && a.key.compare(b.spec.key, Qt::CaseInsensitive) == 0);
             if (!same) continue;
@@ -2761,6 +2826,7 @@ void MainWindow::refreshLive() {
         updateRate();
     }
     updateHotkeyStatus();
+    if (run && stepTimer_ && !stepTimer_->isActive()) stepTimer_->start();
 
     const bool canProbe = probe_->available();
     // окна игр закрыли — выбор сбрасываем (у каждой игры свой)
@@ -2820,11 +2886,12 @@ void MainWindow::refreshLive() {
         c.boundHandle = b.handle;
         c.boundPid = b.pid;
         const QString name = elide(b.title.isEmpty() ? b.process : b.title, 36);
-        const bool mouseUsed = cur_.usesMouse() && Prefs::mouseOnlyOverGame();
+        const bool mouseUsed = cur_.usesMouse(game_.mode) && Prefs::mouseOnlyOverGame();
         if (clickAllowed(c, w) && mouseUsed && !probe_->pointerOver(b.handle))
             setStatusBox("warn", T("Окно «%1» активно, но курсор не над ним — мышью кликаю только над окном игры%2").arg(name, run ? T(" (пауза)") : ""));
         else if (clickAllowed(c, w))
-            setStatusBox("ok", run ? T("✓ Окно «%1» активно — нажимает").arg(name)
+            setStatusBox("ok", run && clk().waitingStart() ? T("✓ Окно «%1» активно — старт через %2 мс").arg(name, num(cur_.startDelayMs))
+                             : run ? T("✓ Окно «%1» активно — нажимает").arg(name)
                                    : T("✓ Выбрано окно «%1» — оно активно").arg(name));
         else if (ownWindow(w))
             setStatusBox("none", T("Выбрано окно «%1». Сейчас активно окно AutoQ%2")

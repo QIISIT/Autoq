@@ -251,10 +251,10 @@ QVector<Block> buildBlocks(const OverlaySettings& s, const OverlayView& v, const
         b.kind = kStatus;
         b.dot = true;
         const QString names[] = {T("Остановлен"), T("Работает"), T("Пауза: не окно игры"), T("Выбери окно"),
-                                      T("Пауза: курсор не над игрой")};
-        const int st = qBound(0, v.status, 4);
+                                      T("Пауза: курсор не над игрой"), T("Ждёт старта")};
+        const int st = qBound(0, v.status, 5);
         b.dotColor = st == 1 ? QColor("#3DDC84") : (st == 2 || st == 4) ? QColor("#F0B341")
-                   : st == 3 ? num : QColor("#8A8A93");
+                   : (st == 3 || st == 5) ? num : QColor("#8A8A93");
         Line l;
         l << Run{names[st], f.ui, text};
         b.lines << l;
@@ -614,7 +614,7 @@ void OverlayWindow::tick() {
         v.game = e.game;
         v.profile = e.profile;
         v.named = d.entries.size() > 1;
-        v.status = e.pending ? 3 : !e.running ? 0 : e.allowed ? 1 : e.pauseReason == 2 ? 4 : 2;
+        v.status = e.pending ? 3 : !e.running ? 0 : e.starting ? 5 : e.allowed ? 1 : e.pauseReason == 2 ? 4 : 2;
         views << v;
     }
     // игры, которых больше нет в оверлее, — забыть их историю

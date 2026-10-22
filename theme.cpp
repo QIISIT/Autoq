@@ -175,6 +175,12 @@ QLabel#status[state="warn"] { background: @warnBg@; border: 1px solid @warnLine@
 QFrame#card QPushButton { padding: 5px 8px; }
 QFrame#slot { background: @field@; border: 1px solid @fieldBorder@; border-radius: 12px; }
 QFrame#slot QLabel { background: transparent; }
+QFrame#slot[active="true"] { border: 1px solid @red@; }
+QFrame#slot[warn="true"] { border: 1px dashed @warn@; }
+QToolButton#slotGrip { background: transparent; border: none; padding: 0; }
+QToolButton#stepDir { background: @keycap@; border: 1px solid @fieldBorder2@; border-bottom: 3px solid @fieldBorder2@; border-radius: 8px; }
+QToolButton#stepDir:hover, QToolButton#stepDir:focus { border-color: @red@; }
+QToolButton#stepDir[up="false"] { border-color: @redLine@; }
 
 QPushButton { background: @field@; border: 1px solid @fieldBorder@; border-radius: 9px; padding: 6px 12px; min-height: 22px; font-size: 12px; }
 QPushButton:hover { border-color: @fieldBorder2@; }

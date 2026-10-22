@@ -155,8 +155,8 @@ GameEditDialog::GameEditDialog(const GameDef& game, bool isNew, QWidget* parent)
     lay->addWidget(fieldLabel(T("Название"), nameEdit_));
     lay->addWidget(nameEdit_);
 
-    modeSeg_ = new Segmented({T("По очереди"), T("Вместе"), T("Зажать")}, false);
-    modeSeg_->setToolTip(T("По очереди: ЛКМ, потом F (Genshin).\nВместе: нажать обе сразу, как F3+A (Minecraft).\nЗажать: держать нажатыми, пока кликер включён."));
+    modeSeg_ = new Segmented({T("По очереди"), T("Вместе"), T("Зажать"), T("По шагам")}, false);
+    modeSeg_->setToolTip(T("По очереди: ЛКМ, потом F (Genshin).\nВместе: нажать обе сразу, как F3+A (Minecraft).\nЗажать: держать нажатыми, пока кликер включён.\nПо шагам: отдельно «нажать ↓» и «отпустить ↑», с паузами (кикфлипы, отмены)."));
     lay->addWidget(fieldLabel(T("Режим")));
     lay->addWidget(modeSeg_);
 
@@ -427,7 +427,7 @@ void GameEditDialog::accept() {
     const QStringList titles = Games::splitList(titleEdit_->text());
     countdown_->cancel();
     game_.name = name;
-    game_.mode = gameModeFromInt(modeSeg_->current());
+    if (modeSeg_->current() >= 0) game_.mode = gameModeFromInt(modeSeg_->current());
     game_.processes = procs;
     game_.titles = titles;
     game_.minIntervalMs = minIntervalBox_->value();

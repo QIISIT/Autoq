@@ -66,8 +66,10 @@ namespace Prefs {
 enum class GameMode {
     Sequence = 0,   // действия по очереди: "ЛКМ, потом F" (Genshin)
     Combo    = 1,   // одно действие или комбинация одновременно: "F3+A" (Minecraft)
-    Hold     = 2    // зажать и держать, пока кликер включён (копать, бежать)
+    Hold     = 2,   // зажать и держать, пока кликер включён (копать, бежать)
+    Steps    = 3    // по шагам: нажать и отпустить — отдельные шаги (кикфлип: ЛКМ↓, ПКМ↓↑, ЛКМ↑)
 };
+constexpr int kLastMode = 3;          // режимы 0…3 (для проверки чисел из файлов)
 GameMode gameModeFromInt(int v);
 QString gameModeName(GameMode m);     // "По очереди" / "Вместе" / "Зажать"
 
@@ -85,13 +87,17 @@ struct GameDef {
     WindowRule rule() const { return WindowRule{processes, titles}; }
 };
 
-// Одно действие: клик кнопкой мыши или нажатие клавиши
+// Одно действие: клик кнопкой мыши или нажатие клавиши.
+// В режиме «По шагам» — только нажать (Down) или только отпустить (Up)
 struct ActionStep {
+    enum Press { Click = 0, Down = 1, Up = 2 };
     bool mouse = true;
     int button = 1;           // 1 ЛКМ, 2 СКМ, 3 ПКМ, 8 Mouse 4, 9 Mouse 5
     QString key = "f";        // имя из Keys
     int holdMs = 0;           // сколько держать нажатым (0 — обычный щелчок)
-    int afterMs = 0;          // пауза после действия перед следующим (режим «По очереди»)
+    int afterMs = 0;          // пауза после действия перед следующим («По очереди», «По шагам»)
+    int press = Click;        // «По шагам»: Down — нажать, Up — отпустить
+    bool sameInput(const ActionStep& o) const;   // та же кнопка / клавиша
     bool operator==(const ActionStep& o) const;
     bool operator!=(const ActionStep& o) const { return !(*this == o); }
     QString itemName() const;                    // "mouse:1" или имя клавиши
@@ -102,7 +108,9 @@ struct ActionStep {
 // Настройки действий одной игры (текущие и в профилях)
 struct GameState {
     QList<ActionStep> actions{ActionStep{}};     // хотя бы одно
-    int intervalMs = 100;
+    QList<ActionStep> steps;     // «По шагам» (пусто — ещё не настраивали: сделаются из действий)
+    int startDelayMs = 0;        // старт через N мс после нажатия «Старт» / клавиши
+    int intervalMs = 100;        // пауза после цикла (после последнего действия) — «повтор через»
     bool randomize = true;
     int jitterMs = 30;
     bool lockWindow = true;
@@ -110,10 +118,30 @@ struct GameState {
     int frameHz = 0;             // частота такта: 0 — как у монитора, иначе своя (FPS игры)
     QString soundOn, soundOff;   // свой звук включения / выключения ("" — как в настройках)
     bool multi() const { return actions.size() > 1; }
-    bool usesMouse() const;
+    // что жмёт кликер в этом режиме: шаги («По шагам») или действия
+    QList<ActionStep> runList(GameMode m) const;
+    // кнопки и клавиши, которые нажимаются (для подписей и счётчиков): действия,
+    // а в «По шагам» — каждая клавиша, которую шаги нажимают, один раз
+    QList<ActionStep> pressList(GameMode m) const;
+    bool usesMouse(GameMode m) const;
     bool operator==(const GameState& o) const;
 };
 constexpr int kMaxActions = 64;
+constexpr int kMaxSteps = 128;
+constexpr int kMaxStartDelayMs = 60000;
+
+namespace Steps {
+    // действия -> шаги: каждое действие — «нажать», пауза «держать», «отпустить», пауза после
+    QList<ActionStep> fromActions(const QList<ActionStep>& actions);
+    // каждая клавиша, которую шаги нажимают, один раз (по порядку первого нажатия)
+    QList<ActionStep> pressedInputs(const QList<ActionStep>& steps);
+    // номер клавиши шага в pressedInputs (-1 — шаг «отпустить» или клавиша не нажимается)
+    int inputIndex(const QList<ActionStep>& inputs, const ActionStep& step);
+    // шаги, у которых «отпустить» без «нажать» раньше в цикле, и клавиши, которые
+    // остаются нажатыми в конце (их кликер отпустит сам)
+    QList<int> strayUps(const QList<ActionStep>& steps);
+    QList<ActionStep> leftDown(const QList<ActionStep>& steps);
+}
 
 struct GamePreset {
     QString name;

@@ -142,11 +142,11 @@ MiniWindow::MiniWindow(QWidget* parent)
     interval_->setAccessibleName(T("Интервал"));
     acts->addWidget(interval_);
     sl->addLayout(acts);
-    modeSeg_ = new Segmented({T("По очереди"), T("Вместе"), T("Зажать")}, false);
-    modeSeg_->setToolTip(T("По очереди — 1, затем 2.\nВместе — нажать обе сразу (F3+A).\nЗажать — держать нажатыми, пока кликер включён."));
+    modeSeg_ = new Segmented({T("По очереди"), T("Вместе"), T("Зажать"), T("Шаги")}, false);
+    modeSeg_->setToolTip(T("По очереди — 1, затем 2.\nВместе — нажать обе сразу (F3+A).\nЗажать — держать нажатыми, пока кликер включён.\nШаги — отдельно «нажать ↓» и «отпустить ↑» (шаги меняются в большом окне)."));
     sl->addWidget(modeSeg_);
-    singleSeg_ = new Segmented({T("Повторять"), T("Зажать")}, false);
-    singleSeg_->setToolTip(T("Одно действие: повторять с интервалом или держать нажатым.\nВыбери второе действие — появятся «По очереди» и «Вместе»."));
+    singleSeg_ = new Segmented({T("Повторять"), T("Зажать"), T("Шаги")}, false);
+    singleSeg_->setToolTip(T("Одно действие: повторять с интервалом или держать нажатым.\nШаги — отдельно «нажать ↓» и «отпустить ↑».\nВыбери второе действие — появятся «По очереди» и «Вместе»."));
     sl->addWidget(singleSeg_);
     lay->addWidget(summary);
     full_ << summary;
@@ -245,7 +245,8 @@ MiniWindow::MiniWindow(QWidget* parent)
     connect(modeSeg_, &Segmented::changed, this, &MiniWindow::modeChosen);
     connect(singleSeg_, &Segmented::changed, this, [this](int i) {
         if (i == 1) emit modeChosen(static_cast<int>(GameMode::Hold));
-        else if (mode_ == GameMode::Hold) emit modeChosen(static_cast<int>(GameMode::Sequence));
+        else if (i == 2) emit modeChosen(static_cast<int>(GameMode::Steps));
+        else if (mode_ == GameMode::Hold || mode_ == GameMode::Steps) emit modeChosen(static_cast<int>(GameMode::Sequence));
     });
     connect(profileBox_, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
         emit profileChosen(profileBox_->itemData(i).toString());
@@ -341,27 +342,42 @@ void MiniWindow::setGames(const QList<GameItem>& games, const QString& currentId
 
 void MiniWindow::setState(const GameState& st, GameMode mode, int minInterval) {
     mode_ = mode;
-    act1_->setCurrentItem(st.actions.value(0).itemName());
-    act2_->setCurrentItem(st.multi() ? st.actions.value(1).itemName() : QString("none"));
-    moreActs_->setText(st.actions.size() > 2 ? QString("+%1").arg(st.actions.size() - 2) : QString());
-    moreActs_->setVisible(st.actions.size() > 2);
+    const bool steps = mode == GameMode::Steps;
+    if (steps) {
+        // шаги здесь не правятся — коротко, что жмётся (править — в большом окне)
+        const QList<ActionStep> list = st.runList(mode);
+        QStringList parts;
+        for (int i = 0; i < list.size(); ++i) {
+            if (parts.size() == 3) { parts << QString("+%1").arg(list.size() - i); break; }
+            parts << list[i].label() + (list[i].press == ActionStep::Up ? "↑" : "↓");
+        }
+        moreActs_->setText(parts.join(' '));
+        moreActs_->setToolTip(T("Шаги меняются в большом окне"));
+    } else {
+        act1_->setCurrentItem(st.actions.value(0).itemName());
+        act2_->setCurrentItem(st.multi() ? st.actions.value(1).itemName() : QString("none"));
+        moreActs_->setText(st.actions.size() > 2 ? QString("+%1").arg(st.actions.size() - 2) : QString());
+        moreActs_->setToolTip(T("Остальные действия — в большом окне"));
+    }
+    act1_->setVisible(!steps);
+    act2_->setVisible(!steps);
+    moreActs_->setVisible(steps || st.actions.size() > 2);
     {
         QSignalBlocker b(interval_);
         interval_->setMinimum(minInterval);
         interval_->setValue(st.intervalMs);
     }
     interval_->setEnabled(mode != GameMode::Hold);
-    mode_ = mode;
     {
         QSignalBlocker b(modeSeg_);
         modeSeg_->setCurrent(static_cast<int>(mode));
         QSignalBlocker b2(singleSeg_);
-        singleSeg_->setCurrent(mode == GameMode::Hold ? 1 : 0);
+        singleSeg_->setCurrent(mode == GameMode::Hold ? 1 : steps ? 2 : 0);
     }
-    modeSeg_->setVisible(st.multi());
-    singleSeg_->setVisible(!st.multi());
+    modeSeg_->setVisible(st.multi() || steps);
+    singleSeg_->setVisible(!st.multi() && !steps);
     sep_->setText(mode == GameMode::Sequence ? "→" : "+");
-    sep_->setVisible(st.multi());
+    sep_->setVisible(st.multi() && !steps);
 }
 
 void MiniWindow::setProfiles(const QStringList& names, const QString& active, bool dirty) {

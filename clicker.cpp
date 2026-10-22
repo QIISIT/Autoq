@@ -91,16 +91,20 @@ static bool sendAction(void* src, const ActionStep& a, bool down) {
         if (code < 0) return false;
         e = CGEventCreateKeyboardEvent(source, static_cast<CGKeyCode>(code), down);
         if (!e) return false;
+        // какие модификаторы зажал сам кликер (шаги «Shift↓, F, Shift↑») — у каждого
+        // потока кликера свои; остальные клавиши идут с ними, а не с «залипшими» чужими
+        thread_local CGEventFlags held = 0;
         const QString k = a.key.toLower();
         if (k == "shift" || k == "ctrl" || k == "alt") {
             // модификатор — событие «изменились флаги», иначе игра его не увидит
             const CGEventFlags flag = k == "shift" ? kCGEventFlagMaskShift
                                     : k == "ctrl"  ? kCGEventFlagMaskControl
                                                    : kCGEventFlagMaskAlternate;
+            held = down ? (held | flag) : (held & ~flag);
             CGEventSetType(e, kCGEventFlagsChanged);
-            CGEventSetFlags(e, down ? flag : static_cast<CGEventFlags>(0));
+            CGEventSetFlags(e, held);
         } else {
-            CGEventSetFlags(e, static_cast<CGEventFlags>(0));   // без «залипших» Shift/Cmd
+            CGEventSetFlags(e, held);
         }
     }
     CGEventPost(kCGHIDEventTap, e);
@@ -209,13 +213,73 @@ void Clicker::sleepUntilRunning(std::chrono::steady_clock::time_point until) {
     }
 }
 
+// Пауза, пока что-то зажато: раз в 40 мс проверяем, что всё ещё в игре — ушли
+// (другое окно, курсор с окна) — сразу false, и зажатое отпускают, а не держат
+// до конца паузы. false — и при стопе.
+bool Clicker::waitHeld(int ms, const ClickerConfig& cfg) {
+    using clock = std::chrono::steady_clock;
+    const auto until = clock::now() + std::chrono::milliseconds(std::max(0, ms));
+    auto check = clock::now() + std::chrono::milliseconds(40);
+    while (running_) {
+        const auto now = clock::now();
+        if (now >= until) return true;
+        if (cfg.lockToWindow && now >= check) {
+            if (!allowedFor(cfg)) { allowedNow_ = false; return false; }
+            check = now + std::chrono::milliseconds(40);
+        }
+        std::this_thread::sleep_for(std::min<clock::duration>(until - now, std::chrono::milliseconds(20)));
+    }
+    return false;
+}
+
 void Clicker::countAction(int i) {
     counts_[static_cast<size_t>(std::min(i, kCounters - 1))] += 1;
+}
+
+// «По шагам»: каждый шаг — только нажать или только отпустить. Что шаги нажали и не
+// отпустили к концу круга (или круг прервался: стоп, ушли из игры) — отпускаем сами,
+// чтобы ничего не осталось зажатым. «Отпустить» без «нажать» — пропускается: иначе
+// отпустилась бы кнопка, которую держит сам игрок.
+void Clicker::doSteps(const ClickerConfig& cfg) {
+    const int n = cfg.actions.size();
+    const QList<ActionStep> inputs = Steps::pressedInputs(cfg.actions);
+    std::vector<ActionStep> down;
+    auto heldAt = [&down](const ActionStep& a) {
+        for (size_t j = 0; j < down.size(); ++j) if (down[j].sameInput(a)) return static_cast<int>(j);
+        return -1;
+    };
+    for (int i = 0; i < n; ++i) {
+        // за паузу могли нажать «Стоп» или переключиться из игры
+        if (!running_ || (i > 0 && !allowedFor(cfg))) { if (running_) allowedNow_ = false; break; }
+        currentStep_ = i;
+        const ActionStep& a = cfg.actions[i];
+        const int k = heldAt(a);
+        if (a.press == ActionStep::Up) {
+            if (k >= 0) {
+                sendAction(display_, a, false);
+                down.erase(down.begin() + k);
+            }
+        } else if (k < 0 && sendAction(display_, a, true)) {
+            down.push_back(a);
+            const int idx = Steps::inputIndex(inputs, a);
+            if (idx >= 0) countAction(idx);
+            clickCount_ += 1;
+        }
+        if (i + 1 < n) {
+            // что-то зажато — пауза с проверкой окна: ушли из игры — отпускаем сразу
+            if (down.empty()) sleepWhileRunning(a.afterMs);
+            else if (!waitHeld(a.afterMs, cfg)) break;
+        }
+    }
+    for (auto it = down.rbegin(); it != down.rend(); ++it) sendAction(display_, *it, false);
+    currentStep_ = -1;
 }
 
 void Clicker::doCycle(const ClickerConfig& cfg) {
     const int n = cfg.actions.size();
     if (n == 0) return;
+    cycles_ += 1;
+    if (cfg.steps) { doSteps(cfg); return; }
     if (cfg.simultaneous && n > 1) {
         // комбинация: зажать все, подержать, отпустить в обратном порядке (как F3+A)
         int holdMs = 0;
@@ -223,7 +287,7 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
             sendAction(display_, a, true);
             holdMs = std::max(holdMs, a.holdMs);
         }
-        sleepWhileRunning(holdMs);
+        waitHeld(holdMs, cfg);                 // ушли из игры — отпускаем, не дожидаясь конца
         for (int i = n - 1; i >= 0; --i) sendAction(display_, cfg.actions[i], false);
         clickCount_ += 1;
         for (int i = 0; i < n; ++i) countAction(i);
@@ -231,15 +295,19 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
     }
     for (int i = 0; i < n; ++i) {
         // за паузу могли переключиться из игры — следующее действие только в окно игры
-        if (i > 0 && (!running_ || !allowedFor(cfg))) return;
+        if (i > 0 && (!running_ || !allowedFor(cfg))) { allowedNow_ = false; break; }
+        currentStep_ = i;
         const ActionStep& a = cfg.actions[i];
         sendAction(display_, a, true);
-        sleepWhileRunning(a.holdMs);         // «держать» — даже при стопе отпускаем сразу
+        // «держать» — при стопе или уходе из игры отпускаем сразу
+        const bool stayed = a.holdMs <= 0 || waitHeld(a.holdMs, cfg);
         sendAction(display_, a, false);
         countAction(i);
         clickCount_ += 1;
+        if (!stayed) break;
         if (i + 1 < n) sleepWhileRunning(a.afterMs);
     }
+    currentStep_ = -1;
 }
 
 bool Clicker::allowedFor(const ClickerConfig& cfg) {
@@ -287,6 +355,14 @@ void Clicker::loop() {
     timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     if (!timer_) timer_ = CreateWaitableTimerW(nullptr, FALSE, nullptr);   // Windows постарше
 #endif
+    // «старт через N мс»: первый цикл — не сразу после нажатия
+    int startDelay = 0;
+    { std::lock_guard<std::mutex> lk(configMutex_); startDelay = config_.startDelayMs; }
+    if (startDelay > 0) {
+        waitingStart_ = true;
+        sleepWhileRunning(startDelay);
+        waitingStart_ = false;
+    }
     while (running_) {
         ClickerConfig cfg;
         { std::lock_guard<std::mutex> lk(configMutex_); cfg = config_; }
@@ -368,8 +444,12 @@ void Clicker::start() {
     timeBeginPeriod(1);
 #endif
     clickCount_ = 0;
+    cycles_ = 0;
     for (auto& c : counts_) c = 0;
     allowedNow_ = false;
+    pauseReason_ = 0;
+    waitingStart_ = false;
+    currentStep_ = -1;
     running_ = true;
     worker_ = std::thread(&Clicker::loop, this);
 }

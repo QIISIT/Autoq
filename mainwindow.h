@@ -120,6 +120,7 @@ private:
     // --- действия ---
     void stateToUi();
     void applyModeLayout();
+    void updateActionsHint();
     void setGameMode(GameMode m, bool announce = true);
     void commit();                 // текущее состояние -> диск + кликер + подписи
     void pushConfig();
@@ -200,7 +201,7 @@ private:
     void syncMini();               // всё состояние -> мини-окно
     void updateMiniLive();         // счётчик и статус окна -> мини-окно
     void refreshIcons();           // после смены темы / цвета
-    QString actionsLabel(const GameState& st, int from, int to) const;
+    QString actionsLabel(const QList<ActionStep>& list, int from, int to) const;
     QWidget* dialogParent();
     void notify(const QString& text);
     void openSettingsPage(int page);
@@ -325,6 +326,7 @@ private:
     QLabel* footerLabel_;
 
     QTimer* liveTimer_ = nullptr;
+    QTimer* stepTimer_ = nullptr;          // подсветка шага, который жмётся сейчас
     QSystemTrayIcon* tray_ = nullptr;
     QMenu* trayMenu_ = nullptr;
     QMenu* trayGameMenu_ = nullptr;

@@ -55,20 +55,29 @@ bool Prefs::onboardingDone() { return prefBool("onboardingDone", false); }
 void Prefs::setOnboardingDone(bool done) { setPrefBool("onboardingDone", done); }
 
 GameMode gameModeFromInt(int v) {
-    switch (v) { case 1: return GameMode::Combo; case 2: return GameMode::Hold; default: return GameMode::Sequence; }
+    switch (v) {
+        case 1: return GameMode::Combo;
+        case 2: return GameMode::Hold;
+        case 3: return GameMode::Steps;
+        default: return GameMode::Sequence;
+    }
 }
 
 QString gameModeName(GameMode m) {
     switch (m) {
         case GameMode::Combo: return T("Вместе");
         case GameMode::Hold:  return T("Зажать");
+        case GameMode::Steps: return T("По шагам");
         default:              return T("По очереди");
     }
 }
 
+bool ActionStep::sameInput(const ActionStep& o) const {
+    return mouse == o.mouse && (mouse ? button == o.button : key.compare(o.key, Qt::CaseInsensitive) == 0);
+}
+
 bool ActionStep::operator==(const ActionStep& o) const {
-    return mouse == o.mouse && (mouse ? button == o.button : key.compare(o.key, Qt::CaseInsensitive) == 0) &&
-           holdMs == o.holdMs && afterMs == o.afterMs;
+    return sameInput(o) && holdMs == o.holdMs && afterMs == o.afterMs && press == o.press;
 }
 
 QString ActionStep::itemName() const { return mouse ? MouseButtons::itemName(button) : key; }
@@ -82,15 +91,93 @@ ActionStep ActionStep::fromItem(const QString& name) {
 
 QString ActionStep::label() const { return mouse ? MouseButtons::shortLabel(button) : Keys::label(key); }
 
-bool GameState::usesMouse() const {
-    for (const ActionStep& a : actions) if (a.mouse) return true;
+QList<ActionStep> GameState::runList(GameMode m) const {
+    if (m != GameMode::Steps) return actions;
+    return steps.isEmpty() ? Steps::fromActions(actions) : steps;
+}
+
+QList<ActionStep> GameState::pressList(GameMode m) const {
+    return m == GameMode::Steps ? Steps::pressedInputs(runList(m)) : actions;
+}
+
+bool GameState::usesMouse(GameMode m) const {
+    for (const ActionStep& a : runList(m)) if (a.mouse) return true;
     return false;
 }
 
 bool GameState::operator==(const GameState& o) const {
-    return actions == o.actions && intervalMs == o.intervalMs &&
+    return actions == o.actions && steps == o.steps && startDelayMs == o.startDelayMs && intervalMs == o.intervalMs &&
            randomize == o.randomize && jitterMs == o.jitterMs && lockWindow == o.lockWindow &&
            frameSync == o.frameSync && frameHz == o.frameHz && soundOn == o.soundOn && soundOff == o.soundOff;
+}
+
+// ---------------------------------------------------------------------------
+// «По шагам»
+// ---------------------------------------------------------------------------
+QList<ActionStep> Steps::fromActions(const QList<ActionStep>& actions) {
+    QList<ActionStep> out;
+    for (const ActionStep& a : actions) {
+        if (out.size() + 2 > kMaxSteps) break;
+        ActionStep d = a, u = a;
+        d.press = ActionStep::Down;
+        d.holdMs = 0;
+        d.afterMs = a.holdMs;
+        u.press = ActionStep::Up;
+        u.holdMs = 0;
+        u.afterMs = a.afterMs;
+        out << d << u;
+    }
+    return out;
+}
+
+QList<ActionStep> Steps::pressedInputs(const QList<ActionStep>& steps) {
+    QList<ActionStep> out;
+    for (const ActionStep& s : steps) {
+        if (s.press == ActionStep::Up) continue;
+        bool seen = false;
+        for (const ActionStep& o : out) seen = seen || o.sameInput(s);
+        if (seen) continue;
+        ActionStep a = s;
+        a.press = ActionStep::Click;
+        a.holdMs = a.afterMs = 0;
+        out << a;
+    }
+    return out;
+}
+
+int Steps::inputIndex(const QList<ActionStep>& inputs, const ActionStep& step) {
+    if (step.press == ActionStep::Up) return -1;
+    for (int i = 0; i < inputs.size(); ++i)
+        if (inputs[i].sameInput(step)) return i;
+    return -1;
+}
+
+QList<int> Steps::strayUps(const QList<ActionStep>& steps) {
+    QList<int> out;
+    QList<ActionStep> down;
+    for (int i = 0; i < steps.size(); ++i) {
+        const ActionStep& s = steps[i];
+        int k = -1;
+        for (int j = 0; j < down.size(); ++j) if (down[j].sameInput(s)) { k = j; break; }
+        if (s.press == ActionStep::Up) {
+            if (k < 0) out << i;
+            else down.removeAt(k);
+        } else if (k < 0) {
+            down << s;
+        }
+    }
+    return out;
+}
+
+QList<ActionStep> Steps::leftDown(const QList<ActionStep>& steps) {
+    QList<ActionStep> down;
+    for (const ActionStep& s : steps) {
+        int k = -1;
+        for (int j = 0; j < down.size(); ++j) if (down[j].sameInput(s)) { k = j; break; }
+        if (s.press == ActionStep::Up) { if (k >= 0) down.removeAt(k); }
+        else if (k < 0) down << s;
+    }
+    return down;
 }
 
 // ---------------------------------------------------------------------------
@@ -387,10 +474,14 @@ void Games::setCurrentId(const QString& id) {
 }
 
 // ---------------------------------------------------------------------------
-// Действия хранятся строками: "m:1:<держать>:<пауза после>" или "k:f3:<держать>:<пауза после>"
+// Действия хранятся строками: "m:1:<держать>:<пауза после>" или "k:f3:<держать>:<пауза после>";
+// шаги «По шагам» — с пятым полем: "m:1:0:150:d" (нажать) / "m:1:0:0:u" (отпустить)
 static QString encodeStep(const ActionStep& a) {
-    return QString("%1:%2:%3:%4").arg(a.mouse ? "m" : "k", a.mouse ? QString::number(a.button) : a.key)
-                                 .arg(a.holdMs).arg(a.afterMs);
+    QString s = QString("%1:%2:%3:%4").arg(a.mouse ? "m" : "k", a.mouse ? QString::number(a.button) : a.key)
+                                      .arg(a.holdMs).arg(a.afterMs);
+    if (a.press == ActionStep::Down) s += ":d";
+    else if (a.press == ActionStep::Up) s += ":u";
+    return s;
 }
 
 static int validButton(int b) { return MouseButtons::valid(b) ? b : 1; }
@@ -414,6 +505,8 @@ static bool decodeStep(const QString& str, ActionStep* out) {
     }
     a.holdMs = qBound(0, p.value(2).toInt(), 10000);
     a.afterMs = qBound(0, p.value(3).toInt(), 60000);
+    const QString pr = p.value(4);
+    a.press = pr == "d" ? ActionStep::Down : pr == "u" ? ActionStep::Up : ActionStep::Click;
     *out = a;
     return true;
 }
@@ -422,6 +515,11 @@ static void writeState(QSettings& s, const QString& prefix, const GameState& st)
     QStringList acts;
     for (const ActionStep& a : st.actions) acts << encodeStep(a);
     s.setValue(prefix + "actions", acts);
+    // шаги и старт через N мс — ключи только если заданы (старые версии их не знают)
+    QStringList steps;
+    for (const ActionStep& a : st.steps) steps << encodeStep(a);
+    if (steps.isEmpty()) s.remove(prefix + "steps"); else s.setValue(prefix + "steps", steps);
+    if (st.startDelayMs > 0) s.setValue(prefix + "startDelay", st.startDelayMs); else s.remove(prefix + "startDelay");
     s.setValue(prefix + "interval", st.intervalMs);
     s.setValue(prefix + "randomize", st.randomize);
     s.setValue(prefix + "jitter", st.jitterMs);
@@ -442,7 +540,10 @@ static GameState readState(QSettings& s, const QString& prefix, const GameState&
     if (s.contains(prefix + "actions")) {
         for (const QString& e : s.value(prefix + "actions").toStringList()) {
             ActionStep a;
-            if (decodeStep(e, &a) && st.actions.size() < kMaxActions) st.actions << a;
+            if (decodeStep(e, &a) && st.actions.size() < kMaxActions) {
+                a.press = ActionStep::Click;     // у действий «нажать/отпустить» не бывает
+                st.actions << a;
+            }
         }
     } else if (s.contains(prefix + "mouse1") || s.contains(prefix + "key1") || s.contains(prefix + "useSlot2")) {
         // формат 1.4–1.11: два действия и пауза между ними
@@ -464,6 +565,15 @@ static GameState readState(QSettings& s, const QString& prefix, const GameState&
     }
     if (st.actions.isEmpty()) st.actions = def.actions;
     if (st.actions.isEmpty()) st.actions = {ActionStep{}};
+    for (const QString& e : s.value(prefix + "steps").toStringList()) {
+        ActionStep a;
+        if (!decodeStep(e, &a) || st.steps.size() >= kMaxSteps) continue;
+        if (a.press == ActionStep::Click) a.press = ActionStep::Down;   // шаг — всегда нажать или отпустить
+        a.holdMs = 0;
+        st.steps << a;
+    }
+    if (!s.contains(prefix + "steps")) st.steps = def.steps;
+    st.startDelayMs = qBound(0, s.value(prefix + "startDelay", def.startDelayMs).toInt(), kMaxStartDelayMs);
     st.intervalMs = qBound(1, s.value(prefix + "interval", def.intervalMs).toInt(), 60000);
     st.randomize = s.value(prefix + "randomize", def.randomize).toBool();
     st.jitterMs = qBound(0, s.value(prefix + "jitter", def.jitterMs).toInt(), 1000);
@@ -584,7 +694,7 @@ void writeProfileFile(const QString& path, const QString& gameId, const QString&
     const GameDef g = Games::get(gameId, &ok);
     if (ok) f->setValue("AutoQ/gameName", g.name);
     writeState(*f, kProfilePrefix, st);
-    if (mode >= 0 && mode <= 2) f->setValue(QString(kProfilePrefix) + "mode", mode);
+    if (mode >= 0 && mode <= kLastMode) f->setValue(QString(kProfilePrefix) + "mode", mode);
     if (!hotkey.isEmpty()) f->setValue(QString(kProfilePrefix) + "hotkey", hotkey);
     if (!inOverlay) f->setValue(QString(kProfilePrefix) + "overlay", false);
     f->sync();
@@ -629,7 +739,7 @@ GameState Games::loadProfile(const QString& gameId, const QString& name, int* mo
     if (ok) st.intervalMs = qMax(st.intervalMs, g.minIntervalMs);
     if (mode) {
         const int m = f->value(QString(kProfilePrefix) + "mode", -1).toInt();
-        *mode = (m >= 0 && m <= 2) ? m : -1;
+        *mode = (m >= 0 && m <= kLastMode) ? m : -1;
     }
     return st;
 }
@@ -721,7 +831,7 @@ QString Games::importProfile(const QString& gameId, const QString& file, QString
     // имя занято — «Имя (2)», «Имя (3)»…
     QString name = base;
     for (int i = 2; profileExists(gameId, name); ++i) name = QString("%1 (%2)").arg(base.left(50)).arg(i);
-    writeProfileFile(newProfilePath(gameId, name), gameId, name, st, (m >= 0 && m <= 2) ? m : -1, QString(), ov);
+    writeProfileFile(newProfilePath(gameId, name), gameId, name, st, (m >= 0 && m <= kLastMode) ? m : -1, QString(), ov);
     dropProfileCache(gameId);
     return name;
 }
@@ -960,7 +1070,7 @@ void Games::migrate() {
             if (validProfileName(name, nullptr) && !profileExists(id, name)) {
                 const int m = s->value(prefix + "mode", -1).toInt();
                 writeProfileFile(newProfilePath(id, name), id, name, readState(*s, prefix, def),
-                                 (m >= 0 && m <= 2) ? m : -1, s->value(prefix + "hotkey").toString(),
+                                 (m >= 0 && m <= kLastMode) ? m : -1, s->value(prefix + "hotkey").toString(),
                                  s->value(prefix + "overlay", true).toBool());
                 dropProfileCache(id);
             }

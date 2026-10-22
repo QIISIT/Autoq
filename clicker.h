@@ -15,6 +15,8 @@ struct ClickerConfig {
     QList<ActionStep> actions{ActionStep{}};   // действия цикла (у каждого — «держать» и «пауза после»)
     bool simultaneous = false;   // true — зажать все сразу (комбинация), false — по очереди
     bool hold = false;           // зажать и держать, пока кликер работает
+    bool steps = false;          // «По шагам»: actions — шаги «нажать» / «отпустить»
+    int startDelayMs = 0;        // первый цикл — через N мс после старта
     int intervalMs = 100;        // пауза между циклами
     bool randomize = false;
     int jitterMs = 30;
@@ -47,6 +49,9 @@ public:
     }
     static constexpr int kCounters = 16;     // дальше 16-го считаются вместе с последним
     bool allowedNow() const { return allowedNow_; }     // окно подходит — кликер жмёт
+    bool waitingStart() const { return waitingStart_; } // идёт «старт через N мс»
+    int currentStep() const { return currentStep_; }    // шаг/действие, что идёт сейчас (-1 — пауза между циклами)
+    unsigned long long cycleCount() const { return cycles_; }   // сколько кругов прошло
     int pauseReason() const { return pauseReason_; }     // 0 — нет, 1 — не окно игры, 2 — курсор вне игры
     bool inputAvailable() const;          // есть ли куда слать ввод (X11 на Linux, разрешение на macOS)
 
@@ -57,9 +62,11 @@ public:
 private:
     void loop();
     void doCycle(const ClickerConfig& cfg);
+    void doSteps(const ClickerConfig& cfg);
     bool allowedFor(const ClickerConfig& cfg);   // можно ли жать прямо сейчас (окно, курсор)
     void releaseHeld();
     void sleepWhileRunning(int ms);
+    bool waitHeld(int ms, const ClickerConfig& cfg);   // пауза с зажатым: false — стоп или ушли из игры
     void sleepUntilRunning(std::chrono::steady_clock::time_point until);   // точно, до долей мс
     void countAction(int i);
     std::vector<ActionStep> held_;        // что сейчас зажато (режим "Зажать")
@@ -67,6 +74,9 @@ private:
     std::atomic<unsigned long long> clickCount_{0};
     std::array<std::atomic<unsigned long long>, kCounters> counts_{};
     std::atomic<bool> allowedNow_{false};
+    std::atomic<bool> waitingStart_{false};
+    std::atomic<int> currentStep_{-1};
+    std::atomic<unsigned long long> cycles_{0};
     std::atomic<int> pauseReason_{0};
     std::thread worker_;
     ClickerConfig config_;

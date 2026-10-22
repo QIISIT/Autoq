@@ -725,7 +725,7 @@ static void testV112() {
     const GameState back = Games::loadState(Games::get("genshin"));
     CHECK(back == st);
     CHECK(back.actions.size() == 5 && back.actions[4].button == 8 && back.actions[3].holdMs == 30);
-    CHECK(back.usesMouse() && back.multi());
+    CHECK(back.usesMouse(GameMode::Sequence) && back.multi());
     // мусор в записи действий — пропускается, пустой список — стандартные действия
     { auto s = AppSettings::open(); s->setValue("games/genshin/state/actions", QStringList{"k:nosuchkey:0:0", "m:5:0:0", "x", "k:f:99999:-5"}); s->sync(); }
     const GameState junk = Games::loadState(Games::get("genshin"));
@@ -1128,6 +1128,113 @@ static void testCardLayout() {
     AppSettings::dropScope("AutoQTest", "cl_" + pid);
 }
 
+// --- 1.14: режим «По шагам» (нажать ↓ / отпустить ↑) и «старт через N мс» ---
+static void testV114() {
+    const QString pid = QString::number(QCoreApplication::applicationPid());
+    AppSettings::setScope("AutoQTest", "v114_" + pid);
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+    CHECK(Games::addBuiltin("genshin"));
+    CHECK(gameModeFromInt(3) == GameMode::Steps && gameModeFromInt(4) == GameMode::Sequence);
+    CHECK(gameModeName(GameMode::Steps) == "По шагам");
+
+    auto st = [](const QString& item, int press, int after) {
+        ActionStep a = ActionStep::fromItem(item);
+        a.press = press; a.afterMs = after;
+        return a;
+    };
+    const int D = ActionStep::Down, U = ActionStep::Up;
+    // действия -> шаги: нажать, «держать», отпустить, пауза после
+    ActionStep a1 = ActionStep::fromItem("mouse:1"); a1.holdMs = 40; a1.afterMs = 120;
+    ActionStep a2 = ActionStep::fromItem("f");       a2.holdMs = 0;  a2.afterMs = 7;
+    const QList<ActionStep> conv = Steps::fromActions({a1, a2});
+    CHECK(conv.size() == 4);
+    CHECK(conv[0].press == D && conv[0].mouse && conv[0].afterMs == 40);
+    CHECK(conv[1].press == U && conv[1].mouse && conv[1].afterMs == 120);
+    CHECK(conv[2].press == D && !conv[2].mouse && conv[2].afterMs == 0);
+    CHECK(conv[3].press == U && conv[3].key == "f" && conv[3].afterMs == 7);
+    for (const ActionStep& x : conv) CHECK(x.holdMs == 0);
+
+    // кикфлип: ЛКМ↓ ПКМ↓ ПКМ↑ ЛКМ↑ — две клавиши, ничего не остаётся нажатым
+    const QList<ActionStep> kick{st("mouse:1", D, 30), st("mouse:3", D, 50), st("mouse:3", U, 10), st("mouse:1", U, 0)};
+    const QList<ActionStep> in = Steps::pressedInputs(kick);
+    CHECK(in.size() == 2 && in[0].button == 1 && in[1].button == 3 && in[0].press == ActionStep::Click);
+    CHECK(Steps::inputIndex(in, kick[1]) == 1 && Steps::inputIndex(in, kick[0]) == 0);
+    CHECK(Steps::inputIndex(in, kick[2]) == -1);                 // «отпустить» не считается
+    CHECK(Steps::strayUps(kick).isEmpty() && Steps::leftDown(kick).isEmpty());
+    // «отпустить» без «нажать» и то, что осталось нажатым
+    const QList<ActionStep> bad{st("f", U, 0), st("e", D, 0), st("e", D, 0), st("q", D, 0), st("e", U, 0)};
+    CHECK(Steps::strayUps(bad) == QList<int>{0});
+    CHECK(Steps::leftDown(bad).size() == 1 && Steps::leftDown(bad)[0].key == "q");
+    CHECK(Steps::pressedInputs(bad).size() == 2);                // e и q, f не нажимается
+    // клавиша в разном регистре — та же клавиша
+    CHECK(st("F", D, 0).sameInput(st("f", U, 0)) && !st("f", D, 0).sameInput(st("mouse:1", D, 0)));
+
+    // runList / pressList: пустые шаги — из действий, в других режимах — действия как есть
+    GameState g;
+    g.actions = {a1, a2};
+    CHECK(g.runList(GameMode::Steps) == conv && g.runList(GameMode::Sequence) == g.actions);
+    g.steps = kick;
+    CHECK(g.runList(GameMode::Steps) == kick && g.runList(GameMode::Combo) == g.actions);
+    CHECK(g.pressList(GameMode::Steps).size() == 2 && g.pressList(GameMode::Sequence) == g.actions);
+    GameState keysOnly; keysOnly.actions = {a2}; keysOnly.steps = kick;
+    CHECK(keysOnly.usesMouse(GameMode::Steps) && !keysOnly.usesMouse(GameMode::Sequence));
+    // длина круга: паузы между шагами + «повтор через»
+    CHECK(FrameSync::cycleMs(kick, 100, false) == 30 + 50 + 10 + 100);
+
+    // запись и чтение: шаги и «старт через» сохраняются, старые версии их не видят
+    GameState save = Games::defaultState(Games::get("genshin"));
+    save.steps = kick;
+    save.startDelayMs = 1500;
+    Games::saveState("genshin", save);
+    GameState back = Games::loadState(Games::get("genshin"));
+    CHECK(back == save && back.steps.size() == 4 && back.steps[2].press == U && back.startDelayMs == 1500);
+    {   // действия — без направления (даже если в записи оно есть), шаги — всегда с направлением
+        auto s = AppSettings::open();
+        CHECK(s->value("games/genshin/state/steps").toStringList().value(0).endsWith(":d"));
+        CHECK(s->value("games/genshin/state/steps").toStringList().value(3).endsWith(":u"));
+        s->setValue("games/genshin/state/actions", QStringList{"k:f:0:0:u"});
+        s->setValue("games/genshin/state/steps", QStringList{"m:1:500:20", "k:nosuchkey:0:0:d", "k:e:0:5:u"});
+        s->setValue("games/genshin/state/startDelay", 999999);
+        s->sync();
+    }
+    back = Games::loadState(Games::get("genshin"));
+    CHECK(back.actions.size() == 1 && back.actions[0].press == ActionStep::Click);
+    CHECK(back.steps.size() == 2 && back.steps[0].press == D && back.steps[0].holdMs == 0 && back.steps[1].press == U);
+    CHECK(back.startDelayMs == kMaxStartDelayMs);
+    { auto s = AppSettings::open(); s->setValue("games/genshin/state/startDelay", -5); s->sync(); }
+    CHECK(Games::loadState(Games::get("genshin")).startDelayMs == 0);
+    // без шагов и без задержки — ключей нет (файл как у 1.13)
+    save.steps.clear(); save.startDelayMs = 0;
+    Games::saveState("genshin", save);
+    { auto s = AppSettings::open();
+      CHECK(!s->contains("games/genshin/state/steps") && !s->contains("games/genshin/state/startDelay")); }
+    // больше kMaxSteps — обрезается
+    {
+        QStringList many;
+        for (int i = 0; i < kMaxSteps + 10; ++i) many << (i % 2 ? "k:f:0:1:u" : "k:f:0:1:d");
+        auto s = AppSettings::open(); s->setValue("games/genshin/state/steps", many); s->sync();
+    }
+    CHECK(Games::loadState(Games::get("genshin")).steps.size() == kMaxSteps);
+
+    // профиль в режиме «По шагам»: режим и шаги не теряются ни при сохранении, ни при экспорте
+    GameState prof = Games::defaultState(Games::get("genshin"));
+    prof.steps = kick;
+    prof.startDelayMs = 250;
+    Games::saveProfile("genshin", "Кикфлип", prof, static_cast<int>(GameMode::Steps));
+    int mode = -1;
+    CHECK(Games::loadProfile("genshin", "Кикфлип", &mode) == prof && mode == 3);
+    const QString out = AppSettings::dataDir() + "/kick.ini";
+    CHECK(Games::exportProfile("genshin", "Кикфлип", out));
+    const QString imported = Games::importProfile("genshin", out);
+    CHECK(imported == "Кикфлип (2)");
+    mode = -1;
+    CHECK(Games::loadProfile("genshin", imported, &mode) == prof && mode == 3);
+    CHECK(Games::renameProfile("genshin", imported, "Кик 2"));
+    mode = -1;
+    CHECK(Games::loadProfile("genshin", "Кик 2", &mode).steps == kick && mode == 3);
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     testKeys();
@@ -1140,12 +1247,13 @@ int main(int argc, char** argv) {
     testV19();
     testV112();
     testV113();
+    testV114();
     testDataDir();
     testCardLayout();
     testI18n();
     {
         const QString pid = QString::number(QCoreApplication::applicationPid());
-        for (const char* sc : {"t", "v15_", "imp_", "empty_", "modes_", "v17_", "v19_", "v112_", "v113_", "snd_", "fs_"})
+        for (const char* sc : {"t", "v15_", "imp_", "empty_", "modes_", "v17_", "v19_", "v112_", "v113_", "v114_", "snd_", "fs_"})
             AppSettings::dropScope("AutoQTest", QString::fromLatin1(sc) + pid);
     }
     std::printf("\n%d проверок пройдено, %d провалено\n", g_pass, g_fail);
