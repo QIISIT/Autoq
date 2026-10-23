@@ -33,7 +33,7 @@ struct ClickerConfig {
 };
 
 // Можно ли нажимать в этом окне (общая проверка для кликера и интерфейса)
-bool clickAllowed(const ClickerConfig& cfg, const WindowInfo& active);
+bool clickAllowed(const ClickerConfig& cfg, const WindowInfo& w);
 
 class Clicker {
 public:

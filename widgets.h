@@ -23,6 +23,12 @@ bool askYesNo(QWidget* parent, const QString& title, const QString& text,
               bool defaultYes = true);
 // Ввод строки с русскими кнопками (QInputDialog::getText показал бы OK / Cancel)
 QString askText(QWidget* parent, const QString& title, const QString& label, const QString& value, bool* ok);
+// надпись со стилем по имени объекта ("muted", "small", "fieldLabel"…)
+QLabel* mkLabel(const QString& text, const char* objectName);
+// поле «… мс» без стрелок, число по центру
+class QSpinBox* msSpin(int lo, int hi);
+// шапка всплывающего списка: поиск и крестик «Закрыть»; поле поиска — в search
+void addPopupSearch(QBoxLayout* lay, QWidget* popup, QLineEdit* search, const QString& placeholder);
 
 // Переключатель (тумблер) вместо галочки
 class ToggleSwitch : public QAbstractButton {
@@ -143,7 +149,6 @@ protected:
 class InfoBadge : public QAbstractButton {
 public:
     InfoBadge(const QString& title, const QString& text, QWidget* parent = nullptr);
-    void setInfo(const QString& title, const QString& text) { title_ = title; text_ = text; }
     QSize sizeHint() const override { return QSize(18, 18); }
     void showInfo();
 protected:
@@ -200,26 +205,8 @@ public:
     void paint(QPainter* p, const QStyleOptionViewItem& opt, const QModelIndex& idx) const override;
     QSize sizeHint(const QStyleOptionViewItem&, const QModelIndex&) const override { return QSize(compact ? 56 : 200, 54); }
     // где кружок «используется»; compact — узкая панель: только значок, кружок — точкой в углу
-    static QRect circleRect(const QRect& itemRect, bool compact = false);
+    static QRect circleRect(const QRect& r, bool compact = false);
     bool compact = false;
-};
-
-// Карточки в ряд, которые сами перестраиваются в 2 или 1 колонку, когда окно узкое
-class CardFlow : public QWidget {
-public:
-    explicit CardFlow(QWidget* parent = nullptr);
-    void setCards(const QList<QWidget*>& cards);
-    int columns() const { return cols_; }
-    QSize minimumSizeHint() const override;
-    QSize sizeHint() const override;
-protected:
-    void resizeEvent(QResizeEvent* e) override;
-private:
-    int columnsFor(int width) const;
-    void relayout(int cols);
-    class QGridLayout* grid_;
-    QList<QWidget*> cards_;
-    int cols_ = 0;
 };
 
 // Фишки правил окна (процессы / заголовки): × — убрать, «+» — дописать прямо тут

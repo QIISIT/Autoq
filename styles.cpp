@@ -9,24 +9,11 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QRegularExpression>
 #include <QSaveFile>
 
 namespace {
 const char* kFormat = "autoq-style";
 const int kMaxFile = 1024 * 1024;
-
-// имя файла из имени стиля: запрещённые в именах файлов знаки — «_»
-QString safeFileName(const QString& name) {
-    QString out;
-    for (const QChar c : name) out += (c.unicode() < 32 || QStringLiteral("<>:\"/\\|?*").contains(c)) ? QChar('_') : c;
-    while (out.endsWith('.') || out.endsWith(' ')) out.chop(1);
-    if (out.isEmpty()) out = QStringLiteral("_");
-    static const QRegularExpression reserved(QStringLiteral("^(con|prn|aux|nul|com[1-9]|lpt[1-9])$"),
-                                             QRegularExpression::CaseInsensitiveOption);
-    if (reserved.match(out).hasMatch()) out += '_';
-    return out;
-}
 
 QString colorOr(const QJsonValue& v, const QColor& def) {
     const QColor c(v.toString());
@@ -182,7 +169,7 @@ bool Styles::save(const Profile& in, QString* error) {
     if (!validName(p.name, error)) return false;
     QString path = findStyle(p.name).path;
     if (path.isEmpty()) {
-        const QString base = dir() + "/" + safeFileName(p.name);
+        const QString base = dir() + "/" + AppSettings::safeFileName(p.name);
         path = base + extension();
         for (int i = 2; QFile::exists(path); ++i) path = QString("%1 (%2)%3").arg(base).arg(i).arg(extension());
     }
@@ -210,7 +197,7 @@ bool Styles::rename(const QString& from, const QString& to, QString* error) {
     p.name = n;
     if (!writeFile(src.path, toJson(p).toUtf8(), error)) return false;
     // файл — под новым именем, если оно свободно (иначе остаётся старое имя файла)
-    const QString want = dir() + "/" + safeFileName(n) + extension();
+    const QString want = dir() + "/" + AppSettings::safeFileName(n) + extension();
     if (QFileInfo(want) != QFileInfo(src.path) && !QFile::exists(want)) QFile::rename(src.path, want);
     return true;
 }

@@ -80,11 +80,11 @@ struct OverlayData {
 
 namespace OverlayPaint {
     QSize size(const OverlaySettings& s, const OverlayView& v);
-    void paint(QPainter& p, const QPointF& topLeft, const OverlaySettings& s, const OverlayView& v,
+    void paint(QPainter& p, const QPointF& tl, const OverlaySettings& s, const OverlayView& v,
                bool moveHint = false);
     // несколько игр в одной плашке: по строке на каждую, колонки выровнены
     QSize size(const OverlaySettings& s, const QList<OverlayView>& views);
-    void paint(QPainter& p, const QPointF& topLeft, const OverlaySettings& s, const QList<OverlayView>& views,
+    void paint(QPainter& p, const QPointF& tl, const OverlaySettings& s, const QList<OverlayView>& views,
                bool moveHint = false);
     OverlayView sample();         // пример для образца в настройках
 }

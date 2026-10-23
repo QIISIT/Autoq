@@ -64,7 +64,6 @@ signals:
     void captureCancelled();
     void appearanceChanged();
     void settingsRequested();
-    void overlayToggled(bool on);
     void overlayMenuRequested(QWidget* anchor);
     void overlaySettingsRequested();
 

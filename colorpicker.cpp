@@ -18,20 +18,11 @@
 #include <QSignalBlocker>
 
 namespace {
-QColor mixc(const QColor& a, const QColor& b, qreal t) {
-    return QColor::fromRgbF(a.redF() * t + b.redF() * (1 - t), a.greenF() * t + b.greenF() * (1 - t),
-                            a.blueF() * t + b.blueF() * (1 - t));
-}
 QFont mkFont(const QString& family, int px, int weight = QFont::Normal) {
     QFont f(family);
     f.setPixelSize(px);
     f.setWeight(static_cast<QFont::Weight>(weight));
     return f;
-}
-QLabel* lbl(const QString& text, const char* obj) {
-    auto* l = new QLabel(text);
-    l->setObjectName(obj);
-    return l;
 }
 void styleSwatch(QToolButton* b, const QString& hex) {
     const auto& t = Theme::t();
@@ -92,11 +83,11 @@ void ThemePreview::paintEvent(QPaintEvent*) {
         }
         const QColor base = t.light ? QColor("#FFFFFF") : QColor("#141417");
         const QRectF tile(12, y + 6, 18, 18);
-        p.setPen(QPen(sel ? accent : mixc(gameColor, base, 0.3), sel ? 1.6 : 1));
-        p.setBrush(mixc(gameColor, base, 0.16));
+        p.setPen(QPen(sel ? accent : Theme::mix(gameColor, base, 0.3), sel ? 1.6 : 1));
+        p.setBrush(Theme::mix(gameColor, base, 0.16));
         p.drawRoundedRect(tile, R(5), R(5));
         p.setPen(Qt::NoPen);
-        p.setBrush(t.light ? mixc(gameColor, QColor("#000000"), 0.55) : gameColor);
+        p.setBrush(t.light ? Theme::mix(gameColor, QColor("#000000"), 0.55) : gameColor);
         p.drawEllipse(tile.center(), 3.2, 3.2);
         p.setFont(mkFont(uiF, 9, sel ? QFont::DemiBold : QFont::Normal));
         p.setPen(sel ? t.text : t.text2);
@@ -141,9 +132,9 @@ void ThemePreview::paintEvent(QPaintEvent*) {
     const QString variant = Theme::normalizeVariant(ap.variant);
     if (variant == "glass") {
         QLinearGradient g(card.topLeft(), card.bottomLeft());
-        g.setColorAt(0, mixc(QColor("#FFFFFF"), t.card, t.light ? 0.6 : 0.06));
+        g.setColorAt(0, Theme::mix(QColor("#FFFFFF"), t.card, t.light ? 0.6 : 0.06));
         g.setColorAt(1, t.card);
-        p.setPen(QPen(mixc(t.red, t.cardBorder, 0.3), 1));
+        p.setPen(QPen(Theme::mix(t.red, t.cardBorder, 0.3), 1));
         p.setBrush(g);
     } else {
         p.setPen(QPen(t.cardBorder, 1));
@@ -310,10 +301,10 @@ ColorPickerDialog::ColorPickerDialog(Target target, const QColor& initial, QWidg
     auto* icon = new QLabel();
     icon->setPixmap(AqIcons::uiPixmap("palette", Theme::t().redHi, 20, devicePixelRatioF(), 1.8));
     head->addWidget(icon);
-    head->addWidget(lbl(plain ? T("Цвет") : accent ? T("Свой цвет акцента") : T("Свой цвет фона"), "cardTitle"));
+    head->addWidget(mkLabel(plain ? T("Цвет") : accent ? T("Свой цвет акцента") : T("Свой цвет фона"), "cardTitle"));
     head->addStretch(1);
     lay->addLayout(head);
-    lay->addWidget(lbl(plain ? T("Двигай кружок и полосу — оверлей меняется сразу.")
+    lay->addWidget(mkLabel(plain ? T("Двигай кружок и полосу — оверлей меняется сразу.")
                              : T("Двигай кружок и полосу — справа сразу видно, как будет выглядеть AutoQ."), "muted"));
 
     auto* body = new QHBoxLayout();
@@ -346,7 +337,7 @@ ColorPickerDialog::ColorPickerDialog(Target target, const QColor& initial, QWidg
     hex_->setValidator(new QRegularExpressionValidator(QRegularExpression("#?[0-9A-Fa-f]{0,6}"), hex_));
     hex_->setToolTip(T("Цвет в виде #RRGGBB — можно вставить из любого редактора"));
     hexRow->addWidget(hex_);
-    note_ = lbl(QString(), "small");
+    note_ = mkLabel(QString(), "small");
     note_->setWordWrap(true);
     hexRow->addWidget(note_, 1);
     lay->addLayout(hexRow);
@@ -354,7 +345,7 @@ ColorPickerDialog::ColorPickerDialog(Target target, const QColor& initial, QWidg
     // готовые цвета
     auto* presetsRow = new QHBoxLayout();
     presetsRow->setSpacing(6);
-    presetsRow->addWidget(lbl(T("Готовые"), "small"));
+    presetsRow->addWidget(mkLabel(T("Готовые"), "small"));
     const QStringList presets = plain ? QStringList{"#FFFFFF", "#0B0B0D", "#E11D2A", "#FF6A13", "#F5B700", "#22C55E",
                                                     "#14B8A6", "#3B82F6", "#A855F7", "#EC4899"}
                               : accent ? Theme::accentPresets() : Theme::bgPresets(Theme::current().dark);
@@ -454,10 +445,10 @@ AppearancePopup::AppearancePopup(QWidget* parent) : QFrame(parent, Qt::Popup) {
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(14, 12, 14, 12);
     lay->setSpacing(9);
-    lay->addWidget(lbl(T("Оформление"), "cardTitle"));
+    lay->addWidget(mkLabel(T("Оформление"), "cardTitle"));
     themeSeg_ = new Segmented({T("Тёмная"), T("Светлая")}, false);
     lay->addWidget(themeSeg_);
-    lay->addWidget(lbl(T("Цвет акцента"), "small"));
+    lay->addWidget(mkLabel(T("Цвет акцента"), "small"));
     auto* grid = new QGridLayout();
     grid->setSpacing(6);
     const QStringList presets = Theme::accentPresets();
@@ -469,7 +460,7 @@ AppearancePopup::AppearancePopup(QWidget* parent) : QFrame(parent, Qt::Popup) {
         b->setCursor(Qt::PointingHandCursor);
         b->setProperty("hex", presets[i]);
         b->setToolTip(Theme::colorName(presets[i]));
-        const QString hx = presets[i];
+        const QString& hx = presets[i];
         connect(b, &QToolButton::clicked, this, [this, hx]() {
             Theme::Appearance a = Theme::current();
             a.accent = QColor(hx);

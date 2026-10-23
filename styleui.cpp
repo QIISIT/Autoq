@@ -18,12 +18,6 @@
 #include <QVBoxLayout>
 
 namespace {
-QLabel* label(const QString& text, const char* name) {
-    auto* l = new QLabel(text);
-    l->setObjectName(name);
-    return l;
-}
-
 QString docsDir() { return QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation); }
 }
 
@@ -34,12 +28,12 @@ bool StyleUi::saveCurrent(QWidget* parent, const QString& layout, QString* saved
     auto* lay = new QVBoxLayout(&dlg);
     lay->setContentsMargins(20, 18, 20, 16);
     lay->setSpacing(10);
-    lay->addWidget(label(T("Сохранить текущий вид как стиль"), "cardTitle"));
+    lay->addWidget(mkLabel(T("Сохранить текущий вид как стиль"), "cardTitle"));
     auto* pv = new ThemePreview();
     pv->setAppearance(Theme::current());
     pv->setFixedSize(253, 157);                 // макет 316×196 ×0.8
     lay->addWidget(pv, 0, Qt::AlignHCenter);
-    lay->addWidget(label(T("Название"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Название"), "fieldLabel"));
     auto* nameEdit = new QLineEdit(Styles::uniqueName(T("Мой стиль")));
     nameEdit->setPlaceholderText(T("Например: Синий неон"));
     nameEdit->setMaxLength(40);
@@ -55,12 +49,12 @@ bool StyleUi::saveCurrent(QWidget* parent, const QString& layout, QString* saved
         withLayout->setChecked(CardLayout::importJson(layout, &l, &side) && (!CardLayout::isDefault(l) || side != 0));
         withLayout->setAccessibleName(T("Вместе с раскладкой карточек этой игры"));
         row->addWidget(withLayout);
-        auto* wl = label(T("Вместе с раскладкой карточек этой игры"), "muted");
+        auto* wl = mkLabel(T("Вместе с раскладкой карточек этой игры"), "muted");
         wl->setBuddy(withLayout);
         row->addWidget(wl, 1);
         lay->addLayout(row);
     }
-    auto* note = label(T("В стиле — стиль интерфейса, тема, цвета, значки, анимации, шрифты, скругление, рамки и вид "
+    auto* note = mkLabel(T("В стиле — стиль интерфейса, тема, цвета, значки, анимации, шрифты, скругление, рамки и вид "
                          "мелких элементов. Размер интерфейса не входит. Файл стиля можно отправить другу."), "small");
     note->setWordWrap(true);
     lay->addWidget(note);

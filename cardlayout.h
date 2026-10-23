@@ -51,7 +51,7 @@ namespace CardLayout {
     // привести в порядок: каждый блок ровно один раз, все встроенные карточки на месте,
     // «hidden» — последней, чужое и повторы — прочь, названия своих карточек — не
     // длиннее 40 символов, размеры и цвета — в допустимых пределах
-    Layout normalize(Layout l);
+    Layout normalize(const Layout& in);
     QString toJson(const Layout& l);
     Layout fromJson(const QString& json, bool* ok = nullptr);
 

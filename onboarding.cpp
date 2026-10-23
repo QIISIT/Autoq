@@ -18,12 +18,6 @@
 #include <QSlider>
 #include <QSignalBlocker>
 
-static QLabel* lbl(const QString& text, const char* obj) {
-    auto* l = new QLabel(text);
-    l->setObjectName(obj);
-    return l;
-}
-
 // Карточка выбора: картинка сверху, название и пояснение снизу
 static QPushButton* choiceCard(QWidget* picture, const QString& name, const QString& note) {
     auto* b = new CardButton();
@@ -39,8 +33,8 @@ static QPushButton* choiceCard(QWidget* picture, const QString& name, const QStr
     v->setSpacing(8);
     picture->setAttribute(Qt::WA_TransparentForMouseEvents);
     v->addWidget(picture, 1);
-    auto* n = lbl(name, "gameName");
-    auto* s = lbl(note, "small");
+    auto* n = mkLabel(name, "gameName");
+    auto* s = mkLabel(note, "small");
     s->setWordWrap(true);
     s->setMinimumHeight(2 * s->fontMetrics().height() + 4);   // у всех карточек одна высота
     s->setAlignment(Qt::AlignLeft | Qt::AlignTop);
@@ -62,10 +56,10 @@ OnboardingPage::OnboardingPage(QWidget* parent) : QWidget(parent) {
     head->addWidget(logo_, 0, Qt::AlignTop);
     auto* col = new QVBoxLayout();
     col->setSpacing(4);
-    col->addWidget(lbl(T("Добро пожаловать в AutoQ"), "small"));
-    stepTitle_ = lbl(QString(), "welcomeTitle");
+    col->addWidget(mkLabel(T("Добро пожаловать в AutoQ"), "small"));
+    stepTitle_ = mkLabel(QString(), "welcomeTitle");
     col->addWidget(stepTitle_);
-    stepNote_ = lbl(QString(), "muted");
+    stepNote_ = mkLabel(QString(), "muted");
     stepNote_->setWordWrap(true);
     col->addWidget(stepNote_);
     head->addLayout(col, 1);
@@ -128,7 +122,7 @@ OnboardingPage::OnboardingPage(QWidget* parent) : QWidget(parent) {
         // скорость: медленнее — лучше видно, что происходит
         auto* speedRow = new QHBoxLayout();
         speedRow->setSpacing(12);
-        speedRow->addWidget(lbl(T("Скорость анимаций"), "fieldLabel"));
+        speedRow->addWidget(mkLabel(T("Скорость анимаций"), "fieldLabel"));
         speedSlider_ = new QSlider(Qt::Horizontal);
         speedSlider_->setRange(0, Theme::animSpeedChoices().size() - 1);
         speedSlider_->setPageStep(1);
@@ -136,12 +130,12 @@ OnboardingPage::OnboardingPage(QWidget* parent) : QWidget(parent) {
         speedSlider_->setAccessibleName(T("Скорость анимаций"));
         speedSlider_->setMaximumWidth(320);
         speedRow->addWidget(speedSlider_, 1);
-        speedVal_ = lbl(QString(), "muted");
+        speedVal_ = mkLabel(QString(), "muted");
         speedVal_->setMinimumWidth(150);
         speedRow->addWidget(speedVal_);
         speedRow->addStretch(1);
         g->addLayout(speedRow, 2, 0, 1, 2);
-        g->addWidget(lbl(T("Наведи курсор на карточку — анимация покажется."), "faint"), 3, 0, 1, 2);
+        g->addWidget(mkLabel(T("Наведи курсор на карточку — анимация покажется."), "faint"), 3, 0, 1, 2);
         g->setRowStretch(4, 1);
         connect(speedSlider_, &QSlider::valueChanged, this, [this](int v) {
             Theme::Appearance a = Theme::current();
@@ -165,7 +159,7 @@ OnboardingPage::OnboardingPage(QWidget* parent) : QWidget(parent) {
 
     auto* foot = new QHBoxLayout();
     foot->setSpacing(8);
-    foot->addWidget(lbl(T("Всё это можно поменять потом: Настройки → Оформление."), "faint"), 1);
+    foot->addWidget(mkLabel(T("Всё это можно поменять потом: Настройки → Оформление."), "faint"), 1);
     back_ = new QPushButton(T("Назад"));
     back_->setCursor(Qt::PointingHandCursor);
     next_ = new QPushButton();

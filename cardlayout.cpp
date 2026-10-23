@@ -130,7 +130,7 @@ CardLayout::Layout CardLayout::defaults() {
     return l;
 }
 
-CardLayout::Layout CardLayout::normalize(Layout in) {
+CardLayout::Layout CardLayout::normalize(const Layout& in) {
     Layout out;
     QStringList seenCards, seenBlocks;
     Card hidden;

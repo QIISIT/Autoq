@@ -38,7 +38,7 @@ namespace AqIcons {
                            const QByteArray& image, int px, qreal dpr, bool active, bool lightTheme);
 
     // Картинку пользователя приводим к квадрату 128×128 PNG (для хранения в настройках)
-    QByteArray normalizeImage(const QImage& img);
+    QByteArray normalizeImage(const QImage& in);
 
     // Цвет акцента (из настроек оформления): логотип и рамка выбранной игры
     void setAccent(const QColor& c);

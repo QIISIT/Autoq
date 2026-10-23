@@ -18,7 +18,7 @@ public:
     void popupAt(QWidget* anchor);
     // Открыть список у кнопки anchor; выбранное значение — в onPicked
     static void open(QWidget* anchor, Mode mode, const QStringList& already,
-                     std::function<void(const QString&)> onPicked);
+                     const std::function<void(const QString&)>& onPicked);
 signals:
     void picked(const QString& value);
 protected:

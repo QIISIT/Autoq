@@ -2,9 +2,8 @@
 #include "i18n.h"
 #include "theme.h"
 #include "icons.h"
+#include "widgets.h"
 #include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QToolButton>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QKeyEvent>
@@ -36,23 +35,7 @@ WindowPickerPopup::WindowPickerPopup(Mode mode, const QStringList& already, QWid
     lay->setContentsMargins(8, 8, 8, 8);
     lay->setSpacing(6);
     search_ = new QLineEdit();
-    search_->setObjectName("search");
-    search_->setPlaceholderText(mode == Process ? T("Поиск: имя процесса или окна…") : T("Поиск по заголовку…"));
-    search_->setClearButtonEnabled(true);
-    search_->addAction(AqIcons::ui("search", Theme::t().muted, 14), QLineEdit::LeadingPosition);
-    auto* top = new QHBoxLayout();
-    top->setSpacing(4);
-    top->addWidget(search_, 1);
-    auto* x = new QToolButton();
-    x->setObjectName("popupX");
-    x->setFixedSize(26, 26);
-    x->setIcon(AqIcons::ui("x", Theme::t().muted, 12, 2.4));
-    x->setToolTip(T("Закрыть"));
-    x->setAccessibleName(T("Закрыть"));
-    x->setCursor(Qt::PointingHandCursor);
-    connect(x, &QToolButton::clicked, this, &QWidget::close);
-    top->addWidget(x);
-    lay->addLayout(top);
+    addPopupSearch(lay, this, search_, mode == Process ? T("Поиск: имя процесса или окна…") : T("Поиск по заголовку…"));
     list_ = new QListWidget();
     list_->setObjectName("keyList");
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -135,7 +118,7 @@ void WindowPickerPopup::popupAt(QWidget* anchor) {
 }
 
 void WindowPickerPopup::open(QWidget* anchor, Mode mode, const QStringList& already,
-                             std::function<void(const QString&)> onPicked) {
+                             const std::function<void(const QString&)>& onPicked) {
     auto* pop = new WindowPickerPopup(mode, already, anchor);
     QObject::connect(pop, &WindowPickerPopup::picked, anchor, [onPicked](const QString& v) { onPicked(v); });
     pop->popupAt(anchor);

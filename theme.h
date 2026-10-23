@@ -36,8 +36,8 @@ namespace Theme {
     QStringList elementSizes(const QString& id);    // «Мельче», «Обычный», «Крупнее»
     QList<int> elementRadii();                      // 0, 4, 8, 12, 16, 24 — варианты скругления
     // в допустимых пределах, без «как в теме» и чужих групп
-    Elements normalizeElements(const Elements& e);
-    QJsonObject elementsToJson(const Elements& e);
+    Elements normalizeElements(const Elements& in);
+    QJsonObject elementsToJson(const Elements& in);
     Elements elementsFromJson(const QJsonObject& o);
 
     // Оформление, которое выбирает пользователь (окно «Настройки», первый запуск)

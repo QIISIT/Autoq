@@ -3,14 +3,13 @@
 #include "keys.h"
 #include "theme.h"
 #include "icons.h"
+#include "widgets.h"
 #include <QVBoxLayout>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QKeyEvent>
 #include <QScreen>
 #include <QHash>
-#include <QHBoxLayout>
-#include <QToolButton>
 
 namespace {
 enum { KeyRole = Qt::UserRole + 1 };
@@ -89,23 +88,7 @@ KeyPickerPopup::KeyPickerPopup(const QStringList& keys, const QStringList& commo
     lay->setContentsMargins(8, 8, 8, 8);
     lay->setSpacing(6);
     search_ = new QLineEdit();
-    search_->setObjectName("search");
-    search_->setPlaceholderText(T("Поиск: Z, F5, num, пробел…"));
-    search_->setClearButtonEnabled(true);
-    search_->addAction(AqIcons::ui("search", Theme::t().muted, 14), QLineEdit::LeadingPosition);
-    auto* top = new QHBoxLayout();
-    top->setSpacing(4);
-    top->addWidget(search_, 1);
-    auto* x = new QToolButton();
-    x->setObjectName("popupX");
-    x->setFixedSize(26, 26);
-    x->setIcon(AqIcons::ui("x", Theme::t().muted, 12, 2.4));
-    x->setToolTip(T("Закрыть"));
-    x->setAccessibleName(T("Закрыть"));
-    x->setCursor(Qt::PointingHandCursor);
-    connect(x, &QToolButton::clicked, this, &QWidget::close);
-    top->addWidget(x);
-    lay->addLayout(top);
+    addPopupSearch(lay, this, search_, T("Поиск: Z, F5, num, пробел…"));
     list_ = new QListWidget();
     list_->setObjectName("keyList");
     list_->setUniformItemSizes(false);

@@ -21,6 +21,4 @@ public:
     // Вызывать до создания QApplication. На Windows и macOS ничего не делает.
     static void ensureDesktopEntry();
     static std::string execPath();
-private:
-    static std::string appName();
 };

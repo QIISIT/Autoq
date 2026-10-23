@@ -5,6 +5,7 @@
 // Linux ~/.config/AutoQ. Свою папку выбирают в настройках (её путь — в location.ini
 // в папке по умолчанию). Рядом с программой есть папка AutoQ-data — портативный режим.
 #include "games.h"
+#include <QRegularExpression>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -208,4 +209,15 @@ bool AppSettings::setDataDir(const QString& dirIn, bool copyCurrent, QString* er
     if (loc.status() != QSettings::NoError) { if (error) *error = locationFile(); return false; }
     g_resolved = false;
     return QDir::cleanPath(dataDir()) == dir;
+}
+
+QString AppSettings::safeFileName(const QString& name) {
+    QString out;
+    for (const QChar c : name) out += (c.unicode() < 32 || QStringLiteral("<>:\"/\\|?*").contains(c)) ? QChar('_') : c;
+    while (out.endsWith('.') || out.endsWith(' ')) out.chop(1);
+    if (out.isEmpty()) out = QStringLiteral("_");
+    static const QRegularExpression reserved(QStringLiteral("^(con|prn|aux|nul|com[1-9]|lpt[1-9])$"),
+                                             QRegularExpression::CaseInsensitiveOption);
+    if (reserved.match(out).hasMatch()) out += '_';
+    return out;
 }

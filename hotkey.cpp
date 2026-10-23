@@ -768,6 +768,7 @@ void GlobalHotkey::loop() {
         }
     };
 
+    const bool debugHk = qEnvironmentVariableIsSet("AQ_DEBUG_HK");   // сырые события в stderr
     while (running_) {
         if (rebind_.exchange(false)) apply();
         while (XPending(d)) {
@@ -778,7 +779,7 @@ void GlobalHotkey::loop() {
                 const auto* re = static_cast<const XIRawEvent*>(ev.xcookie.data);
                 const int code = re->detail;
                 const bool fake = xtestDevices.count(re->sourceid) > 0;
-                if (qEnvironmentVariableIsSet("AQ_DEBUG_HK"))
+                if (debugHk)
                     std::fprintf(stderr, "raw evtype=%d detail=%d src=%d fake=%d\n", ev.xcookie.evtype, code, re->sourceid, fake);
                 switch (ev.xcookie.evtype) {
                     case XI_RawKeyPress: {

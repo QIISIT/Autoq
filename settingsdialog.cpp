@@ -37,12 +37,6 @@
 #include <QDesktopServices>
 #include <QUrl>
 
-static QLabel* lbl(const QString& text, const char* obj) {
-    auto* l = new QLabel(text);
-    l->setObjectName(obj);
-    return l;
-}
-
 static QString autoText_() {
 #ifdef _WIN32
     return T("Автозапуск");
@@ -87,7 +81,7 @@ SettingsDialog::SettingsDialog(OverlayWindow* overlay, Page page, QWidget* paren
     top->setContentsMargins(22, 16, 22, 6);
     headIcon_ = new QLabel();
     top->addWidget(headIcon_);
-    top->addWidget(lbl(T("Настройки"), "cardTitle"));
+    top->addWidget(mkLabel(T("Настройки"), "cardTitle"));
     top->addStretch(1);
     tabs_ = new Segmented({T("Основные"), T("Оформление"), T("Оверлей КПС")}, false);
     top->addWidget(tabs_);
@@ -147,7 +141,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
     auto* lay = new QVBoxLayout(page);
     lay->setContentsMargins(22, 10, 22, 10);
     lay->setSpacing(12);
-    auto row = [&](const QString& text, const QString& tip, bool on, std::function<void(bool)> apply) {
+    auto row = [&](const QString& text, const QString& tip, bool on, const std::function<void(bool)>& apply) {
         auto* h = new QHBoxLayout();
         h->setSpacing(10);
         auto* sw = new ToggleSwitch();
@@ -155,7 +149,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         sw->setAccessibleName(text);
         sw->setToolTip(tip);
         h->addWidget(sw);
-        auto* l = lbl(text, "muted");
+        auto* l = mkLabel(text, "muted");
         l->setToolTip(tip);
         l->setWordWrap(true);
         h->addWidget(l, 1);
@@ -167,14 +161,14 @@ QWidget* SettingsDialog::buildGeneralPage() {
     {
         auto* lr = new QHBoxLayout();
         lr->setSpacing(10);
-        lr->addWidget(lbl(QString::fromUtf8("Язык / Language"), "fieldLabel"), 1);
+        lr->addWidget(mkLabel(QString::fromUtf8("Язык / Language"), "fieldLabel"), 1);
         auto* langSeg = new Segmented({T("Как в системе"), QString::fromUtf8("Русский"), QStringLiteral("English")}, false);
         auto s = AppSettings::open();
         const QString cur = s->value("language", "auto").toString();
         langSeg->setCurrent(cur == "ru" ? 1 : cur == "en" ? 2 : 0);
         lr->addWidget(langSeg);
         lay->addLayout(lr);
-        auto* note = lbl(QString(), "small");
+        auto* note = mkLabel(QString(), "small");
         note->setWordWrap(true);
         auto* restart = new QPushButton(T("Перезапустить AutoQ"));
         restart->setObjectName("accent");
@@ -197,7 +191,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         connect(restart, &QPushButton::clicked, this, &SettingsDialog::restartRequested);
     }
 
-    lay->addWidget(lbl(T("Запуск"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Запуск"), "fieldLabel"));
 #ifdef _WIN32
     const QString autoText = T("Автозапуск");
     const QString autoTip = T("AutoQ запускается при входе в Windows и ждёт в трее — нажми клавишу старт/стоп в игре.\nВыключить можно здесь или в Диспетчере задач → Автозагрузка.");
@@ -232,7 +226,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         auto* ic = new QLabel();
         ic->setPixmap(AqIcons::ui("shield", admin ? Theme::t().ok : Theme::t().warn, 16).pixmap(16, 16));
         h->addWidget(ic, 0, Qt::AlignTop);
-        auto* st = lbl(admin ? T("Сейчас AutoQ работает с правами администратора — клики доходят до любых игр.")
+        auto* st = mkLabel(admin ? T("Сейчас AutoQ работает с правами администратора — клики доходят до любых игр.")
                              : T("Сейчас AutoQ работает без прав администратора: игры, запущенные от имени администратора, не примут клики."),
                        "small");
         st->setWordWrap(true);
@@ -261,7 +255,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
     row(T("Уведомления у значка в трее"), T("Когда окно AutoQ закрыто: «Профиль сохранён», «Окно игры выбрано» и т. п. Пока окно открыто — сообщения внутри окна."),
         Prefs::notifications(), [](bool v) { Prefs::setNotifications(v); });
 
-    lay->addWidget(lbl(T("Кликер"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Кликер"), "fieldLabel"));
     row(T("Кнопкой мыши — только когда курсор над окном игры"),
         T("Иначе клик ушёл бы в соседнее окно или на другой монитор.\nВыключи, если кликер ставит паузу, хотя курсор над игрой\n(бывает под Wayland и с некоторыми лаунчерами)."),
         Prefs::mouseOnlyOverGame(), [](bool v) { Prefs::setMouseOnlyOverGame(v); });
@@ -269,7 +263,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         Prefs::stopOnGameClose(), [](bool v) { Prefs::setStopOnGameClose(v); });
 
     // --- звук при включении и выключении кликера: свой для «вкл» и для «выкл»
-    lay->addWidget(lbl(T("Звук"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Звук"), "fieldLabel"));
     {
         auto* soundSw = row(T("Звук, когда кликер включается и выключается"),
                             T("Слышно прямо в игре, не глядя на оверлей. Звук для «вкл» и для «выкл» — свой."),
@@ -280,7 +274,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         g->setHorizontalSpacing(10);
         g->setVerticalSpacing(8);
         auto pickRow = [this, g](int r, Sounds::Kind kind, const QString& caption) {
-            g->addWidget(lbl(caption, "muted"), r, 0);
+            g->addWidget(mkLabel(caption, "muted"), r, 0);
             auto* box = new SoundBox(kind, false);
             box->setAccessibleName(caption);
             box->setMinimumWidth(200);
@@ -297,7 +291,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         };
         pickRow(0, Sounds::On, T("Включился"));
         pickRow(1, Sounds::Off, T("Выключился"));
-        g->addWidget(lbl(T("Громкость"), "muted"), 2, 0);
+        g->addWidget(mkLabel(T("Громкость"), "muted"), 2, 0);
         auto* volRow = new QHBoxLayout();
         volRow->setSpacing(8);
         auto* vol = new QSlider(Qt::Horizontal);
@@ -306,7 +300,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         vol->setAccessibleName(T("Громкость звука"));
         vol->setToolTip(T("Тише ← → громче"));
         volRow->addWidget(vol, 1);
-        auto* volVal = lbl(QString("%1%").arg(Sounds::volume()), "small");
+        auto* volVal = mkLabel(QString("%1%").arg(Sounds::volume()), "small");
         volVal->setMinimumWidth(40);
         volRow->addWidget(volVal);
         g->addLayout(volRow, 2, 1, 1, 2);
@@ -316,14 +310,14 @@ QWidget* SettingsDialog::buildGeneralPage() {
         auto* hr = new QHBoxLayout();
         hr->setSpacing(10);
         hr->addWidget(holdSw);
-        auto* hl = lbl(T("И в режиме «Пока держу» (там кликер включается на каждое нажатие)"), "small");
+        auto* hl = mkLabel(T("И в режиме «Пока держу» (там кликер включается на каждое нажатие)"), "small");
         hl->setWordWrap(true);
         hr->addWidget(hl, 1);
         g->addLayout(hr, 3, 0, 1, 3);
         // «Мои звуки»: свои WAV — в папке данных, видны во всех списках звуков
         auto* mr = new QHBoxLayout();
         mr->setSpacing(8);
-        auto* mineLbl = lbl(QString(), "small");
+        auto* mineLbl = mkLabel(QString(), "small");
         mineLbl->setWordWrap(true);
         auto updMine = [mineLbl]() {
             const int n = Sounds::userSounds().size();
@@ -352,7 +346,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
     }
 
     // --- папка данных: где лежат настройки и профили (обычные файлы, без реестра)
-    lay->addWidget(lbl(T("Данные"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Данные"), "fieldLabel"));
     {
         auto* pathRow = new QHBoxLayout();
         pathRow->setSpacing(8);
@@ -365,7 +359,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         path->setToolTip(T("Здесь лежат настройки (settings.ini) и профили (папка profiles)"));
         pathRow->addWidget(path, 1);
         lay->addLayout(pathRow);
-        auto* note = lbl(QString(), "small");
+        auto* note = mkLabel(QString(), "small");
         note->setWordWrap(true);
         lay->addWidget(note);
         auto* btns = new QHBoxLayout();
@@ -397,7 +391,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
             QDesktopServices::openUrl(QUrl::fromLocalFile(AppSettings::dataDir()));
         });
         // перенести в папку: текущие данные — туда; если там уже есть данные AutoQ — спросить
-        auto moveTo = [this, refreshData](QString dir) {
+        auto moveTo = [this, refreshData](const QString& dir) {
             bool copy = true;
             if (AppSettings::hasData(dir)) {
                 QMessageBox box(QMessageBox::Question, T("Папка данных"),
@@ -433,7 +427,7 @@ QWidget* SettingsDialog::buildGeneralPage() {
         connect(defBtn, &QPushButton::clicked, this, [moveTo]() { moveTo(AppSettings::defaultDataDir()); });
     }
 
-    lay->addWidget(lbl(T("Первый запуск"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Первый запуск"), "fieldLabel"));
     auto* again = new QPushButton(T("Пройти выбор оформления и анимаций заново"));
     again->setObjectName("outline");
     again->setCursor(Qt::PointingHandCursor);
@@ -453,16 +447,16 @@ QWidget* SettingsDialog::buildAppearancePage() {
     auto* lay = new QVBoxLayout(page);
     lay->setContentsMargins(22, 10, 22, 10);
     lay->setSpacing(12);
-    lay->addWidget(lbl(T("Всё меняется сразу. «Свой…» — любой цвет, с образцом окна."), "muted"));
+    lay->addWidget(mkLabel(T("Всё меняется сразу. «Свой…» — любой цвет, с образцом окна."), "muted"));
 
     // --- мои стили: оформление под своим именем (файлы — можно отправить другу)
-    lay->addWidget(lbl(T("Мои стили"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Мои стили"), "fieldLabel"));
     {
         auto* box = new QWidget();
         stylesFlow_ = new FlowLayout(box, 10, 10);
         stylesFlow_->setContentsMargins(0, 0, 0, 0);
         lay->addWidget(box);
-        stylesEmpty_ = lbl(T("Пока пусто. Сохрани текущее оформление под именем — потом к нему можно вернуться одним "
+        stylesEmpty_ = mkLabel(T("Пока пусто. Сохрани текущее оформление под именем — потом к нему можно вернуться одним "
                              "щелчком или отправить файл стиля другу."), "small");
         stylesEmpty_->setWordWrap(true);
         lay->addWidget(stylesEmpty_);
@@ -499,7 +493,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
     }
 
     // --- стиль интерфейса
-    lay->addWidget(lbl(T("Стиль интерфейса"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Стиль интерфейса"), "fieldLabel"));
     auto* vrow = new QHBoxLayout();
     vrow->setSpacing(10);
     for (const QString& id : Theme::variants()) {
@@ -520,7 +514,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
         pv->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
         pv->setAttribute(Qt::WA_TransparentForMouseEvents);
         v->addWidget(pv);
-        auto* n = lbl(Theme::variantLabel(id), "gameName");
+        auto* n = mkLabel(Theme::variantLabel(id), "gameName");
         n->setAttribute(Qt::WA_TransparentForMouseEvents);
         v->addWidget(n);
         b->setMinimumHeight(146);
@@ -539,12 +533,12 @@ QWidget* SettingsDialog::buildAppearancePage() {
     lay->addLayout(vrow);
 
     auto* themeRow = new QHBoxLayout();
-    themeRow->addWidget(lbl(T("Тема"), "fieldLabel"), 1);
+    themeRow->addWidget(mkLabel(T("Тема"), "fieldLabel"), 1);
     themeSeg_ = new Segmented({T("Тёмная"), T("Светлая")}, false);
     themeRow->addWidget(themeSeg_);
     lay->addLayout(themeRow);
 
-    lay->addWidget(lbl(T("Цвет акцента — кнопки, выделение, логотип"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Цвет акцента — кнопки, выделение, логотип"), "fieldLabel"));
     auto* accRow = new QHBoxLayout();
     accRow->setSpacing(8);
     accentBtns_ = makeSwatches(Theme::accentPresets(), accentGroup_, accRow);
@@ -554,18 +548,18 @@ QWidget* SettingsDialog::buildAppearancePage() {
     accRow->addWidget(accCustom);
     accRow->addStretch(1);
     lay->addLayout(accRow);
-    accentInfo_ = lbl(QString(), "small");
+    accentInfo_ = mkLabel(QString(), "small");
     lay->addWidget(accentInfo_);
 
-    bgTitle_ = lbl(QString(), "fieldLabel");
+    bgTitle_ = mkLabel(QString(), "fieldLabel");
     lay->addWidget(bgTitle_);
     bgRow_ = new QHBoxLayout();
     bgRow_->setSpacing(8);
     lay->addLayout(bgRow_);
-    bgInfo_ = lbl(QString(), "small");
+    bgInfo_ = mkLabel(QString(), "small");
     lay->addWidget(bgInfo_);
 
-    lay->addWidget(lbl(T("Значки игр"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Значки игр"), "fieldLabel"));
     auto* styleRow = new QHBoxLayout();
     styleRow->setSpacing(8);
     styleGroup_.setExclusive(true);
@@ -588,31 +582,31 @@ QWidget* SettingsDialog::buildAppearancePage() {
         styleBtns_ << b;
     }
     lay->addLayout(styleRow);
-    styleInfo_ = lbl(QString(), "small");
+    styleInfo_ = mkLabel(QString(), "small");
     lay->addWidget(styleInfo_);
 
     // --- анимации
     auto* animRow = new QHBoxLayout();
-    animRow->addWidget(lbl(T("Анимации"), "fieldLabel"), 1);
+    animRow->addWidget(mkLabel(T("Анимации"), "fieldLabel"), 1);
     QStringList animNames;
     for (const QString& id : Theme::animations()) animNames << Theme::animLabel(id);
     animSeg_ = new Segmented(animNames, false);
     animRow->addWidget(animSeg_);
     lay->addLayout(animRow);
-    animInfo_ = lbl(QString(), "small");
+    animInfo_ = mkLabel(QString(), "small");
     lay->addWidget(animInfo_);
     // скорость анимаций: ползунок + маленький образец (играет при наведении и при смене)
     {
         auto* sp = new QHBoxLayout();
         sp->setSpacing(10);
-        sp->addWidget(lbl(T("Скорость анимаций"), "muted"));
+        sp->addWidget(mkLabel(T("Скорость анимаций"), "muted"));
         animSpeed_ = new QSlider(Qt::Horizontal);
         animSpeed_->setRange(0, Theme::animSpeedChoices().size() - 1);
         animSpeed_->setPageStep(1);
         animSpeed_->setToolTip(T("Медленнее ← → быстрее: экраны, карточки, сообщения, добавление действий"));
         animSpeed_->setAccessibleName(T("Скорость анимаций"));
         sp->addWidget(animSpeed_, 1);
-        animSpeedVal_ = lbl(QString(), "small");
+        animSpeedVal_ = mkLabel(QString(), "small");
         animSpeedVal_->setMinimumWidth(130);
         sp->addWidget(animSpeedVal_);
         animDemo_ = new AnimDemo(Theme::current().anim);
@@ -623,7 +617,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
     }
 
     // --- редактор интерфейса
-    lay->addWidget(lbl(T("Редактор интерфейса"), "fieldLabel"));
+    lay->addWidget(mkLabel(T("Редактор интерфейса"), "fieldLabel"));
     auto* ed = new QFrame();
     ed->setObjectName("editorBox");
     auto* eg = new QGridLayout(ed);
@@ -632,7 +626,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
     eg->setVerticalSpacing(10);
     eg->setColumnStretch(1, 1);
     int r = 0;
-    eg->addWidget(lbl(T("Скругление"), "muted"), r, 0);
+    eg->addWidget(mkLabel(T("Скругление"), "muted"), r, 0);
     auto* rr = new QHBoxLayout();
     rr->setSpacing(8);
     radiusSlider_ = new QSlider(Qt::Horizontal);
@@ -640,30 +634,30 @@ QWidget* SettingsDialog::buildAppearancePage() {
     radiusSlider_->setAccessibleName(T("Скругление"));
     radiusSlider_->setToolTip(T("Скругление карточек и кнопок, 0 — прямые углы"));
     rr->addWidget(radiusSlider_, 1);
-    radiusVal_ = lbl(QString(), "connectorText");
+    radiusVal_ = mkLabel(QString(), "connectorText");
     radiusVal_->setFixedWidth(44);
     radiusVal_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     rr->addWidget(radiusVal_);
     auto* radiusReset = resetMini(T("Как у стиля"));
     rr->addWidget(radiusReset);
     eg->addLayout(rr, r++, 1);
-    eg->addWidget(lbl(T("Плотность"), "muted"), r, 0);
+    eg->addWidget(mkLabel(T("Плотность"), "muted"), r, 0);
     densitySeg_ = new Segmented({T("Компактно"), T("Обычно"), T("Просторно")}, false);
     densitySeg_->setToolTip(T("Отступы между карточками и элементами"));
     eg->addWidget(densitySeg_, r++, 1);
-    eg->addWidget(lbl(T("Заголовки"), "muted"), r, 0);
+    eg->addWidget(mkLabel(T("Заголовки"), "muted"), r, 0);
     displayFontSeg_ = new Segmented({T("Как в стиле"), "Unbounded", "Onest", "Mono"}, false);
     displayFontSeg_->setToolTip(T("Шрифт названий, логотипа и кнопки Старт"));
     eg->addWidget(displayFontSeg_, r++, 1);
-    eg->addWidget(lbl(T("Текст"), "muted"), r, 0);
+    eg->addWidget(mkLabel(T("Текст"), "muted"), r, 0);
     textFontSeg_ = new Segmented({"Onest", "Mono", T("Системный")}, false);
     textFontSeg_->setToolTip(T("Шрифт обычного текста. Системный — как в остальных программах"));
     eg->addWidget(textFontSeg_, r++, 1);
-    eg->addWidget(lbl(T("Рамки"), "muted"), r, 0);
+    eg->addWidget(mkLabel(T("Рамки"), "muted"), r, 0);
     bordersSeg_ = new Segmented({T("Мягкие"), T("Обычные"), T("Чёткие")}, false);
     bordersSeg_->setToolTip(T("Насколько заметны рамки карточек и полей"));
     eg->addWidget(bordersSeg_, r++, 1);
-    eg->addWidget(lbl(T("Интерфейс"), "muted"), r, 0, Qt::AlignTop);
+    eg->addWidget(mkLabel(T("Интерфейс"), "muted"), r, 0, Qt::AlignTop);
     {
         // редактор интерфейса — прямо в главном окне: тянуть, менять размер и вид, прятать, шаблоны
         auto* cw = new QWidget();
@@ -677,7 +671,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
         editBtn->setToolTip(T("Закрыть настройки и менять интерфейс прямо в окне"));
         connect(editBtn, &QPushButton::clicked, this, &SettingsDialog::editLayoutRequested);
         cl->addWidget(editBtn, 0, Qt::AlignLeft);
-        auto* cn = lbl(T("Перетаскивай карточки и блоки, тяни края карточек, меняй их вид и цвет, прячь лишнее, выбирай шаблон и место панели с играми. У каждой игры своя раскладка."), "small");
+        auto* cn = mkLabel(T("Перетаскивай карточки и блоки, тяни края карточек, меняй их вид и цвет, прячь лишнее, выбирай шаблон и место панели с играми. У каждой игры своя раскладка."), "small");
         cn->setWordWrap(true);
         cl->addWidget(cn);
         eg->addWidget(cw, r++, 1);
@@ -687,20 +681,20 @@ QWidget* SettingsDialog::buildAppearancePage() {
     edReset->setToolTip(T("Скругление, плотность, шрифты, рамки и вид мелких элементов — как у стиля"));
     eg->addWidget(edReset, r++, 0, 1, 2, Qt::AlignLeft);
     lay->addWidget(ed);
-    auto* edNote = lbl(T("Мелкие элементы не исчезнут: размеры кнопок и полей подстраиваются, а при нехватке места карточки встают в две или одну колонку."), "small");
+    auto* edNote = mkLabel(T("Мелкие элементы не исчезнут: размеры кнопок и полей подстраиваются, а при нехватке места карточки встают в две или одну колонку."), "small");
     edNote->setWordWrap(true);
     lay->addWidget(edNote);
 
     // --- размер интерфейса
     auto* scRow = new QHBoxLayout();
-    scRow->addWidget(lbl(T("Размер интерфейса"), "fieldLabel"), 1);
+    scRow->addWidget(mkLabel(T("Размер интерфейса"), "fieldLabel"), 1);
     QStringList scNames;
     for (int v : Theme::guiScaleChoices()) scNames << (v == 100 ? T("100% (как в системе)") : QString("%1%").arg(v));
     scaleSeg_ = new Segmented(scNames, false);
     scaleSeg_->setToolTip(T("Всё окно крупнее или мельче — текст, кнопки, значки. Меняется после перезапуска."));
     scRow->addWidget(scaleSeg_);
     lay->addLayout(scRow);
-    scaleNote_ = lbl(QString(), "small");
+    scaleNote_ = mkLabel(QString(), "small");
     scaleNote_->setWordWrap(true);
     lay->addWidget(scaleNote_);
     scaleRestart_ = new QPushButton(T("Перезапустить AutoQ"));
@@ -965,7 +959,7 @@ void SettingsDialog::rebuildStyles() {
         v->addWidget(pv);
         auto* nr = new QHBoxLayout();
         nr->setSpacing(4);
-        auto* n = lbl(name, "gameName");
+        auto* n = mkLabel(name, "gameName");
         n->setAttribute(Qt::WA_TransparentForMouseEvents);
         nr->addWidget(n, 1);
         auto* more = new QToolButton();
@@ -978,7 +972,7 @@ void SettingsDialog::rebuildStyles() {
         nr->addWidget(more);
         v->addLayout(nr);
         if (p.hasLayout()) {
-            auto* tag = lbl(T("с раскладкой карточек"), "small");
+            auto* tag = mkLabel(T("с раскладкой карточек"), "small");
             tag->setAttribute(Qt::WA_TransparentForMouseEvents);
             v->addWidget(tag);
         }
@@ -1094,27 +1088,27 @@ QWidget* SettingsDialog::buildOverlayPage() {
         sw->setAccessibleName(text);
         if (!tip.isEmpty()) sw->setToolTip(tip);
         h->addWidget(sw);
-        auto* l = lbl(text, "muted");
+        auto* l = mkLabel(text, "muted");
         if (!tip.isEmpty()) l->setToolTip(tip);
         h->addWidget(l, 1);
         return h;
     };
     auto section = [&](const QString& title) {
         lay->addSpacing(4);
-        lay->addWidget(lbl(title.toUpper(), "section"));
+        lay->addWidget(mkLabel(title.toUpper(), "section"));
     };
     // у каждого ползунка — своя кнопка «как по умолчанию»
     auto sliderRow = [](const QString& text, QSlider*& sl, QLabel*& val, int lo, int hi, int def) {
         auto* h = new QHBoxLayout();
         h->setSpacing(10);
-        auto* l = lbl(text, "muted");
+        auto* l = mkLabel(text, "muted");
         l->setFixedWidth(110);
         h->addWidget(l);
         sl = new QSlider(Qt::Horizontal);
         sl->setRange(lo, hi);
         sl->setAccessibleName(text);
         h->addWidget(sl, 1);
-        val = lbl(QString(), "connectorText");
+        val = mkLabel(QString(), "connectorText");
         val->setFixedWidth(52);
         val->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         h->addWidget(val);
@@ -1132,7 +1126,7 @@ QWidget* SettingsDialog::buildOverlayPage() {
     oWhen_->setToolTip(T("Пока работает — только когда кликер включён.\nВсегда — пока выбрана игра."));
     head->addWidget(oWhen_);
     lay->addLayout(head);
-    auto* note = lbl(T("Клики проходят сквозь оверлей в игру. Меняй настройки — оверлей и образец ниже меняются сразу.") + "\n" +
+    auto* note = mkLabel(T("Клики проходят сквозь оверлей в игру. Меняй настройки — оверлей и образец ниже меняются сразу.") + "\n" +
                      T("Работают несколько игр — все в одной плашке, по строке с названием и профилем. Скрыть игру или профиль из оверлея — "
                        "кнопка со спидометром у профиля (карточка «Профиль и запуск»)."), "small");
     note->setWordWrap(true);
@@ -1161,7 +1155,7 @@ QWidget* SettingsDialog::buildOverlayPage() {
     what->addLayout(toggleRow(oShowGame_, T("Название игры")), 2, 1);
     what->addLayout(toggleRow(oShowGraph_, T("График за 10 секунд")), 3, 0);
     auto* win = new QHBoxLayout();
-    win->addWidget(lbl(T("Считать за"), "muted"));
+    win->addWidget(mkLabel(T("Считать за"), "muted"));
     oWindow_ = new Segmented({T("0,5 с"), T("1 с"), T("2 с")}, false);
     oWindow_->setToolTip(T("За какое время усреднять клики в секунду: короче — живее, длиннее — ровнее"));
     win->addWidget(oWindow_);
@@ -1211,11 +1205,11 @@ QWidget* SettingsDialog::buildOverlayPage() {
         sp->setAccessibleName(tip);
         return sp;
     };
-    wcol->addWidget(lbl(T("Отступ ↔"), "muted"), 0, 0);
+    wcol->addWidget(mkLabel(T("Отступ ↔"), "muted"), 0, 0);
     wcol->addWidget(mkOff(oOffX_, T("Отступ от края экрана по горизонтали (колёсико — быстро)")), 0, 1);
-    wcol->addWidget(lbl(T("Отступ ↕"), "muted"), 1, 0);
+    wcol->addWidget(mkLabel(T("Отступ ↕"), "muted"), 1, 0);
     wcol->addWidget(mkOff(oOffY_, T("Отступ от края экрана по вертикали (колёсико — быстро)")), 1, 1);
-    wcol->addWidget(lbl(T("Монитор"), "muted"), 2, 0);
+    wcol->addWidget(mkLabel(T("Монитор"), "muted"), 2, 0);
     oScreen_ = new QComboBox();
     const QList<QScreen*> screens = QGuiApplication::screens();
     for (int i = 0; i < screens.size(); ++i)
@@ -1244,10 +1238,10 @@ QWidget* SettingsDialog::buildOverlayPage() {
         b->setAccessibleName(tip);
         return b;
     };
-    colors->addWidget(lbl(T("Текст"), "muted"));
+    colors->addWidget(mkLabel(T("Текст"), "muted"));
     colors->addWidget(mkSw(oTextColor_, T("Цвет текста")));
     colors->addSpacing(10);
-    colors->addWidget(lbl(T("Число"), "muted"));
+    colors->addWidget(mkLabel(T("Число"), "muted"));
     colors->addWidget(mkSw(oNumColor_, T("Цвет числа")));
     oNumAuto_ = new QToolButton();
     oNumAuto_->setObjectName("templateChip");
@@ -1257,7 +1251,7 @@ QWidget* SettingsDialog::buildOverlayPage() {
     oNumAuto_->setCursor(Qt::PointingHandCursor);
     colors->addWidget(oNumAuto_);
     colors->addSpacing(10);
-    colors->addWidget(lbl(T("Подложка"), "muted"));
+    colors->addWidget(mkLabel(T("Подложка"), "muted"));
     colors->addWidget(mkSw(oBgColor_, T("Цвет подложки")));
     colors->addStretch(1);
     lay->addLayout(colors);
@@ -1269,10 +1263,10 @@ QWidget* SettingsDialog::buildOverlayPage() {
     auto* look = new QGridLayout();
     look->setHorizontalSpacing(10);
     look->setVerticalSpacing(8);
-    look->addWidget(lbl(T("Шрифт"), "muted"), 0, 0);
+    look->addWidget(mkLabel(T("Шрифт"), "muted"), 0, 0);
     oFont_ = new Segmented({"Unbounded", "Onest", "Mono"}, false);
     look->addWidget(oFont_, 0, 1);
-    look->addWidget(lbl(T("Расположение"), "muted"), 1, 0);
+    look->addWidget(mkLabel(T("Расположение"), "muted"), 1, 0);
     oLayout_ = new Segmented({T("В строку"), T("Столбиком")}, false);
     look->addWidget(oLayout_, 1, 1);
     look->addLayout(toggleRow(oOutline_, T("Обводка текста — видно на любом фоне")), 2, 0, 1, 2);
@@ -1284,7 +1278,7 @@ QWidget* SettingsDialog::buildOverlayPage() {
     section("Linux · Wayland");
     lay->addLayout(toggleRow(oXWayland_, T("Окна AutoQ через XWayland (нужно под Wayland)"),
                              T("Под Wayland окно-оверлей нельзя поставить в нужное место поверх игры.\nЧерез XWayland — можно (и мини-окно держится поверх игры).\nМеняется после перезапуска AutoQ.")));
-    oPlatformNote_ = lbl(QString(), "small");
+    oPlatformNote_ = mkLabel(QString(), "small");
     oPlatformNote_->setWordWrap(true);
     lay->addWidget(oPlatformNote_);
     {
@@ -1398,12 +1392,7 @@ void SettingsDialog::overlayToUi() {
     oLayout_->setCurrent(os_.vertical ? 1 : 0);
     oOutline_->setChecked(os_.outline);
     loadingOverlay_ = false;
-    oBgOpacityVal_->setText(QString("%1%").arg(os_.bgOpacity));
-    oOpacityVal_->setText(QString("%1%").arg(os_.opacity));
-    oScaleVal_->setText(QString("%1%").arg(os_.scale));
-    oRadiusVal_->setText(QString::number(os_.radius));
-    oWhen_->setEnabled(os_.enabled);
-    oLabel_->setEnabled(os_.showLabel);
+    overlayValuesToUi();
     paintColorButtons();
     oPreview_->setSettings(os_);
 }
@@ -1433,13 +1422,18 @@ void SettingsDialog::overlayFromUi() {
     os_.font = qMax(0, oFont_->current());
     os_.vertical = oLayout_->current() == 1;
     os_.outline = oOutline_->isChecked();
+    overlayValuesToUi();
+    applyOverlay();
+}
+
+// подписи у ползунков и что выключено — одинаково после загрузки и после правки
+void SettingsDialog::overlayValuesToUi() {
     oBgOpacityVal_->setText(QString("%1%").arg(os_.bgOpacity));
     oOpacityVal_->setText(QString("%1%").arg(os_.opacity));
     oScaleVal_->setText(QString("%1%").arg(os_.scale));
     oRadiusVal_->setText(QString::number(os_.radius));
     oWhen_->setEnabled(os_.enabled);
     oLabel_->setEnabled(os_.showLabel);
-    applyOverlay();
 }
 
 void SettingsDialog::applyOverlay() {

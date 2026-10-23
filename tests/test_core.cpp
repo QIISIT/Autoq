@@ -76,11 +76,6 @@ static void testKeys() {
 #ifdef _WIN32
     CHECK(Keys::fromKeyEvent(0x0410, false, 0x46) == Keys::byName("f"));
 #endif
-    // мышь
-    CHECK(MouseButtons::buttonForIndex(0) == 1);
-    CHECK(MouseButtons::buttonForIndex(1) == 3);
-    CHECK(MouseButtons::buttonForIndex(2) == 2);
-    for (int b : {1, 2, 3}) CHECK(MouseButtons::buttonForIndex(MouseButtons::indexForButton(b)) == b);
 }
 
 static void testHotkeys() {
@@ -650,6 +645,10 @@ static void testV19() {
 }
 
 // 1.11: английский интерфейс
+struct AqTranslation { const char* ru; const char* en; };   // словарь — i18n_en.cpp
+extern const AqTranslation kAqEnglish[];
+extern const int kAqEnglishCount;
+
 static QString unescapeC(const QString& in) {
     QString out;
     for (int i = 0; i < in.size(); ++i) {
@@ -702,6 +701,32 @@ static void testI18n() {
     for (const QString& m : missing) std::printf("  нет перевода: %s\n", qPrintable(m));
     CHECK(found > 500);
     CHECK(missing.isEmpty());
+
+    // и наоборот: в словаре нет строк, которых в исходниках уже нет (старые надписи)
+    const QRegularExpression lit(QStringLiteral("((?:\"(?:[^\"\\\\\\n]|\\\\.)*\"\\s*)+)"));
+    QSet<QString> literals;
+    for (const QString& f : dir.entryList({"*.cpp", "*.h", "*.mm"}, QDir::Files)) {
+        if (f.startsWith("i18n_en")) continue;
+        QFile file(dir.filePath(f));
+        if (!file.open(QIODevice::ReadOnly)) continue;
+        const QString src = QString::fromUtf8(file.readAll());
+        for (auto it = lit.globalMatch(src); it.hasNext();) {
+            QString joined;
+            for (auto p = part.globalMatch(it.next().captured(1)); p.hasNext();) {
+                const QString one = unescapeC(p.next().captured(1));
+                literals.insert(one);
+                joined += one;
+            }
+            literals.insert(joined);
+        }
+    }
+    QStringList unused;
+    for (int i = 0; i < kAqEnglishCount; ++i) {
+        const QString ru = QString::fromUtf8(kAqEnglish[i].ru);
+        if (!literals.contains(ru)) unused << ru;
+    }
+    for (const QString& u : unused) std::printf("  перевод не нужен (строки нет в коде): %s\n", qPrintable(u.left(80)));
+    CHECK(unused.isEmpty());
 }
 
 // --- 1.12: сколько угодно действий, «держать», кнопки мыши 4/5, клавиши игр ---

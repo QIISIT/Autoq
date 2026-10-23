@@ -255,15 +255,6 @@ QString Keys::label(const QString& name) {
 }
 
 // ---------------------------------------------------------------------------
-QStringList MouseButtons::labels() {
-    return { T("ЛКМ (левая)"), T("ПКМ (правая)"), T("СКМ (колёсико)") };
-}
-int MouseButtons::buttonForIndex(int index) {
-    switch (index) { case 1: return 3; case 2: return 2; default: return 1; }
-}
-int MouseButtons::indexForButton(int button) {
-    switch (button) { case 3: return 1; case 2: return 2; default: return 0; }
-}
 QList<int> MouseButtons::all() { return {1, 3, 2, 8, 9}; }
 bool MouseButtons::valid(int b) { return b == 1 || b == 2 || b == 3 || b == 8 || b == 9; }
 QString MouseButtons::shortLabel(int b) {

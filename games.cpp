@@ -1,12 +1,13 @@
 #include "games.h"
 #include "i18n.h"
 #include "keys.h"
-#include <QRegularExpression>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QDateTime>
 #include <QHash>
+#include <QRegularExpression>
+#include <utility>
 
 namespace {
 QString profileDir(const QString& gameId);        // файлы профилей — ниже, у профилей
@@ -207,7 +208,7 @@ QList<GameDef> Games::builtinDefaults() {
     auto mk = [](const char* id, const char* name, GameMode mode, QStringList procs,
                  QStringList titles, int minMs, const char* icon, const char* color) {
         GameDef g; g.id = id; g.name = QString::fromUtf8(name); g.mode = mode;
-        g.processes = procs; g.titles = titles; g.minIntervalMs = minMs; g.builtin = true;
+        g.processes = std::move(procs); g.titles = std::move(titles); g.minIntervalMs = minMs; g.builtin = true;
         g.icon = icon; g.color = color;
         return g;
     };
@@ -642,18 +643,7 @@ bool Games::validProfileName(const QString& name, QString* why) {
 namespace {
 const char* kProfilePrefix = "profile/";
 
-QString safeFileName(const QString& name) {
-    QString out;
-    for (const QChar c : name) out += (c.unicode() < 32 || QStringLiteral("<>:\"/\\|?*").contains(c)) ? QChar('_') : c;
-    while (out.endsWith('.') || out.endsWith(' ')) out.chop(1);
-    if (out.isEmpty()) out = QStringLiteral("_");
-    static const QRegularExpression reserved(QStringLiteral("^(con|prn|aux|nul|com[1-9]|lpt[1-9])$"),
-                                             QRegularExpression::CaseInsensitiveOption);
-    if (reserved.match(out).hasMatch()) out += '_';
-    return out;
-}
-
-QString profileDir(const QString& gameId) { return AppSettings::profilesDir() + "/" + safeFileName(gameId); }
+QString profileDir(const QString& gameId) { return AppSettings::profilesDir() + "/" + AppSettings::safeFileName(gameId); }
 
 struct ProfileFile { QString name, path; };
 
@@ -694,7 +684,7 @@ ProfileFile findProfile(const QString& gameId, const QString& name) {
 // Файл для нового профиля: «Имя.ini», при совпадении — «Имя (2).ini»
 QString newProfilePath(const QString& gameId, const QString& name) {
     const QString dir = profileDir(gameId);
-    const QString base = safeFileName(name.trimmed());
+    const QString base = AppSettings::safeFileName(name.trimmed());
     QString path = dir + "/" + base + ".ini";
     for (int i = 2; QFile::exists(path); ++i) path = QString("%1/%2 (%3).ini").arg(dir, base).arg(i);
     return path;
@@ -866,12 +856,6 @@ HotkeySpec Games::defaultStartKey() {
     auto s = AppSettings::open();
     HotkeySpec sp = HotkeySpec::parse(s->value("hotkey", "f6").toString());
     return sp.isValid() ? sp : HotkeySpec::parse("f6");
-}
-
-void Games::setDefaultStartKey(const HotkeySpec& sp) {
-    if (!sp.isValid()) return;
-    auto s = AppSettings::open();
-    s->setValue("hotkey", sp.toString());
 }
 
 HotkeySpec Games::startKey(const QString& gameId) {

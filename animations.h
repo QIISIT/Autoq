@@ -50,7 +50,6 @@ public:
     explicit AnimDemo(const QString& style, QWidget* parent = nullptr);
     QSize sizeHint() const override { return QSize(220, 120); }
     void setHoverHost(QWidget* host);     // наведение на него тоже запускает показ
-    void setSpeedOverride(int percent) { speedOverride_ = percent; }   // 0 — как в настройках
     void replay();                        // сыграть один раз с начала
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -60,13 +59,11 @@ protected:
     void leaveEvent(QEvent*) override;
 private:
     void setPlaying(bool on);
-    qreal speedNow() const;
     QString style_;
     qreal t_ = 2200;                      // «виртуальное» время цикла, мс (2200 — стоп на готовом кадре)
     qint64 last_ = 0;
     bool hover_ = false;
     bool once_ = false;                   // replay(): один цикл без наведения
     int timer_ = 0;
-    int speedOverride_ = 0;
     QPointer<QWidget> host_;
 };

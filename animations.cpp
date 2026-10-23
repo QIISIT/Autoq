@@ -249,10 +249,6 @@ void AnimDemo::setHoverHost(QWidget* host) {
     if (host) host->installEventFilter(this);
 }
 
-qreal AnimDemo::speedNow() const {
-    return speedOverride_ > 0 ? speedOverride_ / 100.0 : Anim::speed();
-}
-
 void AnimDemo::setPlaying(bool on) {
     if (on && !timer_) {
         last_ = QDateTime::currentMSecsSinceEpoch();
@@ -288,7 +284,7 @@ void AnimDemo::leaveEvent(QEvent*) {
 
 void AnimDemo::timerEvent(QTimerEvent*) {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    t_ += (now - last_) * speedNow();
+    t_ += (now - last_) * Anim::speed();
     last_ = now;
     if (t_ >= 2200) {
         if (hover_) t_ = std::fmod(t_, 2200.0);    // пока навели — по кругу

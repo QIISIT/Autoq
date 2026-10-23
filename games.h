@@ -34,6 +34,8 @@ namespace AppSettings {
     // Сменить папку данных ("" — по умолчанию). copyCurrent — перенести туда текущие
     // настройки и профили; иначе взять то, что там уже лежит. error — путь, где не вышло
     bool setDataDir(const QString& dir, bool copyCurrent, QString* error = nullptr);
+    // имя файла из имени профиля или стиля: запрещённые в именах файлов знаки — «_»
+    QString safeFileName(const QString& name);
 }
 
 // Общие настройки программы
@@ -205,7 +207,6 @@ namespace Games {
     // Клавиши игры: старт/стоп, «активна» (клавиша работает, даже когда открыта другая
     // игра), режим клавиши, клавиша «активна / неактивна», клавиши профилей
     HotkeySpec defaultStartKey();                // общая клавиша по умолчанию (F6)
-    void setDefaultStartKey(const HotkeySpec& sp);
     HotkeySpec startKey(const QString& gameId);
     void setStartKey(const QString& gameId, const HotkeySpec& sp);   // другая клавиша — block снова выкл.
     bool startKeyBlock(const QString& gameId);   // «не пропускать нажатие в игру» (см. HotkeySpec::block)

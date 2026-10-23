@@ -81,23 +81,6 @@ static QString elide(const QString& s, int n = 42) {
     return s.size() > n ? s.left(n - 1) + "…" : s;
 }
 
-static QLabel* mkLabel(const QString& text, const char* obj) {
-    auto* l = new QLabel(text);
-    l->setObjectName(obj);
-    return l;
-}
-
-static QSpinBox* mkSpin(int lo, int hi, const char* obj = nullptr) {
-    auto* s = new QSpinBox();
-    s->setRange(lo, hi);
-    s->setSuffix(T(" мс"));
-    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    s->setAlignment(Qt::AlignCenter);
-    s->setAccelerated(true);
-    if (obj) s->setObjectName(obj);
-    return s;
-}
-
 // single — у игры одно действие: тогда «по очереди» и «вместе» — одно и то же (повтор)
 static QString modeSubtitle(GameMode m, bool single = false) {
     if (m == GameMode::Steps) return T("по шагам");
@@ -583,7 +566,7 @@ void MainWindow::buildSpeedCard() {
     randomizeSwitch_->setAccessibleName(T("Разброс интервала"));
     r2->addWidget(randomizeSwitch_);
     r2->addWidget(mkLabel(T("Разброс ±"), "muted"), 1);
-    jitterBox_ = mkSpin(0, 1000);
+    jitterBox_ = msSpin(0, 1000);
     jitterBox_->setFixedWidth(80);
     jitterBox_->setAccessibleName(T("Разброс"));
     r2->addWidget(jitterBox_);

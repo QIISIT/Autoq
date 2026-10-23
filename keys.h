@@ -40,9 +40,6 @@ namespace Keys {
 // Кнопки мыши (номер как в X11: 1 — левая, 2 — средняя, 3 — правая,
 // 8 — боковая «назад» (Mouse 4), 9 — боковая «вперёд» (Mouse 5))
 namespace MouseButtons {
-    QStringList labels();          // "ЛКМ (левая)", ...
-    int buttonForIndex(int index); // индекс в списке -> 1/2/3
-    int indexForButton(int button);
     QList<int> all();              // 1, 3, 2, 8, 9
     bool valid(int button);
     QString shortLabel(int button);    // "ЛКМ", "Mouse 4"

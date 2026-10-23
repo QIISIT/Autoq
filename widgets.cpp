@@ -30,7 +30,6 @@
 #include <QAbstractScrollArea>
 #include <QScrollBar>
 #include <QCoreApplication>
-#include <QGridLayout>
 #include <QResizeEvent>
 #include <QCursor>
 #include <QScreen>
@@ -543,71 +542,6 @@ void GameListDelegate::paint(QPainter* p, const QStyleOptionViewItem& opt, const
 }
 
 // ---------------------------------------------------------------------------
-CardFlow::CardFlow(QWidget* parent) : QWidget(parent) {
-    grid_ = new QGridLayout(this);
-    grid_->setContentsMargins(0, 0, 0, 0);
-    grid_->setSpacing(14);
-    grid_->setSizeConstraint(QLayout::SetNoConstraint);
-}
-
-void CardFlow::setCards(const QList<QWidget*>& cards) {
-    cards_ = cards;
-    cols_ = 0;
-    relayout(columnsFor(width() > 0 ? width() : 900));
-}
-
-int CardFlow::columnsFor(int w) const {
-    int need = 0;
-    for (QWidget* c : cards_) need = qMax(need, c->minimumSizeHint().width());
-
-    need = qMax(need, 250);
-    const int sp = grid_->horizontalSpacing() < 0 ? 14 : grid_->horizontalSpacing();
-    for (int cols = qMax(1, int(cards_.size())); cols > 1; --cols)
-        if (w >= cols * need + (cols - 1) * sp) return cols;
-    return 1;
-}
-
-QSize CardFlow::minimumSizeHint() const {
-    int w = 0;
-    for (QWidget* c : cards_) w = qMax(w, c->minimumSizeHint().width());
-    return QSize(w, minimumHeight());
-}
-
-QSize CardFlow::sizeHint() const { return QSize(900, minimumHeight()); }
-
-void CardFlow::resizeEvent(QResizeEvent* e) {
-    QWidget::resizeEvent(e);
-    const int c = columnsFor(e->size().width());
-    if (c != cols_) relayout(c);
-}
-
-void CardFlow::relayout(int cols) {
-    cols_ = cols;
-    while (grid_->count() > 0) delete grid_->takeAt(0);
-    for (int i = 0; i < 4; ++i) { grid_->setColumnStretch(i, 0); grid_->setRowStretch(i, 0); }
-    const int n = cards_.size();
-    for (int i = 0; i < n; ++i) {
-        const int row = i / cols, col = i % cols;
-        // последняя карточка одна в ряду — на всю ширину
-        const int span = (i == n - 1 && col == 0 && cols > 1) ? cols : 1;
-        grid_->addWidget(cards_[i], row, col, 1, span);
-    }
-    for (int i = 0; i < cols; ++i) grid_->setColumnStretch(i, 1);
-    grid_->activate();
-    // высота — сколько нужно рядам (раскладка без ограничений сама её не задаёт)
-    int h = 0;
-    const int rows = (n + cols - 1) / cols;
-    for (int r = 0; r < rows; ++r) {
-        int rowH = 0;
-        for (int i = r * cols; i < qMin(n, (r + 1) * cols); ++i)
-            rowH = qMax(rowH, cards_[i]->minimumSizeHint().height());
-        h += rowH;
-    }
-    h += (rows - 1) * (grid_->verticalSpacing() < 0 ? 14 : grid_->verticalSpacing());
-    setMinimumHeight(h);
-    updateGeometry();
-}
-// ---------------------------------------------------------------------------
 ChipEditor::ChipEditor(bool mono, const QString& addText, const QString& addTip, QWidget* parent)
     : QWidget(parent), mono_(mono), addText_(addText), addTip_(addTip) {
     flow_ = new FlowLayout(this, 5, 5);
@@ -787,6 +721,42 @@ bool askYesNo(QWidget* parent, const QString& title, const QString& text,
     box.setEscapeButton(n);
     box.exec();
     return box.clickedButton() == y;
+}
+
+QLabel* mkLabel(const QString& text, const char* objectName) {
+    auto* l = new QLabel(text);
+    l->setObjectName(objectName);
+    return l;
+}
+
+QSpinBox* msSpin(int lo, int hi) {
+    auto* s = new QSpinBox();
+    s->setRange(lo, hi);
+    s->setSuffix(T(" мс"));
+    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    s->setAlignment(Qt::AlignCenter);
+    s->setAccelerated(true);
+    return s;
+}
+
+void addPopupSearch(QBoxLayout* lay, QWidget* popup, QLineEdit* search, const QString& placeholder) {
+    search->setObjectName("search");
+    search->setPlaceholderText(placeholder);
+    search->setClearButtonEnabled(true);
+    search->addAction(AqIcons::ui("search", Theme::t().muted, 14), QLineEdit::LeadingPosition);
+    auto* top = new QHBoxLayout();
+    top->setSpacing(4);
+    top->addWidget(search, 1);
+    auto* x = new QToolButton();
+    x->setObjectName("popupX");
+    x->setFixedSize(26, 26);
+    x->setIcon(AqIcons::ui("x", Theme::t().muted, 12, 2.4));
+    x->setToolTip(T("Закрыть"));
+    x->setAccessibleName(T("Закрыть"));
+    x->setCursor(Qt::PointingHandCursor);
+    QObject::connect(x, &QToolButton::clicked, popup, &QWidget::close);
+    top->addWidget(x);
+    lay->addLayout(top);
 }
 
 QString askText(QWidget* parent, const QString& title, const QString& label, const QString& value, bool* ok) {

@@ -61,12 +61,7 @@ protected:
 };
 
 QSpinBox* smallSpin(int lo, int hi, const QString& tip) {
-    auto* s = new QSpinBox();
-    s->setRange(lo, hi);
-    s->setSuffix(T(" мс"));
-    s->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    s->setAlignment(Qt::AlignCenter);
-    s->setAccelerated(true);
+    auto* s = msSpin(lo, hi);
     s->setToolTip(tip);
     s->setAccessibleName(tip);
     return s;
@@ -350,7 +345,7 @@ void ActionsEditor::rebuild() {
             connect(ui.remove, &QToolButton::clicked, this, [this, i]() { later([this, i]() { removeAt(i); }); });
     }
     if (n < maxItems()) {
-        add_ = new SizedButton(QSize(n == 1 ? slotW : 132, slotH_));
+        add_ = new SizedButton(QSize(n == 1 ? slotW : 96, slotH_));
         add_->setObjectName("addSecond");
         add_->setProperty("aqEl", "add");
         add_->setCursor(Qt::PointingHandCursor);

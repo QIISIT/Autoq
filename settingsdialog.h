@@ -58,6 +58,7 @@ private:
     // --- оверлей ---
     void overlayToUi();
     void overlayFromUi();                   // поля -> настройки -> оверлей и диск
+    void overlayValuesToUi();               // подписи ползунков и доступность полей
     void applyOverlay();
     void pickOverlayColor(int which);       // 0 — текст, 1 — число, 2 — фон
     void paintColorButtons();

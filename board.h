@@ -151,7 +151,7 @@ public:
     bool undo();
     bool redo();
     // раскладка из стиля (с отменой и плавно); стили — меню «Стили» в полосе (заполняет главное окно)
-    void applyLayout(const CardLayout::Layout& l, int sidebar);
+    void applyLayout(const CardLayout::Layout& in, int sidebar);
     QMenu* stylesMenu() const { return stylesMenu_; }
     // вид элементов сменили не в редакторе (стиль, «Сбросить редактор»): в истории отмен — уже он
     void syncElements();
@@ -196,7 +196,7 @@ private:
     void showElementMenu(const QString& group, const QString& more, const QPoint& global);
     void fillElementMenu(QMenu* m, const QString& group);
     void fillElementsMenu();
-    void changeElements(const Theme::Elements& el);
+    void changeElements(const Theme::Elements& in);
     void changeElement(const QString& group, const std::function<void(Theme::ElementStyle&)>& f);
     void fillHiddenMenu();
     void fillTemplatesMenu();

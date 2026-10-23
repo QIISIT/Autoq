@@ -230,7 +230,7 @@ GameEditDialog::GameEditDialog(const GameDef& game, bool isNew, QWidget* parent)
     captureBtn_->setObjectName("accent");
     captureBtn_->setMinimumHeight(40);
     countdown_ = new CaptureCountdown(captureBtn_, this);
-    auto idleText = [this]() { return T("Взять из окна игры (%1 сек)").arg(Prefs::captureSeconds()); };
+    auto idleText = []() { return T("Взять из окна игры (%1 сек)").arg(Prefs::captureSeconds()); };
     countdown_->setIdleText(idleText());
     capLay->addWidget(captureBtn_);
     lay->addWidget(cap);

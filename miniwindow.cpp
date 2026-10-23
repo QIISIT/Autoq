@@ -25,12 +25,6 @@
 #include "macsupport.h"
 #endif
 
-static QLabel* lbl(const QString& text, const char* obj) {
-    auto* l = new QLabel(text);
-    l->setObjectName(obj);
-    return l;
-}
-
 static QToolButton* iconBtn(const QString& tip, int size = 30) {
     auto* b = new QToolButton();
     b->setObjectName("icon");
@@ -98,8 +92,8 @@ MiniWindow::MiniWindow(QWidget* parent)
     // --- счётчик
     auto* cnt = new QVBoxLayout();
     cnt->setSpacing(0);
-    counter_ = lbl("0", "miniCounter");
-    caption_ = lbl(T("нажатий за сессию"), "muted");
+    counter_ = mkLabel("0", "miniCounter");
+    caption_ = mkLabel(T("нажатий за сессию"), "muted");
     cnt->addWidget(counter_);
     cnt->addWidget(caption_);
     lay->addLayout(cnt);
@@ -155,7 +149,7 @@ MiniWindow::MiniWindow(QWidget* parent)
     auto* grid = new QGridLayout();
     grid->setHorizontalSpacing(8);
     grid->setVerticalSpacing(8);
-    grid->addWidget(lbl(T("Профиль"), "muted"), 0, 0);
+    grid->addWidget(mkLabel(T("Профиль"), "muted"), 0, 0);
     profileBox_ = new QComboBox();
     profileBox_->setAccessibleName(T("Профиль"));
     profileBox_->setToolTip(T("Профиль — выбери, и он сразу загрузится"));
@@ -167,7 +161,7 @@ MiniWindow::MiniWindow(QWidget* parent)
     profRow->addWidget(saveProfileBtn_);
     profRow->addWidget(resetProfileBtn_);
     grid->addLayout(profRow, 0, 1);
-    grid->addWidget(lbl(T("Старт / стоп"), "muted"), 1, 0);
+    grid->addWidget(mkLabel(T("Старт / стоп"), "muted"), 1, 0);
     auto* hkRow = new QHBoxLayout();
     hkRow->setSpacing(6);
     hotkeyPick_ = new KeyPicker();
@@ -190,9 +184,9 @@ MiniWindow::MiniWindow(QWidget* parent)
     auto* win = new QHBoxLayout();
     win->setSpacing(8);
     winIcon_ = new QLabel();
-    winText_ = lbl(QString(), "muted");
+    winText_ = mkLabel(QString(), "muted");
     winText_->setWordWrap(true);
-    winProc_ = lbl(QString(), "small");
+    winProc_ = mkLabel(QString(), "small");
     win->addWidget(winIcon_, 0, Qt::AlignTop);
     win->addWidget(winText_, 1);
     win->addWidget(winProc_, 0, Qt::AlignTop);
@@ -215,7 +209,7 @@ MiniWindow::MiniWindow(QWidget* parent)
     startBtn_->setMinimumWidth(0);
     startBtn_->setFixedHeight(52);
     lay->addWidget(startBtn_);
-    footer_ = lbl(QString(), "footer");
+    footer_ = mkLabel(QString(), "footer");
     footer_->setAlignment(Qt::AlignCenter);
     lay->addWidget(footer_);
 
@@ -296,10 +290,10 @@ void MiniWindow::applyOnTop() {
 
 void MiniWindow::toast(const QString& text) { Toast::show(this, text); }
 
-void MiniWindow::emitAction(int slot, const QString& d) {
-    if (d == "none") { emit actionChosen(slot, false, false, 1, QString()); return; }
-    if (const int b = MouseButtons::fromItemName(d)) emit actionChosen(slot, true, true, b, QString());
-    else emit actionChosen(slot, true, false, 1, d);
+void MiniWindow::emitAction(int slot, const QString& name) {
+    if (name == "none") { emit actionChosen(slot, false, false, 1, QString()); return; }
+    if (const int b = MouseButtons::fromItemName(name)) emit actionChosen(slot, true, true, b, QString());
+    else emit actionChosen(slot, true, false, 1, name);
 }
 
 void MiniWindow::showEvent(QShowEvent* e) {

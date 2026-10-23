@@ -22,8 +22,6 @@
     #endif
 #endif
 
-std::string Autostart::appName() { return "AutoQ"; }
-
 std::string Autostart::execPath() {
 #ifdef _WIN32
     char buf[MAX_PATH];

@@ -27,7 +27,7 @@ namespace Styles {
     bool fromJson(const QString& text, Profile* p); // false — это не стиль AutoQ
 
     bool load(const QString& name, Profile* p);
-    bool save(const Profile& p, QString* error = nullptr);   // такое имя уже есть — заменяет
+    bool save(const Profile& in, QString* error = nullptr);   // такое имя уже есть — заменяет
     bool remove(const QString& name);
     bool rename(const QString& from, const QString& to, QString* error = nullptr);
     QString filePath(const QString& name);          // файл стиля (пусто — такого нет)
