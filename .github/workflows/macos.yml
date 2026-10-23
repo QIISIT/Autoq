@@ -67,8 +67,9 @@ jobs:
         if: failure()
         run: |
           enc() { sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}'; }
-          echo "::error title=Ошибки::$(grep -E -B2 -A3 'error:|Error [0-9]|fatal' build.log | head -120 | enc)"
-          echo "::error title=Конец лога::$(tail -60 build.log | enc)"
+          # у аннотации предел ~4 КБ — строки короче, только важное
+          echo "::error title=Ошибки::$(grep -iE 'error|fail|invalid|fatal|busy|not signed' build.log | grep -v -- '--validated' | tail -25 | cut -c1-180 | enc)"
+          echo "::error title=Конец лога::$(grep -v -- '--prepared\|--validated' build.log | tail -20 | cut -c1-180 | enc)"
 
       - uses: actions/upload-artifact@v4
         with:
