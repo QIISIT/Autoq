@@ -2183,5 +2183,7 @@ extern const AqTranslation kAqEnglish[] = {
      "“%1” only starts and stops the clicker — the press doesn’t reach the game or other programs."},
     {"Режим работы:\nПо очереди — действия одно за другим (скип диалогов: ЛКМ, потом F).\nВместе — нажать все сразу, как F3+A.\nЗажать — держать нажатыми, пока кликер включён (копать, бежать).\nПо шагам — каждый шаг нажимает ↓, отпускает ↑ или делает клик ↕ (кикфлипы, отмены).",
      "Mode:\nIn turn — actions one after another (skip dialogue: LMB, then F).\nTogether — press all at once, like F3+A.\nHold — keep pressed while the clicker is on (mine, run).\nSteps — each step presses ↓, releases ↑ or clicks ↕ (kickflips, cancels)."},
+    {"Сколько держать нажатым (0 — клик: нажать и сразу отпустить)",
+     "How long to hold it down (0 = click: press and release at once)"},
 };
 extern const int kAqEnglishCount = sizeof(kAqEnglish) / sizeof(kAqEnglish[0]);

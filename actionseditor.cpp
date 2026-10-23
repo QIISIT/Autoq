@@ -168,6 +168,7 @@ void ActionsEditor::rebuild() {
     const int n = actions_.size();
     const bool hold = mode_ == GameMode::Hold;
     const bool paused = mode_ == GameMode::Sequence || steps();     // между карточками — пауза
+    const int slotW = steps() || hold ? 176 : 206;                  // у действия рядом с клавишей — «держать»
 
     // старт через N мс
     startSpin_ = smallSpin(0, kMaxStartDelayMs, T("Старт через столько мс после нажатия «Старт» или клавиши (0 — сразу)"));
@@ -190,7 +191,7 @@ void ActionsEditor::rebuild() {
         ui.frame = f;
         f->setObjectName("slot");
         f->setProperty("slotIndex", i);
-        f->setFixedSize(176, slotH_);
+        f->setFixedSize(slotW, slotH_);
         f->setContextMenuPolicy(Qt::CustomContextMenu);
         f->installEventFilter(this);
         auto* g = new QGridLayout(f);
@@ -217,6 +218,13 @@ void ActionsEditor::rebuild() {
                                         : T("Действие %1: клик или держать нажатым — щёлкни, чтобы выбрать").arg(i + 1));
             g->addWidget(ui.mode, 0, 1, Qt::AlignLeft | Qt::AlignVCenter);
         }
+        if (!hold && !steps()) {
+            // подпись над полем «держать» — чтобы не спутать с паузой
+            auto* hc = new QLabel(T("держать"));
+            hc->setObjectName("small");
+            hc->setToolTip(T("Сколько держать нажатым (0 — клик: нажать и сразу отпустить)"));
+            g->addWidget(hc, 0, 2, Qt::AlignRight | Qt::AlignVCenter);
+        }
         if (n > 1) {
             ui.remove = new QToolButton();
             ui.remove->setObjectName("icon");
@@ -224,7 +232,7 @@ void ActionsEditor::rebuild() {
             ui.remove->setToolTip(steps() ? T("Убрать шаг %1").arg(i + 1) : T("Убрать действие %1").arg(i + 1));
             ui.remove->setAccessibleName(ui.remove->toolTip());
             ui.remove->setCursor(Qt::PointingHandCursor);
-            g->addWidget(ui.remove, 0, 2, Qt::AlignRight | Qt::AlignTop);
+            g->addWidget(ui.remove, 0, 3, Qt::AlignRight | Qt::AlignTop);
         }
         g->setColumnStretch(1, 1);
         auto* vr = new QHBoxLayout();
@@ -242,13 +250,12 @@ void ActionsEditor::rebuild() {
             ui.dir->setCursor(Qt::PointingHandCursor);
             vr->addWidget(ui.dir);
         } else if (!hold) {
-            // «держать N мс» — рядом с клавишей, только у режима «держать»
-            ui.hold = smallSpin(1, 10000, T("Сколько держать нажатым"));
+            // «держать N мс» — всегда рядом с клавишей: 0 — клик, больше — «держать»
+            ui.hold = smallSpin(0, 10000, T("Сколько держать нажатым (0 — клик: нажать и сразу отпустить)"));
             ui.hold->setFixedWidth(64);
-            ui.hold->hide();
             vr->addWidget(ui.hold);
         }
-        g->addLayout(vr, 1, 0, 1, 3);
+        g->addLayout(vr, 1, 0, 1, 4);
         g->setRowStretch(2, 1);
         uh->addWidget(f);
 
@@ -317,6 +324,7 @@ void ActionsEditor::rebuild() {
             connect(ui.hold, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, i](int v) {
                 if (loading_ || i >= actions_.size()) return;
                 actions_[i].holdMs = v;
+                if (i < slots_.size()) updateMode(slots_[i], actions_[i]);    // клик ⇄ держать
                 edited();
             });
         if (ui.after)
@@ -329,7 +337,7 @@ void ActionsEditor::rebuild() {
             connect(ui.remove, &QToolButton::clicked, this, [this, i]() { later([this, i]() { removeAt(i); }); });
     }
     if (n < maxItems()) {
-        add_ = new SizedButton(QSize(n == 1 ? 176 : 132, slotH_));
+        add_ = new SizedButton(QSize(n == 1 ? slotW : 132, slotH_));
         add_->setObjectName("addSecond");
         add_->setCursor(Qt::PointingHandCursor);
         add_->setText(steps() ? T("Шаг") : n == 1 ? (mode_ == GameMode::Sequence ? T("Действие 2") : T("вместе с…")) : T("Ещё"));
@@ -740,14 +748,7 @@ void ActionsEditor::updateMode(SlotUi& ui, const ActionStep& a) {
         title.remove(QStringLiteral(" ↓")).remove(QStringLiteral(" ↑")).remove(QStringLiteral(" ↕"));
         ui.mode->setChoice(c.icon, title);
     }
-    if (ui.hold) {
-        const bool on = a.holdMs > 0;
-        if (on && ui.hold->value() != a.holdMs) { QSignalBlocker b(ui.hold); ui.hold->setValue(a.holdMs); }
-        if (ui.hold->isVisibleTo(ui.frame) != on) {
-            ui.hold->setVisible(on);
-            ui.frame->setFixedWidth(on ? 206 : 176);    // клавише остаётся места, как в «По шагам»
-        }
-    }
+    if (ui.hold && ui.hold->value() != a.holdMs) { QSignalBlocker b(ui.hold); ui.hold->setValue(a.holdMs); }
 }
 
 void ActionsEditor::openModePlate(int i) {

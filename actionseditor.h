@@ -55,7 +55,7 @@ private:
         QLabel* caption = nullptr;       // «Зажать»: выбирать нечего — просто подпись
         KeyPicker* value = nullptr;
         QToolButton* dir = nullptr;      // «По шагам»: ↓ нажать / ↑ отпустить
-        QSpinBox* hold = nullptr;        // «держать N мс» — только у режима «держать»
+        QSpinBox* hold = nullptr;        // «держать N мс» — всегда рядом с клавишей, 0 — клик
         QSpinBox* after = nullptr;
         QToolButton* remove = nullptr;
     };

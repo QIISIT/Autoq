@@ -51,7 +51,8 @@ HOW TO USE
    Mouse 4/5, or any key) and the speed (ms, CPS or CPM). One
    action: Repeat or Hold. More: In turn, Together, Hold or Step by
    step. Above each key is its mode (click it for the choices):
-   Click or Hold (ms next to the key); a step is Press ↓, Release ↑
+   Click or Hold. The "hold" field next to the key is always there:
+   0 ms is a click, more holds that long. A step is Press ↓, Release ↑
    or Click ↕. Pauses between keys can be 0 ms; a whole cycle is
    still no faster than the game's minimum. The mouse wheel changes
    a number, list or slider only after you click it — otherwise it
