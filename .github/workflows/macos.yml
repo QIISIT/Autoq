@@ -1,0 +1,85 @@
+# Сборка AutoQ для macOS в GitHub Actions (бесплатно для публичных репозиториев).
+# Запуск: вкладка Actions → «macOS» → Run workflow, или push тега v1.9.0.
+# Результат: AutoQ-<версия>-macOS.dmg во вкладке Artifacts (и в Release для тега).
+# Одна сборка работает и на Apple Silicon (M1–M4), и на Intel — «универсальная».
+#
+# Подпись самоподписанным сертификатом (необязательно, см. macos/make-cert.sh):
+#   секреты MAC_CERT_P12 (base64) и MAC_CERT_PASSWORD. Без них — ad-hoc.
+name: macOS
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Qt 6.8 (официальный, универсальный arm64 + x86_64)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          host: mac
+          target: desktop
+          arch: clang_64
+          cache: true
+
+      - name: Ninja
+        run: brew install ninja
+
+      - name: Сертификат подписи (если задан в секретах)
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MAC_CERT_P12" ]; then
+            echo "Секрета MAC_CERT_P12 нет — будет ad-hoc-подпись"
+            exit 0
+          fi
+          KC="$RUNNER_TEMP/autoq-sign.keychain-db"
+          KCPASS="$(openssl rand -hex 12)"
+          echo "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KCPASS" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KCPASS" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KCPASS" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "MAC_SIGN_IDENTITY=AutoQ Self-Signed (Qisit)" >> "$GITHUB_ENV"
+          echo "MAC_SIGN_KEYCHAIN=$KC" >> "$GITHUB_ENV"
+
+      - name: Сборка AutoQ.app и DMG
+        env:
+          ARCHS: arm64;x86_64
+        run: |
+          set -o pipefail
+          ./macos/build-mac.sh 2>&1 | tee build.log
+
+      # ошибки — аннотациями: их видно на странице запуска и через API, без скачивания логов
+      - name: Ошибки сборки
+        if: failure()
+        run: |
+          enc() { sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}'; }
+          # у аннотации предел ~4 КБ — строки короче, только важное
+          echo "::error title=Ошибки::$(grep -iE 'error|fail|invalid|fatal|busy|not signed' build.log | grep -v -- '--validated' | tail -25 | cut -c1-180 | enc)"
+          echo "::error title=Конец лога::$(grep -v -- '--prepared\|--validated' build.log | tail -20 | cut -c1-180 | enc)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AutoQ-macOS
+          path: |
+            dist-macos/*.dmg
+            dist-macos/SHA256SUMS.txt
+
+      - name: Релиз (для тега)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-macos/*.dmg
