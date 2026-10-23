@@ -103,7 +103,11 @@ void GlobalHotkey::installX11ErrorHandler() {}
 // потоке, который их поставил (пока он разбирает сообщения), — блокировки не нужны.
 namespace {
 // hold — vk клавиши, которую держат («Tab+F»: hold = Tab, code = F); 0 — обычный хоткей
-struct LLBind { unsigned code = 0; int mods = 0; int id = 0; unsigned hold = 0; bool down = false; bool fired = false; };
+// block — «не пропускать в игру»: сработавшее нажатие (и его отпускание) хук не отдаёт дальше
+struct LLBind {
+    unsigned code = 0; int mods = 0; int id = 0; unsigned hold = 0; bool down = false; bool fired = false;
+    bool block = false; bool swallowUp = false;
+};
 std::vector<LLBind> g_llKeys;    // клавиши: виртуальный код
 std::vector<LLBind> g_llMouse;   // кнопки мыши: 2, 8, 9
 std::vector<std::pair<int, bool>> g_llEvents;
@@ -123,7 +127,9 @@ int currentMods() {
     return m;
 }
 
-void llEvent(std::vector<LLBind>& binds, unsigned code, bool down) {
+// true — нажатие забираем себе (не отдаём игре и системе)
+bool llEvent(std::vector<LLBind>& binds, unsigned code, bool down) {
+    bool swallow = false;
     if (down) {
         // сначала сочетания «держу A, жму B»: сработало — обычный хоткей на B молчит
         bool chord = false;
@@ -138,15 +144,18 @@ void llEvent(std::vector<LLBind>& binds, unsigned code, bool down) {
         }
         for (LLBind& b : binds) {
             if (b.hold || b.code != code) continue;
-            if (b.down) continue;              // автоповтор
+            if (b.down) { swallow = swallow || b.swallowUp; continue; }    // автоповтор — как само нажатие
             b.down = true;
             if (!chord && currentMods() == b.mods) { b.fired = true; g_llEvents.push_back({b.id, true}); }
+            b.swallowUp = b.block && b.fired;
+            swallow = swallow || b.swallowUp;
         }
-        return;
+        return swallow;
     }
     for (LLBind& b : binds) {
         if (b.code == code && b.down) {
             b.down = false;
+            if (b.swallowUp) { b.swallowUp = false; swallow = true; }    // забрали нажатие — забираем и отпускание
             if (b.fired) { b.fired = false; g_llEvents.push_back({b.id, false}); }
         } else if (b.hold && b.hold == code && b.fired) {
             // отпустили первую клавишу сочетания — тоже «отпущено» (B ещё зажата: снова
@@ -155,6 +164,7 @@ void llEvent(std::vector<LLBind>& binds, unsigned code, bool down) {
             g_llEvents.push_back({b.id, false});
         }
     }
+    return swallow;
 }
 
 LRESULT CALLBACK llKeyboardProc(int code, WPARAM w, LPARAM l) {
@@ -183,7 +193,7 @@ LRESULT CALLBACK llMouseProc(int code, WPARAM w, LPARAM l) {
                 case WM_XBUTTONUP:   btn = HIWORD(m->mouseData) == XBUTTON1 ? 8 : 9; break;
                 default: break;
             }
-            if (btn) llEvent(g_llMouse, btn, down);
+            if (btn && llEvent(g_llMouse, btn, down)) return 1;     // «не пропускать в игру»
         }
     }
     return CallNextHookEx(nullptr, code, w, l);
@@ -230,7 +240,9 @@ void GlobalHotkey::loop() {
             const HotkeySpec& sp = specs[id];
             if (!sp.isValid() || !sp.isGlobalSafe()) { setStatus(id, Status::Invalid); continue; }
             if (sp.isMouse()) {
-                g_llMouse.push_back({static_cast<unsigned>(sp.mouseButton()), sp.mods, id});
+                LLBind b{static_cast<unsigned>(sp.mouseButton()), sp.mods, id};
+                b.block = !sp.passthrough();
+                g_llMouse.push_back(b);
                 continue;
             }
             const KeyDef* k = Keys::byName(sp.key);
@@ -515,7 +527,8 @@ static std::atomic<Display*> g_hkDisplay{nullptr};
 static std::atomic<bool> g_grabFailed{false};
 
 static int nonFatalXErrorHandler(Display* d, XErrorEvent* e) {
-    if (d == g_hkDisplay.load() && e->request_code == X_GrabKey && e->error_code == BadAccess)
+    if (d == g_hkDisplay.load() && (e->request_code == X_GrabKey || e->request_code == X_GrabButton) &&
+        e->error_code == BadAccess)
         g_grabFailed = true;
     return 0;   // не завершать программу (поведение Xlib по умолчанию)
 }
@@ -604,7 +617,7 @@ void GlobalHotkey::loop() {
         bool mouse = false;
         int code = 0;          // KeyCode или номер кнопки мыши
         int hold = 0;          // KeyCode клавиши, которую держат («Tab+F»), 0 — обычный хоткей
-        bool grabbed = false;  // XGrabKey (иначе — сырые события)
+        bool grabbed = false;  // XGrabKey / XGrabButton (иначе — сырые события)
         unsigned xmods = 0;
         bool down = false;
         bool fired = false;
@@ -624,7 +637,10 @@ void GlobalHotkey::loop() {
     auto ungrab = [&]() {
         for (const XBind& b : binds) {
             if (b.grabbed)
-                for (unsigned int v : lockVariants) XUngrabKey(d, static_cast<KeyCode>(b.code), b.xmods | v, root);
+                for (unsigned int v : lockVariants) {
+                    if (b.mouse) XUngrabButton(d, static_cast<unsigned>(b.code), b.xmods | v, root);
+                    else XUngrabKey(d, static_cast<KeyCode>(b.code), b.xmods | v, root);
+                }
             if (b.fired) fire(b.id, false);
         }
         binds.clear();
@@ -651,11 +667,31 @@ void GlobalHotkey::loop() {
             XBind b;
             b.id = id;
             b.mods = sp.mods;
+            if (sp.mods & ModCtrl)  b.xmods |= ControlMask;
+            if (sp.mods & ModAlt)   b.xmods |= Mod1Mask;
+            if (sp.mods & ModShift) b.xmods |= ShiftMask;
+            if (sp.mods & ModWin)   b.xmods |= Mod4Mask;
             if (sp.isMouse()) {
                 if (!xi2) { setStatus(id, Status::Unavailable); continue; }
                 b.mouse = true;
                 b.code = sp.mouseButton();
                 needButtons = true;
+                if (!sp.passthrough()) {
+                    // «не пропускать в игру»: нажатие забираем себе (XGrabButton), отпускание видно
+                    // сырым событием или, пока перехват ещё наш, обычным ButtonRelease
+                    g_grabFailed = false;
+                    for (unsigned int v : lockVariants)
+                        XGrabButton(d, static_cast<unsigned>(b.code), b.xmods | v, root, False,
+                                    ButtonPressMask | ButtonReleaseMask, GrabModeAsync, GrabModeAsync, None, None);
+                    XSync(d, False);
+                    if (g_grabFailed) {
+                        for (unsigned int v : lockVariants) XUngrabButton(d, static_cast<unsigned>(b.code), b.xmods | v, root);
+                        XSync(d, False);
+                        setStatus(id, Status::Busy);
+                        continue;
+                    }
+                    b.grabbed = true;
+                }
                 binds.push_back(b);
                 setStatus(id, Status::Ok);
                 continue;
@@ -676,10 +712,6 @@ void GlobalHotkey::loop() {
                 setStatus(id, Status::Ok);
                 continue;
             }
-            if (sp.mods & ModCtrl)  b.xmods |= ControlMask;
-            if (sp.mods & ModAlt)   b.xmods |= Mod1Mask;
-            if (sp.mods & ModShift) b.xmods |= ShiftMask;
-            if (sp.mods & ModWin)   b.xmods |= Mod4Mask;
             g_grabFailed = false;
             for (unsigned int v : lockVariants)
                 XGrabKey(d, kc, b.xmods | v, root, True, GrabModeAsync, GrabModeAsync);
@@ -724,7 +756,7 @@ void GlobalHotkey::loop() {
                 continue;
             }
             if (b.mouse != mouse || b.code != code) continue;
-            if (b.grabbed && down) continue;        // нажатие перехваченной клавиши приходит через grab
+            if (b.grabbed && down) continue;        // нажатие перехваченной клавиши / кнопки приходит через grab
             if (down) {
                 if (b.hold || b.down) continue;
                 b.down = true;
@@ -773,12 +805,39 @@ void GlobalHotkey::loop() {
                 XFreeEventData(d, &ev.xcookie);
                 continue;
             }
+            if (ev.type == ButtonPress) {
+                bool ours = false;
+                for (XBind& b : binds)
+                    if (b.grabbed && b.mouse && ev.xbutton.button == static_cast<unsigned>(b.code) &&
+                        (ev.xbutton.state & relevant) == b.xmods) {
+                        ours = true;
+                        // перехват срабатывает только на новое нажатие: если отпускание прошло
+                        // мимо нас — сначала «отпущено», иначе клавиша срабатывала бы через раз
+                        if (b.down && b.fired) fire(b.id, false);
+                        b.down = true;
+                        b.fired = true;
+                        fire(b.id, true);
+                    }
+                // Пока кнопка зажата, X держит мышь у нас — клики кликера («пока держу») не дошли
+                // бы до игры. Отпускаем сразу; отпускание кнопки — сырым событием XInput2 или,
+                // если отпустили раньше, чем мы успели, обычным (оно пришло ещё нам).
+                if (ours) { XUngrabPointer(d, CurrentTime); XFlush(d); }
+                continue;
+            }
+            if (ev.type == ButtonRelease) {
+                for (XBind& b : binds)
+                    if (b.grabbed && b.mouse && ev.xbutton.button == static_cast<unsigned>(b.code) && b.down) {
+                        b.down = false;
+                        if (b.fired) { b.fired = false; fire(b.id, false); }
+                    }
+                continue;
+            }
             if (ev.type == KeyPress) {
                 bool ours = false;
                 // клавиша — вторая в сочетании, и первая зажата: сработало сочетание
                 const bool chord = chordOn(static_cast<int>(ev.xkey.keycode));
                 for (XBind& b : binds)
-                    if (b.grabbed && ev.xkey.keycode == static_cast<unsigned>(b.code) &&
+                    if (b.grabbed && !b.mouse && ev.xkey.keycode == static_cast<unsigned>(b.code) &&
                         (ev.xkey.state & relevant) == b.xmods) {
                         ours = true;
                         if (b.down) continue;
@@ -803,7 +862,7 @@ void GlobalHotkey::loop() {
                     }
                 }
                 for (XBind& b : binds)
-                    if (b.grabbed && ev.xkey.keycode == static_cast<unsigned>(b.code) && b.down) {
+                    if (b.grabbed && !b.mouse && ev.xkey.keycode == static_cast<unsigned>(b.code) && b.down) {
                         b.down = false;
                         if (b.fired) { b.fired = false; fire(b.id, false); }
                     }

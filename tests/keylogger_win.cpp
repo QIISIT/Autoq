@@ -3,7 +3,7 @@
 // Строки:
 //   "K vk=XX scan=XX ext=N"   — WM_KEYDOWN / WM_SYSKEYDOWN
 //   "R vk=XX make=XX e0=N"    — Raw Input (так читают ввод многие игры)
-//   "B 1|2|3"                 — кнопки мыши
+//   "B 1|2|3|8|9"             — кнопки мыши
 // --occupy занимает глобальную клавишу (для проверки "клавиша занята").
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -37,6 +37,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     case WM_LBUTTONDOWN: std::fprintf(g_f, "B 1\n"); return 0;
     case WM_MBUTTONDOWN: std::fprintf(g_f, "B 2\n"); return 0;
     case WM_RBUTTONDOWN: std::fprintf(g_f, "B 3\n"); return 0;
+    case WM_XBUTTONDOWN: std::fprintf(g_f, "B %d\n", HIWORD(w) == XBUTTON1 ? 8 : 9); return TRUE;
     case WM_DESTROY: PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(h, m, w, l);

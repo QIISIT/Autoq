@@ -19,6 +19,7 @@
 #include "keys.h"
 #include "icons.h"
 #include "autostart.h"
+#include "widgets.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -140,6 +141,7 @@ int main(int argc, char** argv) {
         auto s = AppSettings::open();
         Theme::apply(app, s->value("theme", 0).toInt() == 0);
     }
+    InputGuard::install();      // колёсико и курсор в полях ввода — во всех окнах
 
     MainWindow w;
 

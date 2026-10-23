@@ -1,5 +1,5 @@
 ﻿================================================================
-  AUTOQ 1.14 for Windows 10/11 (64-bit) — guide
+  AUTOQ 1.15 for Windows 10/11 (64-bit) — guide
   created by Qisit
 ================================================================
 
@@ -48,12 +48,19 @@ HOW TO USE
 1. Add a game: pick a ready-made one (Genshin, Minecraft…) or
    your own — "Pick" next to "process" lists the open windows.
 2. Choose actions — as many as you like (mouse button incl.
-   Mouse 4/5, or any key; "hold" ms for each) and the speed
-   (ms, CPS or CPM). One action: Repeat or Hold. More: In turn,
-   Together or Hold.
+   Mouse 4/5, or any key) and the speed (ms, CPS or CPM). One
+   action: Repeat or Hold. More: In turn, Together, Hold or Step by
+   step. Above each key is its mode (click it for the choices):
+   Click or Hold (ms next to the key); a step is Press ↓, Release ↑
+   or Click ↕. Pauses between keys can be 0 ms; a whole cycle is
+   still no faster than the game's minimum. The mouse wheel changes
+   a number, list or slider only after you click it — otherwise it
+   scrolls the page.
 3. Press the game's start/stop key (F6 by default; each game has
    its own, a mouse button works too; "On / off" or "While held")
    right in the game: AutoQ picks that window and clicks only there.
+   A letter or mouse button also reaches the game, unless you turn
+   on "Don't pass the press to the game" under the key.
    The circle next to a game: filled — the game is in use, its key
    works even while another game is open (several games can run
    at once); empty — not in use, it can't be started until you

@@ -117,6 +117,18 @@ static void testHotkeys() {
     CHECK(!HotkeySpec::parse("f6").passthrough());
     CHECK(!HotkeySpec::parse("pageup").passthrough());
     CHECK(!HotkeySpec::parse("shift+f6").passthrough());
+    // «не пропускать в игру»: только сквозные сами по себе (мышь, буква без Ctrl/Alt/Win), не сочетания
+    {
+        HotkeySpec m4 = HotkeySpec::parse("mouse:8"), z = HotkeySpec::parse("z"), f6 = HotkeySpec::parse("f6");
+        HotkeySpec chord = HotkeySpec::parse("tab+f"), cz = HotkeySpec::parse("ctrl+z");
+        CHECK(m4.canBlock() && z.canBlock() && HotkeySpec::parse("shift+z").canBlock());
+        CHECK(!f6.canBlock() && !chord.canBlock() && !cz.canBlock() && !HotkeySpec{}.canBlock());
+        CHECK(m4.passthrough() && z.passthrough());
+        m4.block = z.block = f6.block = chord.block = true;
+        CHECK(!m4.passthrough() && !z.passthrough() && !f6.passthrough());
+        CHECK(chord.passthrough());                                  // сочетание — всегда сквозное
+        CHECK(m4 == HotkeySpec::parse("mouse:8") && m4.toString() == "mouse:8");   // в == и строке block нет
+    }
     // вся клавиатура для выбора: без Shift/Ctrl/Alt, все годятся, у всех есть группа
     const QStringList all = Keys::hotkeyKeyNames();
     CHECK(all.size() > 90);
@@ -244,9 +256,13 @@ static void testGames() {
     { ActionStep m4; m4.mouse = true; m4.button = 8; m4.holdMs = 15; st.actions << m4; }   // третье — Mouse 4
     Games::saveState("genshin", st);
     CHECK(Games::loadState(Games::get("genshin")) == st);
-    // минимум интервала игры соблюдается при чтении
+    // минимум интервала игры соблюдается при чтении; у нескольких действий по очереди
+    // «повтор через» — пауза между клавишами: от 0
     st.intervalMs = 5; Games::saveState("genshin", st);
+    CHECK(Games::loadState(Games::get("genshin")).intervalMs == 5);
+    { GameState one = st; one.actions = {st.actions[0]}; Games::saveState("genshin", one); }
     CHECK(Games::loadState(Games::get("genshin")).intervalMs == 20);
+    Games::saveState("genshin", st);
     // у Minecraft свои настройки
     CHECK(!(Games::loadState(Games::get("minecraft")) == st));
 
@@ -761,6 +777,15 @@ static void testV112() {
     CHECK(Games::startKey("minecraft").toString() == "mouse:9" && Games::startKey("genshin").toString() == "f7");
     Games::setStartKey("genshin", HotkeySpec{});                // пустую не записываем
     CHECK(Games::startKey("genshin").toString() == "f7");
+    // «не пропускать в игру» — у клавиши старта игры; другая клавиша — снова пропускается
+    CHECK(!Games::startKey("minecraft").block && !Games::startKeyBlock("minecraft"));
+    Games::setStartKeyBlock("minecraft", true);
+    CHECK(Games::startKey("minecraft").block && !Games::startKey("genshin").block);
+    Games::setStartKey("minecraft", HotkeySpec::parse("mouse:9"));      // та же — как было
+    CHECK(Games::startKeyBlock("minecraft"));
+    Games::setStartKey("minecraft", HotkeySpec::parse("mouse:8"));
+    CHECK(!Games::startKeyBlock("minecraft") && !Games::startKey("minecraft").block);
+    Games::setStartKey("minecraft", HotkeySpec::parse("mouse:9"));
     CHECK(Games::armed("genshin"));                             // новая категория — используется
     Games::setArmed("genshin", false);
     CHECK(!Games::armed("genshin") && Games::armed("minecraft"));
@@ -1002,6 +1027,24 @@ static void testV113() {
         CHECK(m >= 28 && m <= 32);
         if (m < 28 || m > 32) std::printf("  такт: %llu кликов за 305 мс (ждали ~31)\n", m);
     }
+    // «повтор через» 0 (паузы между клавишами) — круг всё равно не быстрее минимума игры
+    {
+        Clicker c;
+        ClickerConfig cfg;
+        cfg.lockToWindow = false;
+        cfg.steps = true;
+        ActionStep tap; tap.press = ActionStep::Click;
+        cfg.actions = {tap};
+        cfg.intervalMs = 0;
+        cfg.minCycleMs = 20;
+        c.setConfig(cfg);
+        c.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(410));
+        c.stop();
+        const auto n = c.cycleCount();           // 0, 20 … 400 мс — 21
+        CHECK(n >= 17 && n <= 22);
+        if (n < 17 || n > 22) std::printf("  минимум круга: %llu кругов за 410 мс (ждали ~21)\n", n);
+    }
 }
 
 // 1.13: папка данных — настройки в settings.ini, профили — по файлу
@@ -1232,6 +1275,13 @@ static void testV114() {
     CHECK(Steps::strayUps(bad) == QList<int>{0});
     CHECK(Steps::leftDown(bad).size() == 1 && Steps::leftDown(bad)[0].key == "q");
     CHECK(Steps::pressedInputs(bad).size() == 2);                // e и q, f не нажимается
+    // «клик» (нажать и отпустить) — нажимает, но зажатым ничего не оставляет; зажатое раньше — отпускает
+    const int C = ActionStep::Click;
+    const QList<ActionStep> taps{st("e", C, 0), st("q", D, 0), st("q", C, 0), st("q", U, 0), st("f", D, 0)};
+    CHECK(Steps::pressedInputs(taps).size() == 3 && Steps::inputIndex(Steps::pressedInputs(taps), taps[0]) == 0);
+    CHECK(Steps::strayUps(taps) == QList<int>{3});              // q уже отпустил «клик»
+    CHECK(Steps::leftDown(taps).size() == 1 && Steps::leftDown(taps)[0].key == "f");
+    CHECK(st("e", C, 0).pressMark() == "↕" && st("e", D, 0).pressMark() == "↓" && st("e", U, 0).pressMark() == "↑");
     // клавиша в разном регистре — та же клавиша
     CHECK(st("F", D, 0).sameInput(st("f", U, 0)) && !st("f", D, 0).sameInput(st("mouse:1", D, 0)));
 
@@ -1266,6 +1316,22 @@ static void testV114() {
     back = Games::loadState(Games::get("genshin"));
     CHECK(back.actions.size() == 1 && back.actions[0].press == ActionStep::Click);
     CHECK(back.steps.size() == 2 && back.steps[0].press == D && back.steps[0].holdMs == 0 && back.steps[1].press == U);
+    {   // шаг «клик» пишется с «:c» (без поля — «нажать», как в 1.14)
+        GameState c = back;
+        c.steps = {st("e", ActionStep::Click, 10), st("f", D, 0), st("f", U, 0)};
+        Games::saveState("genshin", c);
+        auto s = AppSettings::open();
+        CHECK(s->value("games/genshin/state/steps").toStringList().value(0).endsWith(":c"));
+        s.reset();
+        const GameState cb = Games::loadState(Games::get("genshin"));
+        CHECK(cb.steps.size() == 3 && cb.steps[0].press == ActionStep::Click && cb.steps[0].afterMs == 10);
+        // «повтор через» в «По шагам» — от 0 (пауза между клавишами), у одного действия — от минимума игры
+        CHECK(cb.repeatMin(GameMode::Steps, 20) == 0 && cb.repeatMin(GameMode::Sequence, 20) == 20);
+        GameState two = cb; two.actions = {st("e", ActionStep::Click, 0), st("f", ActionStep::Click, 0)};
+        CHECK(two.repeatMin(GameMode::Sequence, 20) == 0 && two.repeatMin(GameMode::Combo, 20) == 20 &&
+              two.repeatMin(GameMode::Hold, 20) == 20);
+        Games::saveState("genshin", back);
+    }
     CHECK(back.startDelayMs == kMaxStartDelayMs);
     { auto s = AppSettings::open(); s->setValue("games/genshin/state/startDelay", -5); s->sync(); }
     CHECK(Games::loadState(Games::get("genshin")).startDelayMs == 0);

@@ -5,7 +5,6 @@
 #include "icons.h"
 #include "theme.h"
 #include <QApplication>
-#include <QComboBox>
 #include <QSpinBox>
 #include <QToolButton>
 #include <QPushButton>
@@ -34,6 +33,7 @@ const char* kStepMime = "application/x-autoq-step";
 class SizedButton : public QPushButton {
 public:
     explicit SizedButton(const QSize& s) : size_(s) { setFixedSize(s); }
+    void setSize(const QSize& s) { size_ = s; setFixedSize(s); }
     QSize sizeHint() const override { return size_; }
     QSize minimumSizeHint() const override { return size_; }
 private:
@@ -112,22 +112,24 @@ void ActionsEditor::setState(const QList<ActionStep>& list, GameMode mode, int s
     while (actions_.size() > maxItems()) actions_.removeLast();
     startMs_ = qBound(0, startMs, kMaxStartDelayMs);
     minIntervalMs_ = qMax(1, minIntervalMs);
-    intervalMs_ = qBound(minIntervalMs_, intervalMs, 60000);
+    intervalMs_ = qBound(repeatMin(), intervalMs, 60000);
     if (builtCount_ != actions_.size() || builtMode_ != mode_) {
         rebuild();
     } else {
         // ряд не пересобирается, а минимум интервала у другой игры (или после правки игры) другой
-        if (repeatSpin_ && repeatSpin_->minimum() != minIntervalMs_) {
+        if (repeatSpin_ && repeatSpin_->minimum() != repeatMin()) {
             QSignalBlocker b(repeatSpin_);
-            repeatSpin_->setMinimum(minIntervalMs_);
+            repeatSpin_->setMinimum(repeatMin());
         }
         updateValues();
     }
 }
 
+int ActionsEditor::repeatMin() const { return repeatMinMs(mode_, int(actions_.size()), minIntervalMs_); }
+
 void ActionsEditor::setTimes(int startMs, int intervalMs) {
     startMs_ = qBound(0, startMs, kMaxStartDelayMs);
-    intervalMs_ = qBound(minIntervalMs_, intervalMs, 60000);
+    intervalMs_ = qBound(repeatMin(), intervalMs, 60000);
     if (startSpin_ && startSpin_->value() != startMs_) { QSignalBlocker b(startSpin_); startSpin_->setValue(startMs_); }
     if (repeatSpin_ && repeatSpin_->value() != intervalMs_) { QSignalBlocker b(repeatSpin_); repeatSpin_->setValue(intervalMs_); }
 }
@@ -188,7 +190,7 @@ void ActionsEditor::rebuild() {
         ui.frame = f;
         f->setObjectName("slot");
         f->setProperty("slotIndex", i);
-        f->setFixedSize(176, (hold || steps()) ? 88 : 110);
+        f->setFixedSize(176, slotH_);
         f->setContextMenuPolicy(Qt::CustomContextMenu);
         f->installEventFilter(this);
         auto* g = new QGridLayout(f);
@@ -203,14 +205,18 @@ void ActionsEditor::rebuild() {
         ui.grip->setProperty("slotIndex", i);
         ui.grip->installEventFilter(this);
         g->addWidget(ui.grip, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
-        ui.type = new QComboBox();
-        ui.type->setObjectName("kind");
-        ui.type->addItems({steps() ? T("Кнопка мыши") : T("Клик мышью"), T("Клавиша")});
-        ui.type->setCursor(Qt::PointingHandCursor);
-        ui.type->setToolTip(steps() ? T("Шаг %1: кнопка мыши или клавиша").arg(i + 1)
-                                    : T("Действие %1: кнопка мыши или клавиша").arg(i + 1));
-        ui.type->setAccessibleName(ui.type->toolTip());
-        g->addWidget(ui.type, 0, 1, Qt::AlignLeft);
+        if (hold) {
+            ui.caption = new QLabel(T("зажать"));
+            ui.caption->setObjectName("small");
+            ui.caption->setToolTip(T("Пока кликер включён — зажата"));
+            g->addWidget(ui.caption, 0, 1, Qt::AlignLeft | Qt::AlignVCenter);
+        } else {
+            // режим действия — над клавишей; щелчок открывает плашку с режимами
+            ui.mode = new ChoiceButton();
+            ui.mode->setToolTip(steps() ? T("Шаг %1: нажать, отпустить или клик — щёлкни, чтобы выбрать").arg(i + 1)
+                                        : T("Действие %1: клик или держать нажатым — щёлкни, чтобы выбрать").arg(i + 1));
+            g->addWidget(ui.mode, 0, 1, Qt::AlignLeft | Qt::AlignVCenter);
+        }
         if (n > 1) {
             ui.remove = new QToolButton();
             ui.remove->setObjectName("icon");
@@ -235,28 +241,23 @@ void ActionsEditor::rebuild() {
             ui.dir->setFixedSize(36, 36);
             ui.dir->setCursor(Qt::PointingHandCursor);
             vr->addWidget(ui.dir);
+        } else if (!hold) {
+            // «держать N мс» — рядом с клавишей, только у режима «держать»
+            ui.hold = smallSpin(1, 10000, T("Сколько держать нажатым"));
+            ui.hold->setFixedWidth(64);
+            ui.hold->hide();
+            vr->addWidget(ui.hold);
         }
         g->addLayout(vr, 1, 0, 1, 3);
-        if (!hold && !steps()) {
-            auto* hr = new QHBoxLayout();
-            hr->setSpacing(6);
-            ui.holdLabel = new QLabel(T("держать"));
-            ui.holdLabel->setObjectName("small");
-            hr->addWidget(ui.holdLabel);
-            ui.hold = smallSpin(0, 10000, T("Сколько держать нажатым (0 — обычный щелчок)"));
-            ui.hold->setFixedWidth(74);
-            hr->addWidget(ui.hold);
-            hr->addStretch(1);
-            g->addLayout(hr, 2, 0, 1, 3);
-        }
+        g->setRowStretch(2, 1);
         uh->addWidget(f);
 
         if (i + 1 < n) {
             QWidget* conn;
             if (paused) {
                 ui.after = smallSpin(0, 60000, steps()
-                    ? T("Пауза после шага %1 перед шагом %2 (колёсико мыши — быстро менять)").arg(i + 1).arg(i + 2)
-                    : T("Пауза после действия %1 перед действием %2 (колёсико мыши — быстро менять)").arg(i + 1).arg(i + 2));
+                    ? T("Пауза после шага %1 перед шагом %2 (щёлкни по полю — и колёсиком быстро менять)").arg(i + 1).arg(i + 2)
+                    : T("Пауза после действия %1 перед действием %2 (щёлкни по полю — и колёсиком быстро менять)").arg(i + 1).arg(i + 2));
                 conn = chip(T("пауза"), ui.after, new ArrowLine());
             } else {
                 conn = new QWidget();
@@ -271,13 +272,17 @@ void ActionsEditor::rebuild() {
             }
             uh->addWidget(conn, 0, Qt::AlignVCenter);
         } else if (!hold) {
-            // после последнего — «повтор через»: тот же интервал, что в «Скорости»
-            repeatSpin_ = smallSpin(minIntervalMs_, 60000,
-                                    T("Пауза после последнего — и всё сначала. Это интервал из карточки «Скорость»"));
+            // после последнего — «повтор через»: тот же интервал, что в «Скорости»; между
+            // клавишами («По шагам», несколько действий по очереди) — от 0
+            intervalMs_ = qMax(intervalMs_, repeatMin());
+            repeatSpin_ = smallSpin(repeatMin(), 60000, repeatMin() == 0
+                ? T("Пауза после последнего — и всё сначала. Можно 0: круг целиком всё равно не быстрее %1 мс. "
+                    "Это интервал из карточки «Скорость»").arg(minIntervalMs_)
+                : T("Пауза после последнего — и всё сначала. Это интервал из карточки «Скорость»"));
             uh->addWidget(chip(T("повтор через"), repeatSpin_, new LoopLine()), 0, Qt::AlignVCenter);
             connect(repeatSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
                 if (loading_) return;
-                intervalMs_ = qMax(minIntervalMs_, v);
+                intervalMs_ = qMax(repeatMin(), v);
                 edited();
             });
         }
@@ -288,15 +293,8 @@ void ActionsEditor::rebuild() {
         connect(f, &QWidget::customContextMenuRequested, this, [this, f, i](const QPoint& pos) {
             showMenu(i, f->mapToGlobal(pos));
         });
-        connect(ui.type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, i](int idx) {
-            if (loading_ || i >= actions_.size()) return;
-            ActionStep& a = actions_[i];
-            a.mouse = idx == 0;
-            if (a.mouse && !MouseButtons::valid(a.button)) a.button = 1;
-            if (!a.mouse && !Keys::actionKeyNames().contains(a.key)) a.key = "f";
-            updateValues();
-            edited();
-        });
+        if (ui.mode)
+            connect(ui.mode, &QAbstractButton::clicked, this, [this, i]() { openModePlate(i); });
         connect(ui.value, &KeyPicker::picked, this, [this, i](const QString& name) {
             if (i >= actions_.size()) return;
             ActionStep& a = actions_[i];
@@ -310,7 +308,8 @@ void ActionsEditor::rebuild() {
             connect(ui.dir, &QToolButton::clicked, this, [this, i]() {
                 if (loading_ || i >= actions_.size()) return;
                 ActionStep& a = actions_[i];
-                a.press = a.press == ActionStep::Up ? ActionStep::Down : ActionStep::Up;
+                // ↓ ⇄ ↑; клик (нажать и отпустить) — становится «нажать»
+                a.press = a.press == ActionStep::Down ? ActionStep::Up : ActionStep::Down;
                 updateValues();
                 edited();
             });
@@ -330,7 +329,7 @@ void ActionsEditor::rebuild() {
             connect(ui.remove, &QToolButton::clicked, this, [this, i]() { later([this, i]() { removeAt(i); }); });
     }
     if (n < maxItems()) {
-        add_ = new SizedButton(QSize(n == 1 ? 176 : 132, (hold || steps()) ? 88 : 110));
+        add_ = new SizedButton(QSize(n == 1 ? 176 : 132, slotH_));
         add_->setObjectName("addSecond");
         add_->setCursor(Qt::PointingHandCursor);
         add_->setText(steps() ? T("Шаг") : n == 1 ? (mode_ == GameMode::Sequence ? T("Действие 2") : T("вместе с…")) : T("Ещё"));
@@ -349,6 +348,18 @@ void ActionsEditor::rebuild() {
         if (QWidget* w = flow_->itemAt(i)->widget()) w->show();
     refreshIcons();
     updateValues();
+    // высота карточек — по содержимому (крупный шрифт или масштаб — ничего не наезжает),
+    // у всех одна: ряд ровный
+    int h = 88;
+    for (const SlotUi& ui : slots_) {
+        ui.frame->ensurePolished();
+        h = qMax(h, ui.frame->layout()->totalMinimumSize().height());
+    }
+    if (h != slotH_) {
+        slotH_ = h;
+        for (const SlotUi& ui : slots_) ui.frame->setFixedHeight(h);
+        if (add_) static_cast<SizedButton*>(add_)->setSize(QSize(add_->width(), h));
+    }
     updateGeometry();
 }
 
@@ -442,7 +453,7 @@ void ActionsEditor::showMenu(int i, const QPoint& global) {
     for (QAction* a : {before, after, dup}) a->setEnabled(canAdd);
     QAction* flip = nullptr;
     if (steps())
-        flip = m.addAction(actions_[i].press == ActionStep::Up ? T("Сделать «нажать» ↓") : T("Сделать «отпустить» ↑"));
+        flip = m.addAction(actions_[i].press == ActionStep::Down ? T("Сделать «отпустить» ↑") : T("Сделать «нажать» ↓"));
     m.addSeparator();
     QAction* left = m.addAction(T("Переместить влево"));
     QAction* right = m.addAction(T("Переместить вправо"));
@@ -455,7 +466,7 @@ void ActionsEditor::showMenu(int i, const QPoint& global) {
     if (!got) return;
     if (got == flip) {
         ActionStep& a = actions_[i];
-        a.press = a.press == ActionStep::Up ? ActionStep::Down : ActionStep::Up;
+        a.press = a.press == ActionStep::Down ? ActionStep::Up : ActionStep::Down;
         updateValues();
         edited();
         return;
@@ -694,14 +705,73 @@ void ActionsEditor::animateFrom(const Snapshot& before, const QList<int>& oldOf,
 void ActionsEditor::updateDir(SlotUi& ui, const ActionStep& a) {
     if (!ui.dir) return;
     const auto& t = Theme::t();
-    const bool up = a.press == ActionStep::Up;
-    ui.dir->setIcon(AqIcons::ui(up ? "arrow-up" : "arrow-down", up ? t.text : t.redHi, 20, 2.4));
+    const bool up = a.press == ActionStep::Up, click = a.press == ActionStep::Click;
+    ui.dir->setIcon(AqIcons::ui(up ? "arrow-up" : click ? "press-tap" : "arrow-down", up ? t.text : t.redHi, 20, 2.4));
     ui.dir->setIconSize(QSize(20, 20));
     ui.dir->setProperty("up", up);
     ui.dir->setToolTip(up ? T("Отпустить ↑ — щёлкни, чтобы стало «нажать»")
-                          : T("Нажать ↓ — щёлкни, чтобы стало «отпустить»"));
-    ui.dir->setAccessibleName(up ? T("Отпустить") : T("Нажать"));
+                     : click ? T("Клик ↕ — нажать и сразу отпустить. Щёлкни, чтобы стало «нажать»")
+                             : T("Нажать ↓ — щёлкни, чтобы стало «отпустить»"));
+    ui.dir->setAccessibleName(up ? T("Отпустить") : click ? T("Клик") : T("Нажать"));
     Theme::repolish(ui.dir);
+}
+
+// Режимы: у шага — нажать / отпустить / клик, у действия — клик / держать N мс
+namespace {
+QList<Choice> modeChoices(bool steps) {
+    if (steps)
+        return {{"arrow-down", T("Нажать ↓"), T("Зажать и не отпускать — отпустит шаг «Отпустить»")},
+                {"arrow-up", T("Отпустить ↑"), T("Отпустить то, что зажал шаг «Нажать»")},
+                {"press-tap", T("Клик ↕"), T("Нажать и сразу отпустить — за один шаг")}};
+    return {{"click", T("Клик"), T("Нажать и сразу отпустить")},
+            {"press-hold", T("Держать"), T("Держать нажатым столько, сколько указано рядом с клавишей")}};
+}
+int modeIndex(bool steps, const ActionStep& a) {
+    if (steps) return a.press == ActionStep::Up ? 1 : a.press == ActionStep::Click ? 2 : 0;
+    return a.holdMs > 0 ? 1 : 0;
+}
+}
+
+void ActionsEditor::updateMode(SlotUi& ui, const ActionStep& a) {
+    if (ui.mode) {
+        const Choice c = modeChoices(steps()).value(modeIndex(steps(), a));
+        // на кнопке — коротко, без стрелок: они есть на значке
+        QString title = c.title;
+        title.remove(QStringLiteral(" ↓")).remove(QStringLiteral(" ↑")).remove(QStringLiteral(" ↕"));
+        ui.mode->setChoice(c.icon, title);
+    }
+    if (ui.hold) {
+        const bool on = a.holdMs > 0;
+        if (on && ui.hold->value() != a.holdMs) { QSignalBlocker b(ui.hold); ui.hold->setValue(a.holdMs); }
+        if (ui.hold->isVisibleTo(ui.frame) != on) {
+            ui.hold->setVisible(on);
+            ui.frame->setFixedWidth(on ? 206 : 176);    // клавише остаётся места, как в «По шагам»
+        }
+    }
+}
+
+void ActionsEditor::openModePlate(int i) {
+    if (i < 0 || i >= actions_.size() || i >= slots_.size() || !slots_[i].mode) return;
+    const int gen = buildGen_;
+    ChoicePlate::open(slots_[i].mode, steps() ? T("Режим шага %1").arg(i + 1) : T("Режим действия %1").arg(i + 1),
+                      modeChoices(steps()), modeIndex(steps(), actions_[i]), [this, i, gen](int k) {
+        if (gen != buildGen_ || i >= actions_.size()) return;      // ряд за это время пересобрали
+        ActionStep& a = actions_[i];
+        if (steps()) {
+            a.press = k == 1 ? ActionStep::Up : k == 2 ? ActionStep::Click : ActionStep::Down;
+        } else if ((k == 1) != (a.holdMs > 0)) {
+            a.holdMs = k == 1 ? 100 : 0;
+        } else {
+            return;
+        }
+        updateValues();
+        edited();
+        if (k == 1 && !steps() && i < slots_.size() && slots_[i].hold) {
+            // выбрали «держать» — сразу можно вписать, сколько
+            slots_[i].hold->setFocus(Qt::OtherFocusReason);
+            slots_[i].hold->selectAll();
+        }
+    });
 }
 
 void ActionsEditor::updateValues() {
@@ -710,16 +780,12 @@ void ActionsEditor::updateValues() {
     for (int i = 0; i < slots_.size() && i < actions_.size(); ++i) {
         const ActionStep& a = actions_[i];
         SlotUi& ui = slots_[i];
-        {
-            QSignalBlocker b(ui.type);
-            ui.type->setCurrentIndex(a.mouse ? 0 : 1);
-        }
         QString item = a.itemName();
         // клавиша не из списка действий (F13–F24 из старых настроек или профиля) — показываем
         // как есть: кликер жмёт именно её, и подпись не должна врать
         if (!a.mouse && !Keys::byName(a.key)) item = Keys::actionKeyNames().value(0);
         ui.value->setCurrentItem(item);
-        if (ui.hold && ui.hold->value() != a.holdMs) { QSignalBlocker b(ui.hold); ui.hold->setValue(a.holdMs); }
+        updateMode(ui, a);
         if (ui.after && ui.after->value() != a.afterMs) { QSignalBlocker b(ui.after); ui.after->setValue(a.afterMs); }
         updateDir(ui, a);
         // «отпустить» без «нажать» раньше — шаг пропускается: видно сразу
@@ -754,6 +820,7 @@ void ActionsEditor::refreshIcons() {
         if (ui.remove) ui.remove->setIcon(AqIcons::ui("x", t.muted, 12, 2.4));
         if (ui.grip) ui.grip->setIcon(AqIcons::ui("grip", t.faint, 12));
         if (ui.grip) ui.grip->setIconSize(QSize(12, 12));
+        if (ui.mode) ui.mode->update();
     }
     if (add_) add_->setIcon(AqIcons::ui("plus", t.muted, 18));
     for (int i = 0; i < slots_.size() && i < actions_.size(); ++i) {

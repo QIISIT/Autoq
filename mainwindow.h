@@ -140,6 +140,7 @@ private:
     void syncSlider();
     void syncSpeedBox();
     double perSecond(const GameDef& g, const GameState& st) const;
+    int repeatMin() const { return cur_.repeatMin(game_.mode, game_.minIntervalMs); }   // «повтор через» от
 
     // --- профили ---
     void updateProfileState();
@@ -199,6 +200,7 @@ private:
     void rebuildBindings();
     void setHotkey(const HotkeySpec& sp, bool save);   // клавиша старт/стоп открытой игры
     void updateHotkeyStatus();
+    void updateHotkeyInfo();
     void suspendHotkeys(bool on);
     bool capturingAnyKey() const;
 
@@ -340,6 +342,8 @@ private:
     ToggleSwitch* armedSwitch_;
     QLabel* hotkeyStatus_;
     QLabel* hotkeyInfo_;
+    QWidget* blockRow_;                // «Не пропускать нажатие в игру» (Mouse 4, буква…)
+    ToggleSwitch* blockSwitch_;
     class SoundBox* soundOnBox_;     // свой звук вкл/выкл игры и профиля
     class SoundBox* soundOffBox_;
     QLabel* soundsOffHint_;

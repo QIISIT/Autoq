@@ -318,6 +318,8 @@ QFrame#summary QLabel { background: transparent; }
 
 QFrame#popup { background: @card@; border: 1px solid @fieldBorder2@; }
 QFrame#popup QLabel { background: transparent; }
+QFrame#choicePlate { background: @card@; border: 1px solid @fieldBorder2@; border-radius: 14px; }
+QLabel#plateTitle { background: transparent; color: @muted@; font-size: 10px; font-weight: 700; padding: 4px 8px 3px 8px; }
 QLineEdit#search { padding: 5px 8px; font-size: 13px; border-radius: 8px; }
 QListWidget#keyList { background: transparent; border: none; outline: none; }
 QListWidget#keyList::item { padding: 4px 8px; border-radius: 6px; }

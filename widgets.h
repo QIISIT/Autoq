@@ -9,6 +9,8 @@
 #include <QButtonGroup>
 #include <QList>
 #include <QComboBox>
+#include <QPointer>
+#include <functional>
 #include "sounds.h"
 
 class QLabel;
@@ -268,14 +270,61 @@ public:
     QSize minimumSizeHint() const override { return QSize(180, sizeHint().height()); }
 };
 
-// Колёсико мыши над ползунками / списками / числами в прокручиваемой странице
-// листает страницу, а не меняет значение (если поле не в фокусе)
-class WheelGuard : public QObject {
+// Поля ввода во всём приложении (ставится один раз, до первых окон — см. main):
+//  · колёсико над списком, числом или ползунком на прокручиваемой странице меняет
+//    значение, только если по полю щёлкнули (оно выбрано) и страницу только что не
+//    листали; иначе колёсико листает страницу — задеть поле, листая, больше нельзя;
+//  · в числе с подписью («50 мс») курсор не встаёт в подпись: щелчок по «мс» ставит
+//    его в конец числа — можно сразу печатать
+class InputGuard : public QObject {
 public:
-    explicit WheelGuard(QObject* parent) : QObject(parent) {}
-    static void install(QWidget* root);
+    static void install();
 protected:
     bool eventFilter(QObject* o, QEvent* e) override;
+private:
+    explicit InputGuard(QObject* parent) : QObject(parent) {}
+    qint64 lastPageWheel_ = 0;        // когда колёсико последний раз листало страницу
+};
+
+// Кнопка выбора (режим действия): значок, подпись и ⌄ — открывает ChoicePlate
+class ChoiceButton : public QAbstractButton {
+    Q_OBJECT
+public:
+    explicit ChoiceButton(QWidget* parent = nullptr);
+    void setChoice(const QString& icon, const QString& text);
+    void setOpen(bool on) { open_ = on; update(); }
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override { return sizeHint(); }
+protected:
+    void paintEvent(QPaintEvent*) override;
+private:
+    QString icon_;
+    bool open_ = false;
+};
+
+// Плашка выбора вместо обычного меню: заголовок и пункты — значок, название и
+// пояснение, текущий отмечен. Появляется у кнопки внутри окна; закрывается выбором,
+// щелчком мимо, Esc или колёсиком. Стрелки ↑↓ и Enter — с клавиатуры.
+struct Choice { QString icon, title, text; };
+class ChoicePlate : public QWidget {
+    Q_OBJECT
+public:
+    // picked(i) — выбрали пункт i (плашка к этому времени уже закрывается)
+    static ChoicePlate* open(QWidget* anchor, const QString& title, const QList<Choice>& items, int current,
+                             const std::function<void(int)>& picked);
+    ~ChoicePlate() override;
+protected:
+    bool eventFilter(QObject* o, QEvent* e) override;
+    void keyPressEvent(QKeyEvent* e) override;
+private:
+    ChoicePlate(QWidget* anchor, const QString& title, const QList<Choice>& items, int current,
+                const std::function<void(int)>& picked);
+    void place();
+    void dismiss();
+    QPointer<QWidget> anchor_;
+    std::function<void(int)> picked_;
+    QList<QAbstractButton*> rows_;
+    bool done_ = false;
 };
 
 // Выбор звука вкл/выкл: набор AutoQ, «Мои звуки», «Без звука» и «Добавить свой

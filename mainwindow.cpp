@@ -475,7 +475,7 @@ void MainWindow::buildActionsCard() {
     head->setContentsMargins(0, 0, 0, 0);
     head->setSpacing(10);
     modeSeg_ = new Segmented({T("По очереди"), T("Вместе"), T("Зажать"), T("По шагам")}, false);
-    modeSeg_->setToolTip(T("Режим работы:\nПо очереди — действия одно за другим (скип диалогов: ЛКМ, потом F).\nВместе — нажать все сразу, как F3+A.\nЗажать — держать нажатыми, пока кликер включён (копать, бежать).\nПо шагам — каждый шаг только нажимает ↓ или только отпускает ↑ (кикфлипы, отмены)."));
+    modeSeg_->setToolTip(T("Режим работы:\nПо очереди — действия одно за другим (скип диалогов: ЛКМ, потом F).\nВместе — нажать все сразу, как F3+A.\nЗажать — держать нажатыми, пока кликер включён (копать, бежать).\nПо шагам — каждый шаг нажимает ↓, отпускает ↑ или делает клик ↕ (кикфлипы, отмены)."));
     modeSeg_->button(0)->setAccessibleName(T("Режим: по очереди"));
     modeSeg_->button(1)->setAccessibleName(T("Режим: вместе"));
     modeSeg_->button(2)->setAccessibleName(T("Режим: зажать"));
@@ -780,6 +780,22 @@ void MainWindow::buildProfileCard() {
     hk->addWidget(captureBtn_);
     hk->addStretch(1);
     lay->addLayout(hk);
+    // кнопка мыши или буква обычно доходят до игры; можно забрать их только под AutoQ
+    blockRow_ = new QWidget();
+    auto* br = new QHBoxLayout(blockRow_);
+    br->setContentsMargins(0, 2, 0, 0);
+    br->setSpacing(8);
+    blockSwitch_ = new ToggleSwitch();
+    blockSwitch_->setToolTip(T("Включено — клавиша только запускает и останавливает кликер: игра, Windows и другие программы её нажатие не получают.\n"
+                               "Выключено — нажатие доходит до игры как обычно."));
+    blockSwitch_->setAccessibleName(T("Не пропускать нажатие в игру"));
+    br->addWidget(blockSwitch_);
+    auto* bl = mkLabel(T("Не пропускать нажатие в игру"), "muted");
+    bl->setWordWrap(true);
+    bl->setToolTip(blockSwitch_->toolTip());
+    br->addWidget(bl, 1);
+    blockRow_->hide();
+    lay->addWidget(blockRow_);
     hotkeyStatus_ = mkLabel(QString(), "hint");
     hotkeyStatus_->setWordWrap(true);
     hotkeyStatus_->hide();
@@ -952,12 +968,12 @@ void MainWindow::connectSignals() {
         }
         cur_.startDelayMs = actionsEdit_->startDelay();
         // «повтор через» — тот же интервал, что в карточке «Скорость»
-        const int iv = qBound(game_.minIntervalMs, actionsEdit_->interval(), 60000);
+        const int iv = qBound(repeatMin(), actionsEdit_->interval(), 60000);
         if (iv != cur_.intervalMs) {
             cur_.intervalMs = iv;
             syncSlider();
-            syncSpeedBox();
         }
+        syncSpeedBox();         // от числа действий зависит, можно ли интервал меньше минимума
         applyModeLayout();
         commit();
     });
@@ -965,7 +981,7 @@ void MainWindow::connectSignals() {
         if (loading_ || v <= 0) return;
         const int unit = unitSeg_->current();
         const int iv = unit == 1 ? qRound(1000.0 / v) : unit == 2 ? qRound(60000.0 / v) : qRound(v);
-        cur_.intervalMs = qBound(game_.minIntervalMs, iv, 60000);
+        cur_.intervalMs = qBound(repeatMin(), iv, 60000);
         syncSlider();
         commit();
     });
@@ -1043,6 +1059,15 @@ void MainWindow::connectSignals() {
         HotkeySpec sp; sp.key = k;
         setHotkey(sp, true);
     });
+    connect(blockSwitch_, &ToggleSwitch::toggled, this, [this](bool on) {
+        if (loading_ || !hasGame() || on == hotkeySpec_.block) return;
+        Games::setStartKeyBlock(game_.id, on);
+        hotkeySpec_.block = on;
+        updateHotkeyInfo();
+        rebuildBindings();
+        notify(on ? T("%1 — только для AutoQ: в игру нажатие не попадает").arg(hotkeySpec_.display())
+                  : T("%1 — снова нажимается и в игре").arg(hotkeySpec_.display()));
+    });
     connect(captureBtn_, &KeyCaptureButton::captureStarted, this, &MainWindow::onCaptureStarted);
     connect(captureBtn_, &KeyCaptureButton::captureFinished, this, &MainWindow::onCaptureFinished);
     connect(captureBtn_, &KeyCaptureButton::hint, this, [this](const QString& t) {
@@ -1091,7 +1116,7 @@ void MainWindow::connectMini() {
     connect(mini_, &MiniWindow::modeChosen, this, [this](int m) { setGameMode(gameModeFromInt(m)); });
     connect(mini_, &MiniWindow::intervalChosen, this, [this](int ms) {
         if (ms == cur_.intervalMs) return;
-        cur_.intervalMs = qMax(ms, game_.minIntervalMs);
+        cur_.intervalMs = qMax(ms, repeatMin());
         stateToUi();
         commit();
     });
@@ -1602,7 +1627,7 @@ void MainWindow::updateActionsHint() {
     if (m == GameMode::Steps) {
         const QList<ActionStep> list = cur_.runList(m);
         actionsTitle_->setText(T("По шагам ↓ ↑"));
-        QString hint = T("Каждый круг: шаги один за другим, с паузами между ними · %1. Стрелка на шаге: ↓ — нажать, ↑ — отпустить.").arg(every);
+        QString hint = T("Каждый круг: шаги один за другим, с паузами между ними · %1. Над клавишей — режим шага: нажать ↓, отпустить ↑ или клик ↕.").arg(every);
         if (!Steps::strayUps(list).isEmpty())
             hint += ' ' + T("Шаги с пунктиром пропускаются: «отпустить» без «нажать» раньше.");
         const QList<ActionStep> left = Steps::leftDown(list);
@@ -1613,7 +1638,7 @@ void MainWindow::updateActionsHint() {
         actionsTitle_->setText(hold ? T("Одно действие — зажать") : T("Одно действие — повторять"));
         actionsHint_->setText(hold
             ? T("Пока кликер включён — кнопка зажата. Ушёл из игры — отпускается, вернулся — снова зажата.")
-            : T("Нажимает снова и снова (%1). «Держать» — сколько держать нажатым. Можно добавить ещё действия.").arg(every));
+            : T("Нажимает снова и снова (%1). Над клавишей — режим: клик или держать нажатым. Можно добавить ещё действия.").arg(every));
     } else switch (m) {
         case GameMode::Combo:
             actionsTitle_->setText(T("Вместе (комбинация)"));
@@ -1633,7 +1658,7 @@ void MainWindow::updateActionsHint() {
 void MainWindow::stateToUi() {
     const bool wasLoading = loading_;
     loading_ = true;
-    cur_.intervalMs = qMax(cur_.intervalMs, game_.minIntervalMs);
+    cur_.intervalMs = qMax(cur_.intervalMs, repeatMin());
     randomizeSwitch_->setChecked(cur_.randomize);
     jitterBox_->setValue(cur_.jitterMs);
     jitterBox_->setEnabled(cur_.randomize);
@@ -1663,7 +1688,7 @@ void MainWindow::syncSpeedBox() {
     const bool wasLoading = loading_;
     loading_ = true;
     const int unit = qMax(0, unitSeg_->current());
-    const int minMs = qMax(1, game_.minIntervalMs);
+    const int minMs = qMax(1, repeatMin());
     const bool multi = (cur_.multi() && game_.mode != GameMode::Hold) || game_.mode == GameMode::Steps;
     if (unit == 1) {
         speedBox_->setDecimals(cur_.intervalMs > 2000 ? 2 : 1);
@@ -1681,7 +1706,7 @@ void MainWindow::syncSpeedBox() {
         speedCaption_->setText(multi ? T("Циклов в минуту") : T("Кликов в минуту"));
     } else {
         speedBox_->setDecimals(0);
-        speedBox_->setRange(minMs, 60000);
+        speedBox_->setRange(repeatMin(), 60000);
         speedBox_->setSingleStep(1);
         speedBox_->setSuffix(T(" мс"));
         speedBox_->setValue(cur_.intervalMs);
@@ -1700,7 +1725,8 @@ ClickerConfig MainWindow::buildConfig(const GameDef& g, const GameState& st, con
     if (g.mode != GameMode::Sequence && g.mode != GameMode::Steps)
         for (ActionStep& a : c.actions) a.afterMs = 0;
     c.startDelayMs = st.startDelayMs;
-    c.intervalMs = qMax(st.intervalMs, g.minIntervalMs);
+    c.intervalMs = qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs));
+    c.minCycleMs = g.minIntervalMs;
     c.randomize = st.randomize;
     c.jitterMs = st.jitterMs;
     c.lockToWindow = st.lockWindow;
@@ -1798,7 +1824,9 @@ double MainWindow::perSecond(const GameDef& g, const GameState& st) const {
         for (const ActionStep& a : list) n += a.press != ActionStep::Up;
     }
     const bool combo = g.mode == GameMode::Combo && n > 1;
-    double cycle = FrameSync::cycleMs(list, qMax(st.intervalMs, g.minIntervalMs), g.mode == GameMode::Combo);
+    // круг целиком — не быстрее минимума игры (паузы между клавишами бывают 0)
+    double cycle = qMax<double>(g.minIntervalMs, FrameSync::cycleMs(list, qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs)),
+                                                                     g.mode == GameMode::Combo));
     if (st.frameSync) {                 // в такт: целое число кадров на цикл
         const double f = FrameSync::frameMs(syncHz(st, boundHandle(g.id)));
         cycle = FrameSync::frames(cycle, f) * f;
@@ -1826,8 +1854,9 @@ void MainWindow::updateRate() {
         QString t;
         if (cur_.frameSync) {
             const double hz = syncHz(cur_, boundHandle(game_.id)), f = FrameSync::frameMs(hz);
-            const int fr = FrameSync::frames(FrameSync::cycleMs(cur_.runList(game_.mode), qMax(cur_.intervalMs, game_.minIntervalMs),
-                                                                game_.mode == GameMode::Combo), f);
+            const int fr = qMax(FrameSync::frames(FrameSync::cycleMs(cur_.runList(game_.mode), qMax(cur_.intervalMs, repeatMin()),
+                                                                     game_.mode == GameMode::Combo), f),
+                                FrameSync::frames(game_.minIntervalMs, f));
             QString every = everyFrames(fr);
             if (cur_.randomize && cur_.jitterMs > 0) every = T("в среднем ") + every;
             t = T("В такт %1 Гц: %2 (%3 мс) · %4 в минуту")
@@ -1888,7 +1917,7 @@ void MainWindow::updatePresetLabel() {
         a.soundOff = b.soundOff;
         if (game_.mode != GameMode::Steps) a.steps = b.steps;   // не в «По шагам» шаги не жмутся
         a.startDelayMs = b.startDelayMs;
-        a.intervalMs = qMax(a.intervalMs, game_.minIntervalMs);
+        a.intervalMs = qMax(a.intervalMs, a.repeatMin(game_.mode, game_.minIntervalMs));
         const bool modeOk = p.mode < 0 || gameModeFromInt(p.mode) == game_.mode;
         if (a == b && modeOk) { name = p.name; break; }
     }
@@ -2161,8 +2190,8 @@ void MainWindow::newProfile(int base) {
         st.soundOff = cur_.soundOff;
         st.steps = cur_.steps;
         st.startDelayMs = cur_.startDelayMs;
-        st.intervalMs = qMax(st.intervalMs, game_.minIntervalMs);
         if (p.mode >= 0) mode = gameModeFromInt(p.mode);
+        st.intervalMs = qMax(st.intervalMs, st.repeatMin(mode, game_.minIntervalMs));
     }
     Games::saveProfile(game_.id, n, st, static_cast<int>(mode));
     Games::setActiveProfile(game_.id, n);
@@ -2791,7 +2820,11 @@ void MainWindow::rebuildBindings() {
     auto add = [&list](const HotkeySpec& sp, const HkTarget& t) {
         if (!sp.isValid()) return;
         for (HkBinding& b : list)
-            if (b.spec == sp) { b.targets << t; return; }
+            if (b.spec == sp) {
+                b.spec.block = b.spec.block || sp.block;    // одна клавиша — забрали у игры для одного, значит, для всех
+                b.targets << t;
+                return;
+            }
         list << HkBinding{sp, {t}};
     };
     for (const GameDef& g : Games::list()) {
@@ -2806,7 +2839,10 @@ void MainWindow::rebuildBindings() {
     if (hotkey_) {
         QList<HotkeySpec> specs;
         for (const HkBinding& b : bindings_) specs << b.spec;
-        if (specs != hotkey_->bindings()) hotkey_->setBindings(specs);
+        const QList<HotkeySpec> now = hotkey_->bindings();
+        bool same = specs == now;           // == не смотрит на block — сверяем и его
+        for (int i = 0; same && i < specs.size(); ++i) same = specs[i].block == now[i].block;
+        if (!same) hotkey_->setBindings(specs);
     }
 }
 
@@ -2814,11 +2850,33 @@ void MainWindow::setHotkey(const HotkeySpec& sp, bool save) {
     if (!sp.isValid()) return;
     hotkeySpec_ = sp;
     hotkeyPick_->setCurrent(sp.isChord() ? QString() : sp.key, sp.display());   // в списке сочетаний нет
-    if (save && hasGame()) Games::setStartKey(game_.id, sp);
+    if (save && hasGame()) {
+        Games::setStartKey(game_.id, sp);
+        hotkeySpec_.block = Games::startKeyBlock(game_.id);     // та же клавиша — как было, другая — пропускается
+    }
     hotkeyStatus_->hide();
+    updateHotkeyInfo();
+    if (mini_) mini_->setHotkey(sp.isChord() ? QString() : sp.key, sp.display());
+    rebuildBindings();
+    updateTrayState();
+    updateGameItems();
+}
+
+// Под клавишей: как она работает (сквозная, сочетание, не доходит до игры) и переключатель
+void MainWindow::updateHotkeyInfo() {
+    const HotkeySpec& sp = hotkeySpec_;
+    blockRow_->setVisible(sp.canBlock());
+    {
+        QSignalBlocker b(blockSwitch_);
+        blockSwitch_->setChecked(sp.block && sp.canBlock());
+    }
     if (sp.isChord()) {
         hotkeyInfo_->setText(T("«%1» — две клавиши: зажми %2 и нажми %3. Обе при этом нажимаются в игре как обычно.")
                                  .arg(sp.display(), Keys::label(sp.hold), Keys::label(sp.key)));
+        hotkeyInfo_->show();
+    } else if (sp.canBlock() && sp.block) {
+        hotkeyInfo_->setText(T("«%1» только запускает и останавливает кликер — в игру и другие программы нажатие не попадает.")
+                                 .arg(sp.display()));
         hotkeyInfo_->show();
     } else if (sp.isMouse()) {
         hotkeyInfo_->setText(T("«%1» — кнопка мыши: включает кликер и при этом нажимается в игре как обычно.")
@@ -2831,10 +2889,6 @@ void MainWindow::setHotkey(const HotkeySpec& sp, bool save) {
     } else {
         hotkeyInfo_->hide();
     }
-    if (mini_) mini_->setHotkey(sp.isChord() ? QString() : sp.key, sp.display());
-    rebuildBindings();
-    updateTrayState();
-    updateGameItems();
 }
 
 void MainWindow::onCaptureStarted() {
@@ -2874,7 +2928,7 @@ void MainWindow::updateHotkeyStatus() {
             text = T("⚠ Горячая клавиша ждёт разрешения: Системные настройки → Конфиденциальность и безопасность → Универсальный доступ → AutoQ.");
             break;
 #endif
-            text = hotkeySpec_.passthrough()
+            text = hotkeySpec_.passthrough() || hotkeySpec_.isMouse()
                        ? T("⚠ Для «%1» нужен XInput2 — выбери F-клавишу или сочетание с Ctrl/Alt.")
                              .arg(hotkeySpec_.display())
                        : T("⚠ Глобальные клавиши недоступны (нет подключения к X11).");
@@ -2942,7 +2996,7 @@ void MainWindow::updateMonitor(bool full) {
     const QList<ActionStep> list = run ? r->st.runList(mode) : cur_.runList(mode);
     auto stepName = [mode](const ActionStep& a) {
         if (mode != GameMode::Steps) return a.label();
-        return a.label() + (a.press == ActionStep::Up ? QStringLiteral(" ↑") : QStringLiteral(" ↓"));
+        return a.label() + ' ' + a.pressMark();
     };
     QString text;
     if (list.isEmpty()) {
@@ -3093,7 +3147,7 @@ void MainWindow::syncMini() {
         items << MiniWindow::GameItem{g.id, g.name,
                                       AqIcons::gameTile(g.icon, QColor(g.color), g.image, 22, 2.0, false, t.light)};
     mini_->setGames(items, game_.id);
-    mini_->setState(cur_, game_.mode, game_.minIntervalMs);
+    mini_->setState(cur_, game_.mode, repeatMin());
     mini_->setHotkey(hotkeySpec_.isChord() ? QString() : hotkeySpec_.key, hotkeySpec_.display());
     updateMiniLive();
 }

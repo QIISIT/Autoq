@@ -62,6 +62,10 @@ struct HotkeySpec {
     QString key;   // каноническое имя клавиши или кнопка мыши: "mouse:2", "mouse:8", "mouse:9"
     int mods = 0;
     QString hold;  // клавиша, которую держат, пока жмут key ("" — обычный хоткей)
+    // «Не пропускать нажатие в игру»: кнопка мыши или буква/цифра (обычно сквозные)
+    // только включает кликер — игра и другие программы нажатие не получают. В строке
+    // (toString) не хранится — у клавиши старта игры отдельно. В == не участвует.
+    bool block = false;
 
     bool isChord() const { return !hold.isEmpty(); }
     // годится ли клавиша быть первой в сочетании (не Shift/Ctrl/Alt, не CapsLock, не мышь)
@@ -77,6 +81,7 @@ struct HotkeySpec {
     // доходит до игры и других программ (клавиша продолжает печататься).
     // Сочетание из двух клавиш — всегда сквозное: обе доходят до игры.
     bool passthrough() const;
+    bool canBlock() const;      // сквозная сама по себе (не сочетание) — её можно не пропускать
     QString toString() const;   // "ctrl+alt+f7", "tab+f"
     QString display() const;    // "Ctrl+Alt+F7", "Tab+F"
     static HotkeySpec parse(const QString& s);

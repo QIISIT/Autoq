@@ -91,6 +91,10 @@ ActionStep ActionStep::fromItem(const QString& name) {
 
 QString ActionStep::label() const { return mouse ? MouseButtons::shortLabel(button) : Keys::label(key); }
 
+QString ActionStep::pressMark() const {
+    return press == Up ? QStringLiteral("↑") : press == Down ? QStringLiteral("↓") : QStringLiteral("↕");
+}
+
 QList<ActionStep> GameState::runList(GameMode m) const {
     if (m != GameMode::Steps) return actions;
     return steps.isEmpty() ? Steps::fromActions(actions) : steps;
@@ -98,6 +102,14 @@ QList<ActionStep> GameState::runList(GameMode m) const {
 
 QList<ActionStep> GameState::pressList(GameMode m) const {
     return m == GameMode::Steps ? Steps::pressedInputs(runList(m)) : actions;
+}
+
+int repeatMinMs(GameMode m, int count, int gameMinMs) {
+    return (m == GameMode::Steps || (m == GameMode::Sequence && count > 1)) ? 0 : gameMinMs;
+}
+
+int GameState::repeatMin(GameMode m, int gameMinMs) const {
+    return repeatMinMs(m, int(m == GameMode::Steps ? runList(m).size() : actions.size()), gameMinMs);
 }
 
 bool GameState::usesMouse(GameMode m) const {
@@ -162,6 +174,8 @@ QList<int> Steps::strayUps(const QList<ActionStep>& steps) {
         if (s.press == ActionStep::Up) {
             if (k < 0) out << i;
             else down.removeAt(k);
+        } else if (s.press == ActionStep::Click) {
+            if (k >= 0) down.removeAt(k);       // нажать и отпустить: после шага не зажата
         } else if (k < 0) {
             down << s;
         }
@@ -174,7 +188,7 @@ QList<ActionStep> Steps::leftDown(const QList<ActionStep>& steps) {
     for (const ActionStep& s : steps) {
         int k = -1;
         for (int j = 0; j < down.size(); ++j) if (down[j].sameInput(s)) { k = j; break; }
-        if (s.press == ActionStep::Up) { if (k >= 0) down.removeAt(k); }
+        if (s.press == ActionStep::Up || s.press == ActionStep::Click) { if (k >= 0) down.removeAt(k); }
         else if (k < 0) down << s;
     }
     return down;
@@ -475,12 +489,14 @@ void Games::setCurrentId(const QString& id) {
 
 // ---------------------------------------------------------------------------
 // Действия хранятся строками: "m:1:<держать>:<пауза после>" или "k:f3:<держать>:<пауза после>";
-// шаги «По шагам» — с пятым полем: "m:1:0:150:d" (нажать) / "m:1:0:0:u" (отпустить)
-static QString encodeStep(const ActionStep& a) {
+// шаги «По шагам» — с пятым полем: "m:1:0:150:d" (нажать) / "m:1:0:0:u" (отпустить) /
+// "m:1:0:0:c" (нажать и отпустить; шаг без поля — «нажать», как в 1.14)
+static QString encodeStep(const ActionStep& a, bool step = false) {
     QString s = QString("%1:%2:%3:%4").arg(a.mouse ? "m" : "k", a.mouse ? QString::number(a.button) : a.key)
                                       .arg(a.holdMs).arg(a.afterMs);
     if (a.press == ActionStep::Down) s += ":d";
     else if (a.press == ActionStep::Up) s += ":u";
+    else if (step) s += ":c";
     return s;
 }
 
@@ -506,7 +522,7 @@ static bool decodeStep(const QString& str, ActionStep* out) {
     a.holdMs = qBound(0, p.value(2).toInt(), 10000);
     a.afterMs = qBound(0, p.value(3).toInt(), 60000);
     const QString pr = p.value(4);
-    a.press = pr == "d" ? ActionStep::Down : pr == "u" ? ActionStep::Up : ActionStep::Click;
+    a.press = pr == "d" ? ActionStep::Down : pr == "u" ? ActionStep::Up : pr == "c" ? ActionStep::Click : -1;
     *out = a;
     return true;
 }
@@ -517,7 +533,7 @@ static void writeState(QSettings& s, const QString& prefix, const GameState& st)
     s.setValue(prefix + "actions", acts);
     // шаги и старт через N мс — ключи только если заданы (старые версии их не знают)
     QStringList steps;
-    for (const ActionStep& a : st.steps) steps << encodeStep(a);
+    for (const ActionStep& a : st.steps) steps << encodeStep(a, true);
     if (steps.isEmpty()) s.remove(prefix + "steps"); else s.setValue(prefix + "steps", steps);
     if (st.startDelayMs > 0) s.setValue(prefix + "startDelay", st.startDelayMs); else s.remove(prefix + "startDelay");
     s.setValue(prefix + "interval", st.intervalMs);
@@ -568,13 +584,13 @@ static GameState readState(QSettings& s, const QString& prefix, const GameState&
     for (const QString& e : s.value(prefix + "steps").toStringList()) {
         ActionStep a;
         if (!decodeStep(e, &a) || st.steps.size() >= kMaxSteps) continue;
-        if (a.press == ActionStep::Click) a.press = ActionStep::Down;   // шаг — всегда нажать или отпустить
+        if (a.press < 0) a.press = ActionStep::Down;     // без пятого поля — «нажать»
         a.holdMs = 0;
         st.steps << a;
     }
     if (!s.contains(prefix + "steps")) st.steps = def.steps;
     st.startDelayMs = qBound(0, s.value(prefix + "startDelay", def.startDelayMs).toInt(), kMaxStartDelayMs);
-    st.intervalMs = qBound(1, s.value(prefix + "interval", def.intervalMs).toInt(), 60000);
+    st.intervalMs = qBound(0, s.value(prefix + "interval", def.intervalMs).toInt(), 60000);
     st.randomize = s.value(prefix + "randomize", def.randomize).toBool();
     st.jitterMs = qBound(0, s.value(prefix + "jitter", def.jitterMs).toInt(), 1000);
     st.lockWindow = s.value(prefix + "lockWindow", def.lockWindow).toBool();
@@ -591,7 +607,7 @@ GameState Games::loadState(const GameDef& g) {
     GameState def = defaultState(g);
     GameState st = (s->contains(gkey(g.id, "state/interval")) || s->contains(gkey(g.id, "state/actions")))
                        ? readState(*s, gkey(g.id, "state/"), def) : def;
-    st.intervalMs = qMax(st.intervalMs, g.minIntervalMs);
+    st.intervalMs = qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs));
     return st;
 }
 
@@ -736,11 +752,11 @@ GameState Games::loadProfile(const QString& gameId, const QString& name, int* mo
     if (pf.path.isEmpty()) return def;
     auto f = openProfile(pf.path);
     GameState st = readState(*f, kProfilePrefix, def);
-    if (ok) st.intervalMs = qMax(st.intervalMs, g.minIntervalMs);
-    if (mode) {
-        const int m = f->value(QString(kProfilePrefix) + "mode", -1).toInt();
-        *mode = (m >= 0 && m <= kLastMode) ? m : -1;
-    }
+    const int m = f->value(QString(kProfilePrefix) + "mode", -1).toInt();
+    const bool hasMode = m >= 0 && m <= kLastMode;
+    // режим профиля (если он свой) — от него зависит, можно ли «повтор через» меньше минимума
+    if (ok) st.intervalMs = qMax(st.intervalMs, st.repeatMin(hasMode ? gameModeFromInt(m) : g.mode, g.minIntervalMs));
+    if (mode) *mode = hasMode ? m : -1;
     return st;
 }
 
@@ -820,8 +836,9 @@ QString Games::importProfile(const QString& gameId, const QString& file, QString
     GameState st = readState(*f, kProfilePrefix, def);
     bool ok = false;
     const GameDef g = get(gameId, &ok);
-    if (ok) st.intervalMs = qMax(st.intervalMs, g.minIntervalMs);
     const int m = f->value(QString(kProfilePrefix) + "mode", -1).toInt();
+    if (ok) st.intervalMs = qMax(st.intervalMs, st.repeatMin((m >= 0 && m <= kLastMode) ? gameModeFromInt(m) : g.mode,
+                                                             g.minIntervalMs));
     const bool ov = f->value(QString(kProfilePrefix) + "overlay", true).toBool();
     if (fromGame) *fromGame = f->value("AutoQ/game").toString() == gameId ? QString()
                                                                         : f->value("AutoQ/gameName").toString();
@@ -853,14 +870,32 @@ void Games::setDefaultStartKey(const HotkeySpec& sp) {
 
 HotkeySpec Games::startKey(const QString& gameId) {
     auto s = AppSettings::open();
-    const HotkeySpec sp = HotkeySpec::parse(s->value(gkey(gameId, "hotkey")).toString());
-    return sp.isValid() ? sp : defaultStartKey();
+    HotkeySpec sp = HotkeySpec::parse(s->value(gkey(gameId, "hotkey")).toString());
+    if (!sp.isValid()) return defaultStartKey();
+    sp.block = s->value(gkey(gameId, "hotkeyBlock"), false).toBool();
+    return sp;
 }
 
 void Games::setStartKey(const QString& gameId, const HotkeySpec& sp) {
     if (gameId.isEmpty() || !sp.isValid()) return;
     auto s = AppSettings::open();
+    // другая клавиша — «не пропускать в игру» снова выключено: буква, которую выбрали
+    // вместо Mouse 4, не должна вдруг перестать печататься
+    if (HotkeySpec::parse(s->value(gkey(gameId, "hotkey")).toString()) != sp) s->remove(gkey(gameId, "hotkeyBlock"));
     s->setValue(gkey(gameId, "hotkey"), sp.toString());
+    s->sync();
+}
+
+bool Games::startKeyBlock(const QString& gameId) {
+    auto s = AppSettings::open();
+    return s->value(gkey(gameId, "hotkeyBlock"), false).toBool();
+}
+
+void Games::setStartKeyBlock(const QString& gameId, bool on) {
+    if (gameId.isEmpty()) return;
+    auto s = AppSettings::open();
+    if (on) s->setValue(gkey(gameId, "hotkeyBlock"), true);
+    else s->remove(gkey(gameId, "hotkeyBlock"));
     s->sync();
 }
 

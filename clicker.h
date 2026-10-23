@@ -18,6 +18,7 @@ struct ClickerConfig {
     bool steps = false;          // «По шагам»: actions — шаги «нажать» / «отпустить»
     int startDelayMs = 0;        // первый цикл — через N мс после старта
     int intervalMs = 100;        // пауза между циклами
+    int minCycleMs = 0;          // круг целиком (от начала до начала следующего) — не быстрее
     bool randomize = false;
     int jitterMs = 30;
     bool lockToWindow = false;   // кликать только в выбранном окне игры

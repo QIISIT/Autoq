@@ -349,7 +349,7 @@ void MiniWindow::setState(const GameState& st, GameMode mode, int minInterval) {
         QStringList parts;
         for (int i = 0; i < list.size(); ++i) {
             if (parts.size() == 3) { parts << QString("+%1").arg(list.size() - i); break; }
-            parts << list[i].label() + (list[i].press == ActionStep::Up ? "↑" : "↓");
+            parts << list[i].label() + list[i].pressMark();
         }
         moreActs_->setText(parts.join(' '));
         moreActs_->setToolTip(T("Шаги меняются в большом окне"));

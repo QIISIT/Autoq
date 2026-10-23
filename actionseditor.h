@@ -1,9 +1,9 @@
 #pragma once
 // Действия игры: сколько угодно (до kMaxActions). У каждого — кнопка мыши или
-// клавиша и «держать, мс» (0 — обычный щелчок); между действиями — пауза
-// (режим «По очереди») или «+» (вместе / зажать). Длинный ряд переносится.
-// Режим «По шагам»: каждый шаг — только нажать (↓) или только отпустить (↑),
-// стрелка на шаге меняет одно на другое (кикфлип: ЛКМ↓, ПКМ↓, ПКМ↑, ЛКМ↑).
+// клавиша и режим над ней (плашка выбора): клик или «держать N мс»; между
+// действиями — пауза (режим «По очереди») или «+» (вместе / зажать). Длинный ряд переносится.
+// Режим «По шагам»: шаг — нажать (↓), отпустить (↑) или клик (нажать и отпустить),
+// стрелка на шаге быстро меняет нажать / отпустить (кикфлип: ЛКМ↓, ПКМ↓, ПКМ↑, ЛКМ↑).
 // Цепочка начинается с «старт через N мс» и кончается «повтор через N мс»
 // (пауза после последнего — тот же интервал, что в карточке «Скорость»).
 // Шаги и действия можно таскать за ручку и менять местами, правый клик — меню.
@@ -13,7 +13,6 @@
 #include <functional>
 #include "games.h"
 
-class QComboBox;
 class QSpinBox;
 class QToolButton;
 class QPushButton;
@@ -21,6 +20,7 @@ class QLabel;
 class QFrame;
 class KeyPicker;
 class FlowLayout;
+class ChoiceButton;
 
 class ActionsEditor : public QWidget {
     Q_OBJECT
@@ -51,11 +51,11 @@ private:
     struct SlotUi {
         QFrame* frame = nullptr;
         QToolButton* grip = nullptr;
-        QComboBox* type = nullptr;
+        ChoiceButton* mode = nullptr;    // режим: клик / держать, в «По шагам» — нажать / отпустить / клик
+        QLabel* caption = nullptr;       // «Зажать»: выбирать нечего — просто подпись
         KeyPicker* value = nullptr;
         QToolButton* dir = nullptr;      // «По шагам»: ↓ нажать / ↑ отпустить
-        QSpinBox* hold = nullptr;
-        QLabel* holdLabel = nullptr;
+        QSpinBox* hold = nullptr;        // «держать N мс» — только у режима «держать»
         QSpinBox* after = nullptr;
         QToolButton* remove = nullptr;
     };
@@ -77,6 +77,9 @@ private:
     void rebuild();
     void updateValues();
     void updateDir(SlotUi& ui, const ActionStep& a);
+    void updateMode(SlotUi& ui, const ActionStep& a);
+    void openModePlate(int i);
+    int repeatMin() const;                   // «повтор через» от (0 — паузы между клавишами)
     void edited();
     int dropIndex(const QPoint& p) const;
     bool steps() const { return mode_ == GameMode::Steps; }
@@ -84,7 +87,8 @@ private:
 
     QList<ActionStep> actions_;
     GameMode mode_ = GameMode::Sequence;
-    int startMs_ = 0, intervalMs_ = 100, minIntervalMs_ = 1;
+    int startMs_ = 0, intervalMs_ = 100, minIntervalMs_ = 1;   // minIntervalMs_ — минимум игры
+    int slotH_ = 88;                        // высота карточек ряда (по содержимому)
     FlowLayout* flow_;
     QList<SlotUi> slots_;
     QList<QWidget*> units_;                 // действие + пауза/«+» после него

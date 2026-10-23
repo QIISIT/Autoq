@@ -266,6 +266,15 @@ bool Clicker::doSteps(const ClickerConfig& cfg) {
                 sendAction(display_, a, false);
                 down.erase(down.begin() + k);
             }
+        } else if (a.press == ActionStep::Click) {
+            // нажать и сразу отпустить (зажатую раньше — тоже: после шага она отпущена)
+            if (k >= 0) down.erase(down.begin() + k);
+            if (sendAction(display_, a, true)) {
+                sendAction(display_, a, false);
+                const int idx = Steps::inputIndex(inputs, a);
+                if (idx >= 0) countAction(idx);
+                clickCount_ += 1;
+            }
         } else if (k < 0 && sendAction(display_, a, true)) {
             down.push_back(a);
             const int idx = Steps::inputIndex(inputs, a);
@@ -394,7 +403,7 @@ void Clicker::loop() {
                 const int j = static_cast<int>(std::lround(cfg.jitterMs / cfg.frameMs));   // разброс — целыми кадрами
                 if (j > 0) n += std::uniform_int_distribution<int>(-j, j)(rng);
             }
-            grid.advance(n);
+            grid.advance(std::max(n, FrameSync::frames(cfg.minCycleMs, cfg.frameMs)));
             continue;
         }
         grid.reset();
@@ -427,15 +436,18 @@ void Clicker::loop() {
         }
         if (!held_.empty()) releaseHeld();   // режим сменили на ходу
 
+        const auto cycleStart = std::chrono::steady_clock::now();
         if (allowed) doCycle(cfg);
 
         int wait = cfg.intervalMs;
         if (cfg.randomize && cfg.jitterMs > 0) {
             std::uniform_int_distribution<int> dist(-cfg.jitterMs, cfg.jitterMs);
-            wait = std::max(1, wait + dist(rng));
+            wait = std::max(cfg.intervalMs > 0 ? 1 : 0, wait + dist(rng));
         }
-        // ждём кусочками, чтобы "Стоп" срабатывал сразу даже при большом интервале
-        auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(wait);
+        // ждём кусочками, чтобы "Стоп" срабатывал сразу даже при большом интервале;
+        // круг целиком — не быстрее minCycleMs (паузы между клавишами могут быть 0)
+        auto until = std::max(std::chrono::steady_clock::now() + std::chrono::milliseconds(wait),
+                              cycleStart + std::chrono::milliseconds(cfg.minCycleMs));
         while (running_) {
             auto now = std::chrono::steady_clock::now();
             if (now >= until) break;

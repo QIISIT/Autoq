@@ -92,7 +92,6 @@ SettingsDialog::SettingsDialog(OverlayWindow* overlay, Page page, QWidget* paren
 
     pages_ = new QStackedWidget();
     auto scrolled = [](QWidget* page) {
-        WheelGuard::install(page);
         auto* scroll = new QScrollArea();
         scroll->setObjectName("mainScroll");
         scroll->setWidget(page);

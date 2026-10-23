@@ -88,7 +88,7 @@ struct GameDef {
 };
 
 // Одно действие: клик кнопкой мыши или нажатие клавиши.
-// В режиме «По шагам» — только нажать (Down) или только отпустить (Up)
+// В режиме «По шагам» — нажать (Down), отпустить (Up) или нажать и сразу отпустить (Click)
 struct ActionStep {
     enum Press { Click = 0, Down = 1, Up = 2 };
     bool mouse = true;
@@ -96,13 +96,14 @@ struct ActionStep {
     QString key = "f";        // имя из Keys
     int holdMs = 0;           // сколько держать нажатым (0 — обычный щелчок)
     int afterMs = 0;          // пауза после действия перед следующим («По очереди», «По шагам»)
-    int press = Click;        // «По шагам»: Down — нажать, Up — отпустить
+    int press = Click;        // «По шагам»: Down — нажать, Up — отпустить, Click — нажать и отпустить
     bool sameInput(const ActionStep& o) const;   // та же кнопка / клавиша
     bool operator==(const ActionStep& o) const;
     bool operator!=(const ActionStep& o) const { return !(*this == o); }
     QString itemName() const;                    // "mouse:1" или имя клавиши
     static ActionStep fromItem(const QString& name);
     QString label() const;                       // "ЛКМ", "F"
+    QString pressMark() const;                   // шаг: "↓" нажать, "↑" отпустить, "↕" нажать и отпустить
 };
 
 // Настройки действий одной игры (текущие и в профилях)
@@ -124,8 +125,14 @@ struct GameState {
     // а в «По шагам» — каждая клавиша, которую шаги нажимают, один раз
     QList<ActionStep> pressList(GameMode m) const;
     bool usesMouse(GameMode m) const;
+    // меньше какого «повтор через» в этом режиме нельзя (см. repeatMinMs)
+    int repeatMin(GameMode m, int gameMinMs) const;
     bool operator==(const GameState& o) const;
 };
+// «Повтор через» — не меньше минимума игры. Но в «По шагам» и «По очереди» из 2+ действий
+// это пауза между клавишами — там от 0 (круг целиком всё равно не быстрее минимума игры:
+// за этим следит кликер, ClickerConfig::minCycleMs)
+int repeatMinMs(GameMode m, int count, int gameMinMs);
 constexpr int kMaxActions = 64;
 constexpr int kMaxSteps = 128;
 constexpr int kMaxStartDelayMs = 60000;
@@ -195,7 +202,9 @@ namespace Games {
     HotkeySpec defaultStartKey();                // общая клавиша по умолчанию (F6)
     void setDefaultStartKey(const HotkeySpec& sp);
     HotkeySpec startKey(const QString& gameId);
-    void setStartKey(const QString& gameId, const HotkeySpec& sp);
+    void setStartKey(const QString& gameId, const HotkeySpec& sp);   // другая клавиша — block снова выкл.
+    bool startKeyBlock(const QString& gameId);   // «не пропускать нажатие в игру» (см. HotkeySpec::block)
+    void setStartKeyBlock(const QString& gameId, bool on);
     bool armed(const QString& gameId);
     void setArmed(const QString& gameId, bool on);
     int keyMode(const QString& gameId);          // 0 — нажал: вкл/выкл, 1 — работает, пока держишь

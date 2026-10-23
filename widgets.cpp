@@ -36,6 +36,11 @@
 #include <QScreen>
 #include <QFileDialog>
 #include <QStandardPaths>
+#include <QElapsedTimer>
+#include <QApplication>
+#include <QDoubleSpinBox>
+#include <QGraphicsDropShadowEffect>
+#include "animations.h"
 
 // ---------------------------------------------------------------------------
 ToggleSwitch::ToggleSwitch(QWidget* parent) : QAbstractButton(parent) {
@@ -795,30 +800,311 @@ QString askText(QWidget* parent, const QString& title, const QString& label, con
 }
 
 // ---------------------------------------------------------------------------
-void WheelGuard::install(QWidget* root) {
-    auto* g = new WheelGuard(root);
-    for (QWidget* w : root->findChildren<QWidget*>()) {
-        if (qobject_cast<QSlider*>(w) || qobject_cast<QComboBox*>(w) || qobject_cast<QAbstractSpinBox*>(w)) {
-            w->setFocusPolicy(Qt::StrongFocus);
-            w->installEventFilter(g);
-        }
-    }
+namespace {
+// поле, которое колёсико меняет (полоса прокрутки — не поле: она листает)
+bool wheelField(QObject* o) {
+    return qobject_cast<QAbstractSpinBox*>(o) || qobject_cast<QComboBox*>(o) ||
+           (qobject_cast<QAbstractSlider*>(o) && !qobject_cast<QScrollBar*>(o));
 }
 
-bool WheelGuard::eventFilter(QObject* o, QEvent* e) {
-    if (e->type() == QEvent::Wheel) {
-        auto* w = qobject_cast<QWidget*>(o);
-        if (w && !w->hasFocus()) {
-            // колёсико — странице: ищем прокрутку выше по иерархии
-            for (QWidget* p = w->parentWidget(); p; p = p->parentWidget())
-                if (auto* area = qobject_cast<QAbstractScrollArea*>(p)) {
-                    QCoreApplication::sendEvent(area->verticalScrollBar(), e);
-                    break;
-                }
-            return true;
+bool inScrollArea(const QWidget* w) {
+    for (const QWidget* p = w->parentWidget(); p && !p->isWindow(); p = p->parentWidget())
+        if (qobject_cast<const QAbstractScrollArea*>(p)) return true;
+    return false;
+}
+
+// курсор числа — между приставкой и подписью («50| мс», а не «50 мс|»)
+void keepCursorInNumber(QAbstractSpinBox* sb) {
+    if (sb->property("aqCursorGuard").toBool()) return;
+    auto* le = sb->findChild<QLineEdit*>();
+    if (!le) return;
+    sb->setProperty("aqCursorGuard", true);
+    QObject::connect(le, &QLineEdit::cursorPositionChanged, sb, [sb, le](int, int) {
+        if (le->hasSelectedText()) return;
+        QString pre, suf;
+        if (auto* s = qobject_cast<QSpinBox*>(sb)) { pre = s->prefix(); suf = s->suffix(); }
+        else if (auto* d = qobject_cast<QDoubleSpinBox*>(sb)) { pre = d->prefix(); suf = d->suffix(); }
+        if (pre.isEmpty() && suf.isEmpty()) return;
+        const QString text = le->text();
+        const int lo = !pre.isEmpty() && text.startsWith(pre) ? int(pre.size()) : 0;
+        const int hi = !suf.isEmpty() && text.endsWith(suf) ? int(text.size() - suf.size()) : int(text.size());
+        const int pos = le->cursorPosition();
+        if (lo <= hi && (pos < lo || pos > hi)) {
+            const QSignalBlocker b(le);
+            le->setCursorPosition(qBound(lo, pos, hi));
         }
+    });
+}
+}
+
+void InputGuard::install() {
+    if (!qApp) return;
+    qApp->installEventFilter(new InputGuard(qApp));
+}
+
+bool InputGuard::eventFilter(QObject* o, QEvent* e) {
+    if (e->type() == QEvent::Polish && wheelField(o)) {
+        auto* w = static_cast<QWidget*>(o);
+        // фокус от колёсика: иначе первый же оборот колёсика над полем «выбирал» бы его
+        if (w->focusPolicy() == Qt::WheelFocus) w->setFocusPolicy(Qt::StrongFocus);
+        if (auto* sb = qobject_cast<QAbstractSpinBox*>(o)) keepCursorInNumber(sb);
+    } else if (e->type() == QEvent::Wheel) {
+        static QElapsedTimer clock;
+        if (!clock.isValid()) clock.start();
+        const qint64 now = clock.elapsed();
+        if (!wheelField(o)) {
+            // колёсико дошло до прокрутки — страницу листают
+            if (auto* area = qobject_cast<QAbstractScrollArea*>(o->parent()))
+                if (area->viewport() == o) lastPageWheel_ = now;
+            if (qobject_cast<QScrollBar*>(o)) lastPageWheel_ = now;
+            return QObject::eventFilter(o, e);
+        }
+        auto* w = static_cast<QWidget*>(o);
+        if (!inScrollArea(w)) return QObject::eventFilter(o, e);    // листать нечего (мини-окно) — как раньше
+        if (w->hasFocus() && now - lastPageWheel_ > 600) return QObject::eventFilter(o, e);
+        // мимо выбранного поля — событие идёт дальше вверх, до прокрутки страницы
+        e->ignore();
+        return true;
     }
     return QObject::eventFilter(o, e);
+}
+
+// ---------------------------------------------------------------------------
+ChoiceButton::ChoiceButton(QWidget* parent) : QAbstractButton(parent) {
+    setCursor(Qt::PointingHandCursor);
+    setFocusPolicy(Qt::StrongFocus);
+    setAttribute(Qt::WA_Hover);
+}
+
+void ChoiceButton::setChoice(const QString& icon, const QString& text) {
+    icon_ = icon;
+    setText(text);
+    setAccessibleName(text);
+    updateGeometry();
+    update();
+}
+
+static QFont choiceFont(int px, QFont::Weight weight) {
+    QFont f(Theme::uiFamily());
+    f.setPixelSize(px);
+    f.setWeight(weight);
+    return f;
+}
+
+QSize ChoiceButton::sizeHint() const {
+    const QFontMetrics fm(choiceFont(11, QFont::DemiBold));
+    return QSize(6 + 13 + 4 + fm.horizontalAdvance(text()) + 3 + 10 + 5, qMax(22, fm.height() + 8));
+}
+
+void ChoiceButton::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing);
+    const auto& t = Theme::t();
+    const bool hot = underMouse() || hasFocus() || open_ || isDown();
+    const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+    if (hot) {
+        p.setPen(QPen(open_ || hasFocus() ? t.red : t.fieldBorder2, 1));
+        p.setBrush(t.keycap);
+        p.drawRoundedRect(r, 7, 7);
+    }
+    const qreal cy = height() / 2.0;
+    AqIcons::paint(p, icon_, QRectF(6, cy - 6.5, 13, 13), t.redHi, 2.3);
+    p.setFont(choiceFont(11, QFont::DemiBold));
+    p.setPen(hot ? t.text : t.text2);
+    const int tx = 6 + 13 + 4;
+    p.drawText(QRect(tx, 0, width() - tx - 15, height()), Qt::AlignVCenter | Qt::AlignLeft, text());
+    AqIcons::paint(p, open_ ? "chevron-up" : "chevron", QRectF(width() - 15, cy - 5, 10, 10), t.muted, 2.6);
+}
+
+// ---------------------------------------------------------------------------
+namespace {
+// пункт плашки: значок в плитке, название, пояснение; текущий — с галочкой
+class ChoiceRow : public QAbstractButton {
+public:
+    ChoiceRow(const Choice& c, bool current, QWidget* parent) : QAbstractButton(parent), c_(c), current_(current) {
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::StrongFocus);
+        setAttribute(Qt::WA_Hover);
+        setText(c.title);
+        setAccessibleName(c.title);
+        setAccessibleDescription(c.text);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    }
+    bool hasHeightForWidth() const override { return true; }
+    int heightForWidth(int w) const override {
+        const QFontMetrics tf(choiceFont(13, QFont::DemiBold)), df(choiceFont(11, QFont::Normal));
+        const int dh = c_.text.isEmpty() ? 0
+                     : df.boundingRect(QRect(0, 0, qMax(40, w - kText - 30), 1000), Qt::TextWordWrap, c_.text).height();
+        return qMax(52, 9 + tf.height() + (dh ? 1 + dh : 0) + 9);
+    }
+    QSize sizeHint() const override { return QSize(256, heightForWidth(256)); }
+protected:
+    static constexpr int kText = 54;
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const auto& t = Theme::t();
+        const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+        const bool hot = underMouse() || isDown();
+        if (current_ || hot || hasFocus()) {
+            p.setPen(hasFocus() ? QPen(t.red, 1) : Qt::NoPen);
+            p.setBrush(current_ ? t.redTint : t.field);
+            p.drawRoundedRect(r, 10, 10);
+        }
+        const QRectF tile(10, 9, 34, 34);
+        p.setPen(current_ ? Qt::NoPen : QPen(t.fieldBorder2, 1));
+        p.setBrush(current_ ? t.red : t.keycap);
+        p.drawRoundedRect(tile.adjusted(0.5, 0.5, -0.5, -0.5), 9, 9);
+        AqIcons::paint(p, c_.icon, tile.adjusted(8, 8, -8, -8), current_ ? t.onRed : t.text2, 2.3);
+        const QFont tf = choiceFont(13, QFont::DemiBold), df = choiceFont(11, QFont::Normal);
+        const QFontMetrics tm(tf);
+        const int right = width() - (current_ ? 30 : 12);
+        p.setFont(tf);
+        p.setPen(t.text);
+        p.drawText(QRect(kText, 9, right - kText, tm.height()), Qt::AlignLeft | Qt::AlignVCenter, c_.title);
+        if (!c_.text.isEmpty()) {
+            p.setFont(df);
+            p.setPen(t.muted);
+            p.drawText(QRect(kText, 9 + tm.height() + 1, width() - kText - 30, height()), Qt::TextWordWrap, c_.text);
+        }
+        if (current_) AqIcons::paint(p, "check", QRectF(width() - 25, 9 + tm.height() / 2.0 - 7, 14, 14), t.redHi, 2.6);
+    }
+    void keyPressEvent(QKeyEvent* e) override {
+        if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) { click(); return; }
+        if (e->key() == Qt::Key_Up || e->key() == Qt::Key_Down || e->key() == Qt::Key_Escape) { e->ignore(); return; }
+        QAbstractButton::keyPressEvent(e);
+    }
+private:
+    Choice c_;
+    bool current_;
+};
+
+constexpr int kPlateShadow = 14;        // поле вокруг плашки под тень
+}
+
+ChoicePlate* ChoicePlate::open(QWidget* anchor, const QString& title, const QList<Choice>& items, int current,
+                               const std::function<void(int)>& picked) {
+    if (!anchor || !anchor->window() || items.isEmpty()) return nullptr;
+    return new ChoicePlate(anchor, title, items, current, picked);
+}
+
+ChoicePlate::ChoicePlate(QWidget* anchor, const QString& title, const QList<Choice>& items, int current,
+                         const std::function<void(int)>& picked)
+    : QWidget(anchor->window()), anchor_(anchor), picked_(picked) {
+    setAttribute(Qt::WA_DeleteOnClose);
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(kPlateShadow, kPlateShadow - 4, kPlateShadow, kPlateShadow + 4);
+    auto* box = new QFrame();
+    box->setObjectName("choicePlate");
+    box->setAttribute(Qt::WA_StyledBackground);
+    auto* shadow = new QGraphicsDropShadowEffect(box);
+    shadow->setBlurRadius(26);
+    shadow->setOffset(0, 6);
+    shadow->setColor(QColor(0, 0, 0, Theme::isDark() ? 140 : 60));
+    box->setGraphicsEffect(shadow);
+    outer->addWidget(box);
+    auto* lay = new QVBoxLayout(box);
+    lay->setContentsMargins(6, 6, 6, 6);
+    lay->setSpacing(2);
+    if (!title.isEmpty()) {
+        auto* head = new QLabel(title.toUpper());
+        head->setObjectName("plateTitle");
+        head->setTextFormat(Qt::PlainText);
+        lay->addWidget(head);
+    }
+    for (int i = 0; i < items.size(); ++i) {
+        auto* row = new ChoiceRow(items[i], i == current, box);
+        connect(row, &QAbstractButton::clicked, this, [this, i]() {
+            if (done_) return;
+            const auto cb = picked_;
+            dismiss();
+            if (cb) cb(i);
+        });
+        lay->addWidget(row);
+        rows_ << row;
+    }
+    setFixedWidth(288 + 2 * kPlateShadow);
+    if (auto* cb = qobject_cast<ChoiceButton*>(anchor)) cb->setOpen(true);
+    connect(anchor, &QObject::destroyed, this, [this]() { dismiss(); });     // ряд пересобрали
+    qApp->installEventFilter(this);
+    place();
+    show();
+    raise();
+    Anim::appear(this);
+    if (QAbstractButton* f = rows_.value(qBound(0, current, int(rows_.size()) - 1))) f->setFocus(Qt::PopupFocusReason);
+}
+
+ChoicePlate::~ChoicePlate() {
+    if (qApp) qApp->removeEventFilter(this);
+    if (auto* cb = qobject_cast<ChoiceButton*>(anchor_.data())) cb->setOpen(false);
+}
+
+void ChoicePlate::place() {
+    QWidget* win = parentWidget();
+    if (!win || !anchor_) return;
+    const int h = heightForWidth(width()) > 0 ? heightForWidth(width()) : sizeHint().height();
+    resize(width(), h);
+    const QPoint a = anchor_->mapTo(win, QPoint(0, 0));
+    int x = a.x() - kPlateShadow - 2;
+    int y = a.y() + anchor_->height() + 2 - (kPlateShadow - 4);
+    if (y + h - kPlateShadow > win->height() - 6) y = a.y() - h + kPlateShadow;     // снизу не влезает — над кнопкой
+    x = qBound(-kPlateShadow + 6, x, win->width() - width() + kPlateShadow - 6);
+    y = qMax(-kPlateShadow + 6, y);
+    move(x, y);
+}
+
+void ChoicePlate::dismiss() {
+    if (done_) return;
+    done_ = true;
+    const bool hadFocus = isAncestorOf(QApplication::focusWidget());
+    hide();
+    if (hadFocus && anchor_ && anchor_->isVisible()) anchor_->setFocus(Qt::PopupFocusReason);
+    close();
+}
+
+void ChoicePlate::keyPressEvent(QKeyEvent* e) {
+    if (e->key() == Qt::Key_Escape) { dismiss(); return; }
+    if (e->key() == Qt::Key_Up || e->key() == Qt::Key_Down) {
+        int i = 0;
+        for (int k = 0; k < rows_.size(); ++k) if (rows_[k]->hasFocus()) i = k;
+        i = (i + (e->key() == Qt::Key_Down ? 1 : int(rows_.size()) - 1)) % int(rows_.size());
+        rows_[i]->setFocus(Qt::TabFocusReason);
+        return;
+    }
+    QWidget::keyPressEvent(e);
+}
+
+bool ChoicePlate::eventFilter(QObject* o, QEvent* e) {
+    if (done_) return false;
+    switch (e->type()) {
+        case QEvent::MouseButtonPress:
+        case QEvent::MouseButtonDblClick: {
+            auto* w = qobject_cast<QWidget*>(o);
+            if (!w || w == this || isAncestorOf(w)) break;
+            // по самой кнопке — только закрыть (иначе она тут же открыла бы плашку снова)
+            const bool onAnchor = anchor_ && (w == anchor_ || anchor_->isAncestorOf(w));
+            dismiss();
+            return onAnchor;
+        }
+        case QEvent::Wheel: {
+            auto* w = qobject_cast<QWidget*>(o);
+            if (w && w != this && !isAncestorOf(w)) dismiss();
+            break;
+        }
+        case QEvent::KeyPress:
+            if (static_cast<QKeyEvent*>(e)->key() == Qt::Key_Escape) { dismiss(); return true; }
+            break;
+        case QEvent::Resize:
+        case QEvent::Move:
+        case QEvent::Hide:
+        case QEvent::WindowDeactivate:
+            // окно или кнопка сдвинулись / пропали — плашка висела бы не там
+            if (o == parentWidget() || o == anchor_.data()) dismiss();
+            break;
+        default:
+            break;
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------

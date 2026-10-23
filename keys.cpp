@@ -320,9 +320,16 @@ bool HotkeySpec::isGlobalSafe() const {
     return true;
 }
 
+bool HotkeySpec::canBlock() const {
+    if (isChord() || !isGlobalSafe()) return false;
+    return isMouse() || (Keys::isTypingKey(key) && !(mods & (ModCtrl | ModAlt | ModWin)));
+}
+
 bool HotkeySpec::passthrough() const {
     // «держу A, жму B»: ловим по хукам / сырым событиям — обе клавиши доходят до игры
     if (isChord()) return isGlobalSafe();
+    // «не пропускать в игру» — забираем нажатие себе, как у F-клавиш
+    if (block && canBlock()) return false;
     // кнопка мыши — всегда «сквозная»: нажатие доходит до игры
     if (isMouse()) return isGlobalSafe();
     // буква/цифра/знак без Ctrl, Alt и Win: ловим, не отнимая у программ
