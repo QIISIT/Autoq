@@ -20,7 +20,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build-macos"
 DIST="$ROOT/dist-macos"
-VERSION="$(sed -n 's/^#define AQ_VERSION *"\(.*\)"/\1/p' "$ROOT/appinfo.h")"
+VERSION="$(sed -n 's/^#define AQ_VERSION *"\([^"]*\)".*/\1/p' "$ROOT/appinfo.h")"   # без комментария после строки
+FILEVER="${VERSION// /-}"     # «1.16.2 beta» -> «1.16.2-beta» для имени файла
 
 # Qt: из install-qt-action (QT_ROOT_DIR), иначе Homebrew
 QT_DIR="${QT_ROOT_DIR:-}"
@@ -60,8 +61,8 @@ cp -R "$APP" "$DIST/stage/"
 ln -s /Applications "$DIST/stage/Программы"
 cp "$ROOT/macos/README_MAC.txt" "$DIST/stage/Как открыть AutoQ.txt"
 hdiutil create -volname "AutoQ $VERSION" -srcfolder "$DIST/stage" -ov -format UDZO \
-    "$DIST/AutoQ-$VERSION-macOS.dmg"
+    "$DIST/AutoQ-$FILEVER-macOS.dmg"
 rm -rf "$DIST/stage"
 (cd "$DIST" && shasum -a 256 ./*.dmg > SHA256SUMS.txt)
 ls -la "$DIST"
-echo "Готово: $DIST/AutoQ-$VERSION-macOS.dmg (подпись: $([ "$IDENTITY" = "-" ] && echo ad-hoc || echo "$IDENTITY"))"
+echo "Готово: $DIST/AutoQ-$FILEVER-macOS.dmg (подпись: $([ "$IDENTITY" = "-" ] && echo ad-hoc || echo "$IDENTITY"))"
