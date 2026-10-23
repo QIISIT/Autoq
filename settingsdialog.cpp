@@ -691,7 +691,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
     QStringList scNames;
     for (int v : Theme::guiScaleChoices()) scNames << (v == 100 ? T("100% (как в системе)") : QString("%1%").arg(v));
     scaleSeg_ = new Segmented(scNames, false);
-    scaleSeg_->setToolTip(T("Всё окно крупнее или мельче — текст, кнопки, значки. Меняется после перезапуска."));
+    scaleSeg_->setToolTip(T("Всё окно крупнее — текст, кнопки, значки. Меняется после перезапуска."));
     scRow->addWidget(scaleSeg_);
     lay->addLayout(scRow);
     scaleNote_ = mkLabel(QString(), "small");
