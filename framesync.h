@@ -14,6 +14,11 @@ namespace FrameSync {
     double frameMs(double hz);                   // 144 Гц -> 6,94 мс; 0 — нет такта
     // длительность цикла без такта: интервал + «держать» и паузы действий
     double cycleMs(const QList<ActionStep>& actions, int intervalMs, bool simultaneous);
+    // средняя длина цикла, как её отмеряет кликер: пауза = интервал ± разброс (не меньше 1 мс),
+    // цикл — не короче minCycleMs. Разброс больше интервала — пауза чаще упирается в 1 мс, и
+    // в среднем цикл длиннее интервала
+    double meanCycleMs(const QList<ActionStep>& actions, int intervalMs, bool simultaneous, int jitterMs,
+                       int minCycleMs);
     int frames(double cycleMs, double frameMs);  // целое число кадров на цикл (не меньше 1)
     // Windows: период и момент последнего обновления экрана (DWM). Иначе false.
     bool vblank(double* periodMs, std::chrono::steady_clock::time_point* at);

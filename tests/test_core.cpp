@@ -986,6 +986,14 @@ static void testV113() {
         CHECK(FrameSync::cycleMs({a1, a2}, 100, false) == 132);
         CHECK(FrameSync::cycleMs({a1, a2}, 100, true) == 107);    // вместе: самое долгое «держать»
         CHECK(FrameSync::cycleMs({a1}, 0, false) == 6);           // интервал не меньше 1 мс
+        // средняя длина цикла с разбросом — как отмеряет кликер
+        ActionStep tap;
+        CHECK(FrameSync::meanCycleMs({tap}, 100, false, 0, 20) == 100);
+        CHECK(FrameSync::meanCycleMs({tap}, 10, false, 0, 20) == 20);              // не короче минимума круга
+        CHECK(qAbs(FrameSync::meanCycleMs({tap}, 100, false, 30, 20) - 100) < 1e-9); // разброс ровно вокруг
+        // 1 мс ± 30: половина пауз упирается в 1 мс — в среднем ≈ 8,6 мс, а не 1
+        CHECK(qAbs(FrameSync::meanCycleMs({tap}, 1, false, 30, 1) - 526.0 / 61) < 1e-9);
+        CHECK(FrameSync::meanCycleMs({a1, a2}, 100, false, 0, 1) == FrameSync::cycleMs({a1, a2}, 100, false));
     }
     {
         using namespace std::chrono;

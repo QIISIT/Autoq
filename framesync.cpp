@@ -34,6 +34,16 @@ double FrameSync::cycleMs(const QList<ActionStep>& actions, int intervalMs, bool
     return c;
 }
 
+double FrameSync::meanCycleMs(const QList<ActionStep>& actions, int intervalMs, bool simultaneous, int jitterMs,
+                              int minCycleMs) {
+    const int wait = std::max(1, intervalMs);
+    const double busy = cycleMs(actions, intervalMs, simultaneous) - wait;   // «держать» и паузы
+    if (jitterMs <= 0) return std::max<double>(minCycleMs, busy + wait);
+    double sum = 0;
+    for (int u = -jitterMs; u <= jitterMs; ++u) sum += std::max<double>(minCycleMs, busy + std::max(1, intervalMs + u));
+    return sum / (2 * jitterMs + 1);
+}
+
 int FrameSync::frames(double cycle, double frame) {
     if (frame <= 0) return 1;
     return std::max(1, static_cast<int>(std::lround(cycle / frame)));

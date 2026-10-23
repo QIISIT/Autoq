@@ -1856,11 +1856,15 @@ double MainWindow::perSecond(const GameDef& g, const GameState& st) const {
     }
     const bool combo = g.mode == GameMode::Combo && n > 1;
     // круг целиком — не быстрее minCycle (минимум игры, а где паузы свои — 1 мс)
-    double cycle = qMax<double>(st.minCycle(g.mode, g.minIntervalMs), FrameSync::cycleMs(list, qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs)),
-                                                                     g.mode == GameMode::Combo));
+    const int interval = qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs));
+    double cycle;
     if (st.frameSync) {                 // в такт: целое число кадров на цикл
         const double f = FrameSync::frameMs(syncHz(st, boundHandle(g.id)));
+        cycle = qMax<double>(st.minCycle(g.mode, g.minIntervalMs), FrameSync::cycleMs(list, interval, g.mode == GameMode::Combo));
         cycle = FrameSync::frames(cycle, f) * f;
+    } else {                            // разброс больше интервала — в среднем медленнее
+        cycle = FrameSync::meanCycleMs(list, interval, g.mode == GameMode::Combo, st.randomize ? st.jitterMs : 0,
+                                       st.minCycle(g.mode, g.minIntervalMs));
     }
     return combo ? 1000.0 / cycle : 1000.0 / cycle * n;
 }
