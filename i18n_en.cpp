@@ -2217,5 +2217,7 @@ extern const AqTranslation kAqEnglish[] = {
      "● Unsaved changes: \"Save\" or \"Reset\" in the ⋯ menu."},
     {"%1 в минуту",
      "%1 per minute"},
+    {"клавиша действия совпадает с клавишей старт/стоп (%1). В Wayland нажатия кликера не отличить от твоих — он выключал бы сам себя. Поставь старт/стоп на другую клавишу, например F6.",
+     "an action key matches the start/stop key (%1). On Wayland the clicker's presses look the same as yours, so it would turn itself off. Set start/stop to another key, e.g. F6."},
 };
 extern const int kAqEnglishCount = sizeof(kAqEnglish) / sizeof(kAqEnglish[0]);

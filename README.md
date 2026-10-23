@@ -1,4 +1,4 @@
-# AutoQ 1.16.1 beta — created by Qisit
+# AutoQ 1.16.2 beta — created by Qisit
 
 Автокликер с базой игр: скип диалогов в Genshin и похожих играх, спам,
 комбинации и удержание клавиш в Minecraft и своих играх. Четыре режима —

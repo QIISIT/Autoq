@@ -2625,20 +2625,29 @@ QString MainWindow::startProblemFor(const GameDef& g, const GameState& st) const
         return T("нет доступа к X11 — нажатия отправлять некуда.");
 #endif
     // действие = клавиша, которая что-то включает: кликер нажимал бы её сам
+#if !defined(_WIN32) && !defined(__APPLE__)
+    // Wayland (KDE Plasma 6.1+ и др.): нажатия кликера через XTEST идут через композитор (libei)
+    // и возвращаются в Xwayland как нажатия обычной клавиатуры — от человека их не отличить
+    static const bool ownEchoes = !qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY");
+#else
+    const bool ownEchoes = false;
+#endif
     for (const HkBinding& b : bindings_) {
         if (!(b.spec.mods == 0 || b.spec.mods == ModShift)) continue;
         // «сквозные» клавиши (буквы, цифры, кнопки мыши, сочетания) ловятся только с клавиатуры и мыши
         // человека: свои нажатия кликера хуки и сырые события пропускают. Значит, F может и включать,
         // и нажиматься: зажал F — кликер жмёт F. Забранные себе (F6, «не пропускать в игру») —
         // ловились бы и с кликера, а его нажатия до игры не дошли бы
-        if (b.spec.isChord() || b.spec.passthrough()) continue;
+        if (b.spec.isChord() || (b.spec.passthrough() && !ownEchoes)) continue;
         for (const ActionStep& a : st.runList(g.mode)) {
             const bool same = b.spec.isMouse() ? (a.mouse && a.button == b.spec.mouseButton())
                                                : (!a.mouse && a.key.compare(b.spec.key, Qt::CaseInsensitive) == 0);
             if (!same) continue;
             for (const HkTarget& t : b.targets)
                 if (t.kind == 0 && t.game == g.id)
-                    return T("клавиша действия совпадает с клавишей старт/стоп (%1) — кликер выключал бы сам себя.").arg(b.spec.display());
+                    return b.spec.passthrough()
+                               ? T("клавиша действия совпадает с клавишей старт/стоп (%1). В Wayland нажатия кликера не отличить от твоих — он выключал бы сам себя. Поставь старт/стоп на другую клавишу, например F6.").arg(b.spec.display())
+                               : T("клавиша действия совпадает с клавишей старт/стоп (%1) — кликер выключал бы сам себя.").arg(b.spec.display());
             return T("клавиша действия %1 — это клавиша другой игры или профиля в AutoQ: кликер нажимал бы её сам.").arg(b.spec.display());
         }
     }
