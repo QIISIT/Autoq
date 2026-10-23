@@ -22,6 +22,8 @@
 #include <QRegularExpression>
 #include <QScreen>
 #include <QGuiApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -401,6 +403,8 @@ int scaledRadius(int base, int cardR) {
     return qMax(0, qRound(base * cardR / 14.0));
 }
 
+QString elementsQss(const Theme::Tokens& t, const Theme::Appearance& a);
+
 QString buildQss(const Theme::Tokens& t, const Theme::Appearance& a) {
     QString q = QString::fromUtf8(kQss);
     // скругления — по стилю и редактору (база — «Студия», карточки 14 px)
@@ -448,6 +452,139 @@ QString buildQss(const Theme::Tokens& t, const Theme::Appearance& a) {
     q.replace("@ui@", g_ui);
     q.replace("@mono@", g_mono);
     q.replace("@chevron@", chevronFile(t.muted));
+    return q + elementsQss(t, a);
+}
+
+// Вид мелких элементов (редактор интерфейса): правила поверх темы — по группам
+QString rgbaStr(const QColor& c, int alpha) {
+    return QString("rgba(%1, %2, %3, %4)").arg(c.red()).arg(c.green()).arg(c.blue()).arg(alpha);
+}
+
+QString elementsQss(const Theme::Tokens& t, const Theme::Appearance& a) {
+    QString q;
+    for (auto it = a.elements.constBegin(); it != a.elements.constEnd(); ++it) {
+        const QString& id = it.key();
+        const Theme::ElementStyle& e = it.value();
+        if (e.isDefault()) continue;
+        const bool own = !e.color.isEmpty();
+        const QColor c = own ? QColor(e.color) : t.red;
+        const QColor tint = mixc(c, t.field, t.light ? 0.10 : 0.16);
+        const QColor line = mixc(c, t.field, 0.55);
+        const QColor cHi = t.light ? withLightness(c, 0.0, 0.40) : withLightness(c, 0.60, 0.80);
+        const QColor onC = luminance(c) > 0.45 ? QColor("#121214") : QColor("#FFFFFF");
+        const QString R = e.radius >= 0 ? QString(" border-radius: %1px;").arg(e.radius) : QString();
+        auto rule = [&q](const QString& sel, const QString& body) {
+            if (!body.trimmed().isEmpty()) q += sel + " {" + body + " }\n";
+        };
+        if (id == "slot") {
+            QString b;
+            if (e.look == 1) b += QString(" background: %1; border: 1px solid %2;").arg(tint.name(), line.name());
+            else if (e.look == 2) b += QString(" background: transparent; border: 2px solid %1;").arg(c.name());
+            else if (e.look == 3) b += " border: 1px solid transparent;";
+            else if (own) b += QString(" border-color: %1;").arg(line.name());
+            rule("QFrame#slot", b + R);
+        } else if (id == "key") {
+            const QString sel = "QPushButton#keyPickBig, QToolButton#stepDir";
+            QString b;
+            if (e.look == 1) b += QString(" background: %1; border: 1px solid %2; border-bottom: 3px solid %3;").arg(tint.name(), line.name(), c.name());
+            else if (e.look == 2) b += QString(" background: transparent; border: 1px solid %1;").arg(c.name());
+            else if (e.look == 3) b += QString(" background: %1; border: 1px solid transparent;").arg(t.field.name());
+            else if (own) b += QString(" border-color: %1; border-bottom-color: %2;").arg(line.name(), c.name());
+            rule(sel, b + R);
+            if (e.size == 0) rule("QPushButton#keyPickBig", " font-size: 14px; min-height: 20px;");
+            else if (e.size == 2) rule("QPushButton#keyPickBig", " font-size: 22px; min-height: 32px;");
+            if (own) rule("QPushButton#keyPickBig:hover, QPushButton#keyPickBig:focus, QToolButton#stepDir:hover, QToolButton#stepDir:focus",
+                          QString(" border-color: %1;").arg(c.name()));
+        } else if (id == "pause") {
+            const QString sel = "QWidget[aqEl=\"pause\"] QSpinBox";
+            QString b;
+            if (e.look == 1) b += QString(" background: %1; border: 1px solid %2; color: %3;").arg(tint.name(), line.name(), cHi.name());
+            else if (e.look == 2) b += QString(" background: transparent; border: 1px solid %1;").arg(c.name());
+            else if (e.look == 3) b += " background: transparent; border: 1px solid transparent;";
+            else if (own) b += QString(" border-color: %1;").arg(line.name());
+            rule(sel, b + R);
+            if (own) rule(sel + ":focus", QString(" border-color: %1;").arg(c.name()));
+        } else if (id == "plate") {
+            QString b;
+            if (e.look == 1) b += QString(" background: %1; border: 1px solid %2;").arg(mixc(c, t.card, 0.06).name(), c.name());
+            else if (e.look == 2) b += QString(" border: 2px solid %1;").arg(c.name());
+            else if (e.look == 3) b += " border: 1px solid transparent;";
+            else if (own) b += QString(" border-color: %1;").arg(line.name());
+            rule("QFrame#choicePlate", b + R);
+        } else if (id == "add") {
+            QString b;
+            if (e.look == 1) b += QString(" background: %1; border: 1px dashed %2; color: %3;").arg(tint.name(), c.name(), cHi.name());
+            else if (e.look == 2) b += QString(" border: 1px solid %1;").arg(line.name());
+            else if (e.look == 3) b += " border: 1px solid transparent;";
+            else if (own) b += QString(" border-color: %1;").arg(line.name());
+            rule("QPushButton#addSecond", b + R);
+            if (own) rule("QPushButton#addSecond:hover", QString(" border-color: %1;").arg(c.name()));
+        } else if (id == "profile") {
+            const QString all = "QPushButton[aqEl=\"profile\"], QPushButton#ghost[aqEl=\"profile\"]";
+            const QString save = "QPushButton#accent[aqEl=\"profile\"]";
+            QString b, sb;
+            if (e.look == 1) {
+                b += QString(" background: %1; border: 1px solid %2; color: %3;").arg(tint.name(), line.name(), cHi.name());
+                sb += QString(" background: %1; border: 1px solid %2; color: %3;").arg(mixc(c, t.field, 0.28).name(), c.name(), cHi.name());
+            } else if (e.look == 2) {
+                b += QString(" background: transparent; border: 1px solid %1; color: %2;").arg(line.name(), t.text.name());
+                sb += QString(" background: transparent; border: 1px solid %1; color: %2;").arg(c.name(), cHi.name());
+            } else if (e.look == 3) {
+                b += QString(" background: %1; border: 1px solid transparent;").arg(t.field.name());
+                sb += QString(" background: %1; border: 1px solid transparent; color: %2;").arg(t.field.name(), cHi.name());
+            } else if (own) {
+                sb += QString(" background: %1; border: 1px solid %2; color: %3;").arg(tint.name(), c.name(), cHi.name());
+            }
+            QString sz;
+            if (e.size == 0) sz = " padding: 3px 10px; min-height: 16px; font-size: 11px;";
+            else if (e.size == 2) sz = " padding: 9px 14px; min-height: 30px; font-size: 13px;";
+            rule(all, b + R + sz);
+            rule(save, sb + R + sz);
+            if (own || e.look) {
+                rule(all.split(", ").join(":hover, ") + ":hover", QString(" border-color: %1;").arg(c.name()));
+                rule(save + "[dirty=\"true\"]", QString(" background: %1; color: %2; border: none;").arg(c.name(), onC.name()));
+            }
+        } else if (id == "seg") {
+            const QString chk = "QPushButton#seg:checked, QPushButton#segText:checked";
+            if (e.look == 1)
+                rule(chk, QString(" background: transparent; border: 1px solid %1; color: %2;").arg(c.name(), cHi.name()));
+            else if (e.look == 2)
+                rule(chk, QString(" background: %1; color: %2;").arg(tint.name(), cHi.name()));
+            else if (own)
+                rule(chk, QString(" background: %1; color: %2;").arg(c.name(), onC.name()));
+            if (e.radius >= 0) {
+                rule("QFrame#segBox", R);
+                rule("QPushButton#seg, QPushButton#segText", QString(" border-radius: %1px;").arg(qMax(0, e.radius - 3)));
+            }
+        } else if (id == "start") {
+            QString b, txt, chip;
+            if (e.look == 1) {
+                b += QString(" background: %1; border: 1px solid %2;").arg(tint.name(), line.name());
+                txt = cHi.name();
+                chip = QString(" color: %1; background: %2;").arg(cHi.name(), rgbaStr(c, 46));
+            } else if (e.look == 2) {
+                b += QString(" background: transparent; border: 2px solid %1;").arg(c.name());
+                txt = cHi.name();
+                chip = QString(" color: %1; background: %2;").arg(cHi.name(), rgbaStr(c, 46));
+            } else if (own) {
+                b += QString(" background: %1;").arg(c.name());
+                txt = onC.name();
+                chip = QString(" color: %1;").arg(onC.name());
+            }
+            rule("QPushButton#start", b + R);
+            if (e.look == 1 || e.look == 2) rule("QPushButton#start:hover", QString(" background: %1;").arg(mixc(c, t.field, 0.22).name()));
+            else if (own) rule("QPushButton#start:hover", QString(" background: %1;").arg(mixc(QColor("#FFFFFF"), c, 0.12).name()));
+            if (!txt.isEmpty()) rule("QLabel#startText", QString(" color: %1;").arg(txt));
+            if (!chip.isEmpty()) rule("QLabel#startChip", chip);
+        } else if (id == "hint") {
+            const QString sel = "QLabel#faint[aqEl=\"hint\"], QLabel#small[aqEl=\"hint\"]";
+            QString b;
+            if (own) b += QString(" color: %1;").arg(cHi.name());
+            if (e.size == 0) b += " font-size: 10px;";
+            else if (e.size == 2) b += " font-size: 14px;";
+            rule(sel, b);
+        }
+    }
     return q;
 }
 
@@ -734,6 +871,135 @@ int Theme::minUsableGuiScale() {
 }
 
 // ---------------------------------------------------------------------------
+// Мелкие элементы
+// ---------------------------------------------------------------------------
+QStringList Theme::elementIds() {
+    return {"slot", "key", "mode", "pause", "plate", "add", "profile", "seg", "start", "hint"};
+}
+
+QString Theme::elementLabel(const QString& id) {
+    if (id == "slot") return T("Шаги и действия");
+    if (id == "key") return T("Клавиши");
+    if (id == "mode") return T("Кнопка режима");
+    if (id == "pause") return T("Плашки пауз");
+    if (id == "plate") return T("Плашка выбора");
+    if (id == "add") return T("Кнопка «Ещё»");
+    if (id == "profile") return T("Кнопки профиля");
+    if (id == "seg") return T("Переключатели");
+    if (id == "start") return T("Кнопка «Старт»");
+    if (id == "hint") return T("Подсказки");
+    return id;
+}
+
+QString Theme::elementNote(const QString& id) {
+    if (id == "slot") return T("Карточки действий и шагов в ряду действий");
+    if (id == "key") return T("Большие клавиши в действиях и стрелки шагов");
+    if (id == "mode") return T("Над клавишей: клик, держать, нажать, отпустить");
+    if (id == "pause") return T("«Пауза», «старт через», «повтор через» и стрелки между ними");
+    if (id == "plate") return T("Всплывает, когда щёлкаешь по кнопке режима");
+    if (id == "add") return T("Добавить действие или шаг");
+    if (id == "profile") return T("«Новый», «Сохранить», «Сбросить», «Удалить»");
+    if (id == "seg") return T("Режим, мс / КПС / КПМ, «Вкл / выкл» и другие");
+    if (id == "start") return T("Большая кнопка в шапке");
+    if (id == "hint") return T("Серые пояснения под блоками");
+    return QString();
+}
+
+int Theme::elementCaps(const QString& id) {
+    if (id == "hint") return ElColor | ElSize | ElHide;
+    if (id == "profile") return ElLook | ElColor | ElRadius | ElSize | ElHide;
+    if (id == "slot" || id == "key") return ElLook | ElColor | ElRadius | ElSize;
+    if (elementIds().contains(id)) return ElLook | ElColor | ElRadius;
+    return 0;
+}
+
+QStringList Theme::elementLooks(const QString& id) {
+    const QString def = T("Как в теме");
+    if (id == "mode") return {def, T("Акцент — с подложкой"), T("Контур — рамка всегда")};
+    if (id == "seg") return {def, T("Выбранный — рамкой"), T("Выбранный — мягкой подложкой")};
+    if (id == "start") return {def, T("Мягкая"), T("Контур")};
+    if (id == "key") return {def, T("Акцент"), T("Контур"), T("Плоские")};
+    if (id == "add") return {def, T("Акцент"), T("Сплошная рамка"), T("Без рамки")};
+    if (elementCaps(id) & ElLook) return {def, T("Акцент"), T("Контур"), T("Без рамки")};
+    return {def};
+}
+
+QStringList Theme::elementSizes(const QString& id) {
+    if (id == "slot") return {T("Уже"), T("Обычные"), T("Шире")};
+    if (id == "profile") return {T("Ниже"), T("Обычные"), T("Выше")};
+    return {T("Мельче"), T("Обычные"), T("Крупнее")};
+}
+
+QList<int> Theme::elementRadii() { return {0, 4, 8, 12, 16, 24}; }
+
+Theme::Elements Theme::normalizeElements(const Elements& in) {
+    Elements out;
+    static const QRegularExpression hex("^#[0-9a-fA-F]{6}$");
+    for (auto it = in.constBegin(); it != in.constEnd(); ++it) {
+        const int caps = elementCaps(it.key());
+        if (!caps) continue;
+        ElementStyle e = it.value();
+        if (!(caps & ElLook) || e.look < 0 || e.look >= elementLooks(it.key()).size()) e.look = 0;
+        if (!(caps & ElColor) || !hex.match(e.color).hasMatch()) e.color.clear();
+        e.color = e.color.toUpper();
+        e.radius = caps & ElRadius ? qBound(-1, e.radius, 24) : -1;
+        if (!(caps & ElSize) || e.size < 0 || e.size > 2) e.size = 1;
+        if (!(caps & ElHide)) e.hidden = false;
+        if (!e.isDefault()) out.insert(it.key(), e);
+    }
+    return out;
+}
+
+QJsonObject Theme::elementsToJson(const Elements& in) {
+    QJsonObject o;
+    const Elements n = normalizeElements(in);
+    for (auto it = n.constBegin(); it != n.constEnd(); ++it) {
+        const ElementStyle& e = it.value();
+        QJsonObject j;
+        if (e.look) j["look"] = e.look;
+        if (!e.color.isEmpty()) j["color"] = e.color;
+        if (e.radius >= 0) j["radius"] = e.radius;
+        if (e.size != 1) j["size"] = e.size;
+        if (e.hidden) j["hidden"] = true;
+        o[it.key()] = j;
+    }
+    return o;
+}
+
+Theme::Elements Theme::elementsFromJson(const QJsonObject& o) {
+    Elements out;
+    for (auto it = o.constBegin(); it != o.constEnd(); ++it) {
+        const QJsonObject j = it.value().toObject();
+        ElementStyle e;
+        e.look = j.value("look").toInt(0);
+        e.color = j.value("color").toString();
+        e.radius = j.value("radius").toInt(-1);
+        e.size = j.value("size").toInt(1);
+        e.hidden = j.value("hidden").toBool(false);
+        out.insert(it.key(), e);
+    }
+    return normalizeElements(out);
+}
+
+Theme::ElementStyle Theme::element(const QString& id) { return current().elements.value(id); }
+
+QColor Theme::elementColor(const QString& id, const QColor& fallback) {
+    const QString c = current().elements.value(id).color;
+    return c.isEmpty() ? fallback : QColor(c);
+}
+
+int Theme::elementRadius(const QString& id, int base) {
+    const int r = current().elements.value(id).radius;
+    return r >= 0 ? r : base;
+}
+
+QColor Theme::mix(const QColor& a, const QColor& b, qreal t) { return mixc(a, b, t); }
+QColor Theme::onColor(const QColor& c) { return luminance(c) > 0.45 ? QColor("#121214") : QColor("#FFFFFF"); }
+QColor Theme::textColor(const QColor& c) {
+    return t().light ? withLightness(c, 0.0, 0.40) : withLightness(c, 0.60, 0.80);
+}
+
+// ---------------------------------------------------------------------------
 int Theme::r(int base) { return scaledRadius(base, cardRadiusFor(current())); }
 
 int Theme::sp(int base) { return qMax(0, qRound(base * densityFactor(current().density))); }
@@ -827,6 +1093,7 @@ Theme::Appearance Theme::loadAppearance() {
     a.displayFont = qBound(-1, s->value("uiDisplayFont", -1).toInt(), 2);
     a.textFont = qBound(-1, s->value("uiTextFont", -1).toInt(), 2);
     a.borders = qBound(0, s->value("uiBorders", 1).toInt(), 2);
+    a.elements = elementsFromJson(QJsonDocument::fromJson(s->value("uiElements").toString().toUtf8()).object());
     return a;
 }
 
@@ -845,6 +1112,9 @@ void Theme::saveAppearance(const Appearance& a) {
     s->setValue("uiDisplayFont", a.displayFont);
     s->setValue("uiTextFont", a.textFont);
     s->setValue("uiBorders", a.borders);
+    const QJsonObject el = elementsToJson(a.elements);
+    if (el.isEmpty()) s->remove("uiElements");
+    else s->setValue("uiElements", QString::fromUtf8(QJsonDocument(el).toJson(QJsonDocument::Compact)));
     s->sync();
 }
 
@@ -868,6 +1138,7 @@ void Theme::apply(QApplication& app, const Appearance& a) {
     if (!g_app.bgLight.isValid()) g_app.bgLight = defaultBg(false);
     g_app.variant = normalizeVariant(g_app.variant);
     g_app.anim = normalizeAnim(g_app.anim);
+    g_app.elements = normalizeElements(g_app.elements);
     const qreal oldDensity = densityFactor(g_app.density);
     g_dark = g_app.dark;
     g_tok = buildTokens(g_dark, g_dark ? g_app.bgDark : g_app.bgLight, g_app.accent, g_app.borders);

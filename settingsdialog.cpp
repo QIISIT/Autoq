@@ -10,6 +10,9 @@
 #include "games.h"
 #include "animations.h"
 #include "sounds.h"
+#include "styles.h"
+#include "styleui.h"
+#include <QMenu>
 #include <QApplication>
 #include <QGuiApplication>
 #include <QVBoxLayout>
@@ -122,7 +125,7 @@ SettingsDialog::SettingsDialog(OverlayWindow* overlay, Page page, QWidget* paren
     pages_->setCurrentIndex(page);
 
     rebuildBgRow();
-    refresh();
+    rebuildStyles();
     overlayToUi();
 
     int maxH = 900;
@@ -452,6 +455,49 @@ QWidget* SettingsDialog::buildAppearancePage() {
     lay->setSpacing(12);
     lay->addWidget(lbl(T("Всё меняется сразу. «Свой…» — любой цвет, с образцом окна."), "muted"));
 
+    // --- мои стили: оформление под своим именем (файлы — можно отправить другу)
+    lay->addWidget(lbl(T("Мои стили"), "fieldLabel"));
+    {
+        auto* box = new QWidget();
+        stylesFlow_ = new FlowLayout(box, 10, 10);
+        stylesFlow_->setContentsMargins(0, 0, 0, 0);
+        lay->addWidget(box);
+        stylesEmpty_ = lbl(T("Пока пусто. Сохрани текущее оформление под именем — потом к нему можно вернуться одним "
+                             "щелчком или отправить файл стиля другу."), "small");
+        stylesEmpty_->setWordWrap(true);
+        lay->addWidget(stylesEmpty_);
+        auto* row = new QHBoxLayout();
+        row->setSpacing(8);
+        auto* saveStyle = new QPushButton(T("Сохранить текущий вид…"));
+        saveStyle->setObjectName("accent");
+        saveStyle->setToolTip(T("Стиль интерфейса, тема, цвета, значки, анимации, шрифты, рамки и вид элементов — "
+                                "под своим именем. По желанию — и раскладка карточек"));
+        auto* importStyle = new QPushButton(T("Из файла…"));
+        importStyle->setToolTip(T("Добавить стиль из файла .aqstyle (например, от друга)"));
+        auto* openDir = new QPushButton(T("Папка стилей"));
+        openDir->setObjectName("ghost");
+        for (QPushButton* b : {saveStyle, importStyle, openDir}) {
+            b->setCursor(Qt::PointingHandCursor);
+            row->addWidget(b);
+        }
+        row->addStretch(1);
+        lay->addLayout(row);
+        connect(saveStyle, &QPushButton::clicked, this, [this]() {
+            QString name;
+            if (StyleUi::saveCurrent(this, layoutSource_ ? layoutSource_() : QString(), &name)) rebuildStyles();
+        });
+        connect(importStyle, &QPushButton::clicked, this, [this]() {
+            QString name;
+            if (!StyleUi::importFile(this, &name)) return;
+            rebuildStyles();
+            emit styleApplyRequested(name);     // добавили — сразу поставить (спросит про раскладку)
+        });
+        connect(openDir, &QPushButton::clicked, this, []() {
+            QDir().mkpath(Styles::dir());
+            QDesktopServices::openUrl(QUrl::fromLocalFile(Styles::dir()));
+        });
+    }
+
     // --- стиль интерфейса
     lay->addWidget(lbl(T("Стиль интерфейса"), "fieldLabel"));
     auto* vrow = new QHBoxLayout();
@@ -638,7 +684,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
     }
     auto* edReset = new QPushButton(T("Сбросить редактор"));
     edReset->setObjectName("ghost");
-    edReset->setToolTip(T("Скругление, плотность, шрифты и рамки — как у стиля"));
+    edReset->setToolTip(T("Скругление, плотность, шрифты, рамки и вид мелких элементов — как у стиля"));
     eg->addWidget(edReset, r++, 0, 1, 2, Qt::AlignLeft);
     lay->addWidget(ed);
     auto* edNote = lbl(T("Мелкие элементы не исчезнут: размеры кнопок и полей подстраиваются, а при нехватке места карточки встают в две или одну колонку."), "small");
@@ -770,6 +816,7 @@ QWidget* SettingsDialog::buildAppearancePage() {
         a.displayFont = -1;
         a.textFont = -1;
         a.borders = 1;
+        a.elements.clear();
         apply(a);
     });
     connect(scaleSeg_, &Segmented::changed, this, [this](int i) {
@@ -896,9 +943,97 @@ void SettingsDialog::apply(const Theme::Appearance& a) {
     emit appearanceChanged();
 }
 
+void SettingsDialog::reloadAppearance() {
+    rebuildBgRow();
+    rebuildStyles();
+    refresh();
+}
+
+void SettingsDialog::rebuildStyles() {
+    if (!stylesFlow_) return;
+    stylesFlow_->clear();
+    styleCards_.clear();
+    const QStringList names = Styles::names();
+    for (const QString& name : names) {
+        Styles::Profile p;
+        if (!Styles::load(name, &p)) continue;
+        auto* b = new CardButton();
+        b->setObjectName("choiceCard");
+        b->setCheckable(true);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setFixedWidth(176);
+        b->setToolTip(p.hasLayout() ? T("Поставить стиль «%1» (в нём есть раскладка карточек)").arg(name)
+                                    : T("Поставить стиль «%1»").arg(name));
+        b->setAccessibleName(T("Стиль: ") + name);
+        b->setContextMenuPolicy(Qt::CustomContextMenu);
+        auto* v = new QVBoxLayout(b);
+        v->setContentsMargins(8, 8, 8, 6);
+        v->setSpacing(4);
+        auto* pv = new ThemePreview();
+        pv->setAppearance(p.look);
+        pv->setFixedSize(160, 99);              // карточка 176 − поля 8 + 8; макет 316×196 — целиком
+        pv->setAttribute(Qt::WA_TransparentForMouseEvents);
+        v->addWidget(pv);
+        auto* nr = new QHBoxLayout();
+        nr->setSpacing(4);
+        auto* n = lbl(name, "gameName");
+        n->setAttribute(Qt::WA_TransparentForMouseEvents);
+        nr->addWidget(n, 1);
+        auto* more = new QToolButton();
+        more->setObjectName("icon");
+        more->setFixedSize(24, 24);
+        more->setCursor(Qt::PointingHandCursor);
+        more->setIcon(AqIcons::ui("more", Theme::t().muted, 14));
+        more->setToolTip(T("Ещё: обновить, переименовать, в файл, удалить"));
+        more->setAccessibleName(T("Ещё — стиль «%1»").arg(name));
+        nr->addWidget(more);
+        v->addLayout(nr);
+        if (p.hasLayout()) {
+            auto* tag = lbl(T("с раскладкой карточек"), "small");
+            tag->setAttribute(Qt::WA_TransparentForMouseEvents);
+            v->addWidget(tag);
+        }
+        stylesFlow_->addWidget(b);
+        styleCards_ << qMakePair(static_cast<QPushButton*>(b), p.look);
+        connect(b, &QPushButton::clicked, this, [this, name]() {
+            refresh();                          // отметка — по тому, что стоит (вдруг отменят)
+            emit styleApplyRequested(name);
+        });
+        connect(b, &QWidget::customContextMenuRequested, this, [this, b, name](const QPoint& pos) {
+            showStyleMenu(name, b->mapToGlobal(pos));
+        });
+        connect(more, &QToolButton::clicked, this, [this, more, name]() {
+            showStyleMenu(name, more->mapToGlobal(QPoint(0, more->height())));
+        });
+    }
+    stylesEmpty_->setVisible(styleCards_.isEmpty());
+    refresh();
+}
+
+void SettingsDialog::showStyleMenu(const QString& name, const QPoint& global) {
+    QMenu m(this);
+    m.addAction(T("Поставить"), this, [this, name]() { emit styleApplyRequested(name); });
+    m.addAction(T("Записать в него текущий вид"), this, [this, name]() {
+        if (StyleUi::update(this, name, layoutSource_ ? layoutSource_() : QString())) rebuildStyles();
+    });
+    m.addAction(T("Переименовать…"), this, [this, name]() {
+        if (StyleUi::askRename(this, name)) rebuildStyles();
+    });
+    m.addAction(T("Сохранить в файл…"), this, [this, name]() { StyleUi::exportFile(this, name); });
+    m.addSeparator();
+    m.addAction(T("Удалить"), this, [this, name]() {
+        if (StyleUi::askRemove(this, name)) rebuildStyles();
+    });
+    m.exec(global);
+}
+
 void SettingsDialog::refresh() {
     const Theme::Appearance& a = Theme::current();
     const auto& t = Theme::t();
+    for (auto& c : styleCards_) {
+        QSignalBlocker block(c.first);
+        c.first->setChecked(Styles::sameLook(a, c.second));
+    }
     themeSeg_->blockSignals(true);
     themeSeg_->setCurrent(a.dark ? 0 : 1);
     themeSeg_->blockSignals(false);

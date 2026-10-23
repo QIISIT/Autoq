@@ -8,7 +8,9 @@
 //    потянув за правый и нижний край; вид, цвет, заголовок, номер и «блоки в ряд» —
 //    в меню карточки (шестерёнка). Блок прячут глазом — он уходит в «Скрытые».
 //    Шаблоны, раскладка в файл и обратно, боковая панель — в полосе редактирования.
-//    Ctrl+Z / Ctrl+Y — отменить и вернуть.
+//    Щелчок по мелкому элементу (шаг, клавиша, плашка паузы, кнопка профиля…) — меню
+//    его вида: он общий для группы (все шаги одинаковые), хранится в оформлении.
+//    Ctrl+Z / Ctrl+Y — отменить и вернуть (и раскладку, и вид элементов).
 // Блоки — живые виджеты: при смене раскладки они только переезжают в другую карточку.
 #include <QFrame>
 #include <QHash>
@@ -16,6 +18,7 @@
 #include <QPointer>
 #include <functional>
 #include "cardlayout.h"
+#include "theme.h"
 
 class QLabel;
 class QToolButton;
@@ -52,6 +55,8 @@ public:
 signals:
     void dragStarted(BoardBlock* b);
     void hideRequested(BoardBlock* b);
+    // щёлкнули по мелкому элементу в редакторе: группа вида (aqEl) и ещё одна (aqElMore — плашка кнопки режима)
+    void elementClicked(const QString& group, const QString& more, const QPoint& global);
 protected:
     void resizeEvent(QResizeEvent* e) override;
 private:
@@ -145,11 +150,17 @@ public:
     QSize minimumSizeHint() const override;
     bool undo();
     bool redo();
+    // раскладка из стиля (с отменой и плавно); стили — меню «Стили» в полосе (заполняет главное окно)
+    void applyLayout(const CardLayout::Layout& l, int sidebar);
+    QMenu* stylesMenu() const { return stylesMenu_; }
+    // вид элементов сменили не в редакторе (стиль, «Сбросить редактор»): в истории отмен — уже он
+    void syncElements();
 signals:
     void edited();                                 // раскладку поменяли — сохранить для игры
     void editModeChanged(bool on);
     void applyToAllRequested();
     void sidebarModeChanged(int mode);
+    void elementsChanged(const Theme::Elements& e); // вид мелких элементов поменяли (или отменили) — применить
     void message(const QString& text);             // показать уведомление
 protected:
     bool event(QEvent* e) override;
@@ -159,7 +170,8 @@ protected:
     void dragLeaveEvent(QDragLeaveEvent* e) override;
     void dropEvent(QDropEvent* e) override;
 private:
-    struct State { CardLayout::Layout layout; int sidebar = 0; };
+    struct State { CardLayout::Layout layout; int sidebar = 0; Theme::Elements elements; };
+    State state(const CardLayout::Layout& l, int sidebar) const { return State{l, sidebar, elements_}; }
     BoardCard* card(const QString& id);
     void rebuild();
     void doLayout();
@@ -180,6 +192,12 @@ private:
     void askNewCard();
     void askRename(const QString& cardId);
     void showCardMenu(const QString& cardId, QToolButton* from, const QPoint& global);
+    // вид мелких элементов: меню группы (more — ещё одна группа подменю), правка с отменой
+    void showElementMenu(const QString& group, const QString& more, const QPoint& global);
+    void fillElementMenu(QMenu* m, const QString& group);
+    void fillElementsMenu();
+    void changeElements(const Theme::Elements& el);
+    void changeElement(const QString& group, const std::function<void(Theme::ElementStyle&)>& f);
     void fillHiddenMenu();
     void fillTemplatesMenu();
     void exportLayout();
@@ -193,6 +211,7 @@ private:
     QMap<QString, BoardCard*> cards_;
     CardLayout::Layout layout_;
     int sidebar_ = 0;
+    Theme::Elements elements_;                     // вид элементов, который знает история отмен
     QList<State> undo_, redo_;
     QWidget* strip_;
     FlowLayout* stripLay_;
@@ -206,6 +225,8 @@ private:
     QPushButton* barAdd_ = nullptr;
     QMenu* hiddenMenu_ = nullptr;
     QMenu* templatesMenu_ = nullptr;
+    QMenu* elementsMenu_ = nullptr;
+    QMenu* stylesMenu_ = nullptr;
     QList<QShortcut*> editKeys_;                   // Ctrl+Z / Ctrl+Y — включены только в редакторе
     QPointer<QWidget> animArea_;
     QPointer<QWidget> sideArea_;

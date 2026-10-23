@@ -3,13 +3,43 @@
 // акцент, фон), редактор (скругление, плотность, шрифты, рамки), анимации и
 // размер интерфейса. Всё считается из настроек и применяется сразу.
 #include <QColor>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 
 class QApplication;
 class QWidget;
+class QJsonObject;
 
 namespace Theme {
+    // Вид мелких элементов (редактор интерфейса → щелчок по элементу): по группам —
+    // все шаги одинаковые, все кнопки профиля одинаковые и т. д.
+    struct ElementStyle {
+        int look = 0;          // 0 — как в теме, дальше — варианты группы (elementLooks)
+        QString color;         // свой цвет «#rrggbb» (пусто — акцент)
+        int radius = -1;       // скругление, px (-1 — как в теме)
+        int size = 1;          // 0 — мельче, 1 — обычный, 2 — крупнее
+        bool hidden = false;   // спрятан (только у групп, где можно)
+        bool isDefault() const { return look == 0 && color.isEmpty() && radius < 0 && size == 1 && !hidden; }
+        bool operator==(const ElementStyle& o) const {
+            return look == o.look && color == o.color && radius == o.radius && size == o.size && hidden == o.hidden;
+        }
+        bool operator!=(const ElementStyle& o) const { return !(*this == o); }
+    };
+    using Elements = QMap<QString, ElementStyle>;   // id группы → вид (только не «как в теме»)
+    enum ElementCap { ElLook = 1, ElColor = 2, ElRadius = 4, ElSize = 8, ElHide = 16 };
+    QStringList elementIds();                       // slot, key, mode, pause, plate, add, profile, seg, start, hint
+    QString elementLabel(const QString& id);        // «Шаги и действия»
+    QString elementNote(const QString& id);         // что это за элементы
+    int elementCaps(const QString& id);             // что у группы можно менять (ElementCap)
+    QStringList elementLooks(const QString& id);    // варианты вида; [0] — «Как в теме»
+    QStringList elementSizes(const QString& id);    // «Мельче», «Обычный», «Крупнее»
+    QList<int> elementRadii();                      // 0, 4, 8, 12, 16, 24 — варианты скругления
+    // в допустимых пределах, без «как в теме» и чужих групп
+    Elements normalizeElements(const Elements& e);
+    QJsonObject elementsToJson(const Elements& e);
+    Elements elementsFromJson(const QJsonObject& o);
+
     // Оформление, которое выбирает пользователь (окно «Настройки», первый запуск)
     struct Appearance {
         bool dark = true;
@@ -26,6 +56,7 @@ namespace Theme {
         int displayFont = -1;          // заголовки: 0 Unbounded, 1 Onest, 2 JetBrains Mono
         int textFont = -1;             // текст: 0 Onest, 1 JetBrains Mono, 2 системный
         int borders = 1;               // рамки: 0 мягкие, 1 обычные, 2 чёткие
+        Elements elements;             // вид мелких элементов по группам
     };
     QColor defaultAccent();
     QColor defaultBg(bool dark);
@@ -97,6 +128,14 @@ namespace Theme {
     int sp(int base);
     // Отступы всех раскладок окна — по текущей плотности (вызывается само при показе окон)
     void applyDensity(QWidget* root);
+
+    // Вид мелких элементов сейчас: группа, её цвет (свой или акцент), скругление
+    ElementStyle element(const QString& id);
+    QColor elementColor(const QString& id, const QColor& fallback);
+    int elementRadius(const QString& id, int base);      // base — как в теме (с учётом r())
+    QColor mix(const QColor& a, const QColor& b, qreal t);   // a·t + b·(1−t)
+    QColor onColor(const QColor& c);                         // текст на заливке цвета c
+    QColor textColor(const QColor& c);                       // цвет c для текста на фоне темы
 
     // Перерисовать стиль виджета после смены динамического свойства (state="ok" и т.п.)
     void repolish(QWidget* w);

@@ -7,11 +7,21 @@
 #include "games.h"
 #include "theme.h"
 #include "keycapturebutton.h"
+#include "styles.h"
+#include "cardlayout.h"
 #include <QKeyEvent>
+#include <QFileInfo>
+#include <QJsonObject>
 
 static int g_fail = 0, g_pass = 0;
 #define CHECK(cond) do { if (cond) ++g_pass; else { ++g_fail; \
     std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); } } while (0)
+
+// Qt пишет «Could not parse application stylesheet», если правила стиля с ошибкой
+static int g_qssErrors = 0;
+static void qssMessages(QtMsgType, const QMessageLogContext&, const QString& msg) {
+    if (msg.contains("Could not parse")) ++g_qssErrors;
+}
 
 static int painted(const OverlaySettings& s, const OverlayView& v) {
     const QSize sz = OverlayPaint::size(s, v);
@@ -128,6 +138,118 @@ int main(int argc, char** argv) {
         const QSize vtwo = OverlayPaint::size(vd, QList<OverlayView>{named, second});
         CHECK(vtwo.height() > OverlayPaint::size(vd, named).height());
         CHECK(vtwo.height() < OverlayPaint::size(vd, named).height() + OverlayPaint::size(vd, second).height());
+    }
+
+    // вид мелких элементов (редактор интерфейса): пределы, JSON, сохранение, правила стиля
+    {
+        Theme::Elements e;
+        Theme::ElementStyle k; k.look = 1; k.color = "#3b82f6"; k.radius = 30; k.size = 2;
+        e["key"] = k;
+        Theme::ElementStyle m; m.hidden = true; e["mode"] = m;             // кнопку режима не спрятать
+        Theme::ElementStyle h; h.hidden = true; h.size = 0; e["hint"] = h;
+        Theme::ElementStyle x; x.look = 3; e["nope"] = x;                  // такой группы нет
+        Theme::ElementStyle st; st.look = 7; e["start"] = st;              // такого вида у «Старта» нет
+        const Theme::Elements n = Theme::normalizeElements(e);
+        CHECK(n.size() == 2 && n.contains("key") && n.contains("hint"));
+        CHECK(n.value("key").color == "#3B82F6" && n.value("key").radius == 24 && n.value("key").size == 2 && n.value("key").look == 1);
+        CHECK(n.value("hint").hidden && n.value("hint").size == 0);
+        CHECK(Theme::elementsFromJson(Theme::elementsToJson(e)) == n);
+        CHECK(Theme::elementsToJson({}).isEmpty());
+        Theme::Appearance a = Theme::current();
+        a.elements = n;
+        Theme::apply(app, a);
+        Theme::saveAppearance(a);
+        CHECK(Theme::loadAppearance().elements == n);
+        CHECK(app.styleSheet().contains("QPushButton#keyPickBig, QToolButton#stepDir {"));
+        CHECK(app.styleSheet().contains("QLabel#small[aqEl=\"hint\"] { font-size: 10px; }"));
+        CHECK(Theme::element("key").look == 1 && Theme::elementColor("key", Qt::red) == QColor("#3B82F6"));
+        CHECK(Theme::elementColor("slot", Qt::red) == QColor(Qt::red));
+        CHECK(Theme::elementRadius("slot", 12) == 12 && Theme::elementRadius("key", 8) == 24);
+        // у каждой группы есть название, пояснение, варианты; все виды с цветом, скруглением
+        // и размером — правила, которые Qt разбирает без ошибок
+        const QtMessageHandler prev = qInstallMessageHandler(qssMessages);
+        for (const QString& id : Theme::elementIds()) {
+            const int caps = Theme::elementCaps(id);
+            CHECK(caps != 0 && !Theme::elementLabel(id).isEmpty() && !Theme::elementNote(id).isEmpty());
+            CHECK(Theme::elementLooks(id).size() >= ((caps & Theme::ElLook) ? 3 : 1));
+            CHECK(Theme::elementSizes(id).size() == 3);
+            for (int look = 0; look < Theme::elementLooks(id).size(); ++look) {
+                Theme::ElementStyle es;
+                es.look = look; es.color = "#22C55E"; es.radius = 4; es.size = look % 3;
+                es.hidden = (caps & Theme::ElHide) && look == 0;
+                a.elements = {{id, es}};
+                Theme::apply(app, a);
+                CHECK(Theme::element(id).look == look);
+                QWidget probe;                     // стиль применяется к виджету — тут Qt и разбирает правила
+                probe.ensurePolished();
+            }
+        }
+        qInstallMessageHandler(prev);
+        CHECK(g_qssErrors == 0);
+        a.elements.clear();
+        Theme::apply(app, a);
+        Theme::saveAppearance(a);
+        CHECK(Theme::loadAppearance().elements.isEmpty());
+    }
+
+    // профили стиля: файл в папке данных, имя без учёта регистра, раскладка, переименование
+    {
+        CHECK(Styles::names().isEmpty());
+        Styles::Profile p;
+        p.name = "Синий неон";
+        p.look = Theme::current();
+        p.look.accent = QColor("#3B82F6");
+        p.look.dark = false;
+        p.look.radius = 20;
+        p.look.elements["slot"].look = 2;
+        CHECK(Styles::save(p));
+        CHECK(Styles::exists("синий НЕОН"));
+        Styles::Profile q;
+        CHECK(Styles::load("Синий неон", &q));
+        CHECK(q.name == "Синий неон" && Styles::sameLook(q.look, p.look) && !q.hasLayout());
+        CHECK(q.look.elements.value("slot").look == 2 && !q.look.dark && q.look.radius == 20);
+        CHECK(!Styles::sameLook(q.look, Theme::current()));
+        // с раскладкой: «/» в имени — «_» в имени файла
+        const CardLayout::Layout l = CardLayout::templateLayout(1);
+        p.name = "Компакт/тёмный";
+        p.layout = CardLayout::exportJson(l, 2);
+        CHECK(Styles::save(p));
+        CHECK(QFileInfo::exists(Styles::dir() + "/Компакт_тёмный.aqstyle"));
+        CHECK(Styles::load("компакт/тёмный", &q) && q.hasLayout());
+        CardLayout::Layout l2;
+        int side = 0;
+        CHECK(CardLayout::importJson(q.layout, &l2, &side) && l2 == CardLayout::normalize(l) && side == 2);
+        CHECK(Styles::names() == QStringList({"Компакт/тёмный", "Синий неон"}));
+        CHECK(Styles::uniqueName("Синий неон") == "Синий неон (2)" && Styles::uniqueName("Новый") == "Новый");
+        // то же имя — замена, а не второй файл
+        p.look.radius = 6;
+        CHECK(Styles::save(p) && Styles::names().size() == 2);
+        CHECK(Styles::load("Компакт/тёмный", &q) && q.look.radius == 6);
+        // переименовать: занято — нельзя, свободно — и файл под новым именем
+        QString why;
+        CHECK(!Styles::rename("Синий неон", "компакт/ТЁМНЫЙ", &why) && !why.isEmpty());
+        CHECK(Styles::rename("Синий неон", "Морской"));
+        CHECK(Styles::exists("Морской") && !Styles::exists("Синий неон"));
+        CHECK(QFileInfo::exists(Styles::dir() + "/Морской.aqstyle"));
+        CHECK(Styles::rename("Морской", "МОРСКОЙ") && Styles::names().contains("МОРСКОЙ"));
+        // не стиль AutoQ — не читается; мусор — в пределах
+        CHECK(!Styles::fromJson("{}", nullptr) && !Styles::fromJson("not json", nullptr));
+        CHECK(!Styles::fromJson(R"({"format":"autoq-style","name":"","look":{}})", nullptr));
+        Styles::Profile g;
+        CHECK(Styles::fromJson(R"({"format":"autoq-style","name":"X","look":{"accent":"red","radius":99,"density":-4,)"
+                               R"("variant":"zzz","theme":"light","elements":{"key":{"look":9,"radius":-7}}},"layout":{"x":1}})", &g));
+        CHECK(g.look.accent == Theme::defaultAccent() && g.look.radius == 24 && g.look.density == 0);
+        CHECK(g.look.variant == "studio" && !g.look.dark && g.look.elements.isEmpty() && !g.hasLayout());
+        CHECK(Styles::fromJson(Styles::toJson(q), &g) && g.name == q.name && Styles::sameLook(g.look, q.look) && g.layout == q.layout);
+        CHECK(Styles::validName(QString(40, 'a')) && !Styles::validName(QString(41, 'a')) && !Styles::validName("  "));
+        CHECK(Styles::uniqueName(QString(40, 'a')) == QString(40, 'a'));      // свободное длинное имя — как есть
+        p.name = QString(40, 'b');
+        p.layout.clear();
+        CHECK(Styles::save(p) && Styles::uniqueName(QString(40, 'B')) == QString(34, 'B') + " (2)");
+        CHECK(Styles::validName(Styles::uniqueName(QString(40, 'b'))) && Styles::remove(QString(40, 'b')));
+        CHECK(Styles::remove("морской") && !Styles::exists("Морской"));
+        CHECK(Styles::remove("Компакт/тёмный") && Styles::names().isEmpty());
+        CHECK(!Styles::remove("Компакт/тёмный"));
     }
 
     AppSettings::dropScope("AutoQTest", QString("ov_%1").arg(QCoreApplication::applicationPid()));

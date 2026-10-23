@@ -2,5 +2,5 @@
 // Название, автор и версия — в одном месте
 #define AQ_NAME       "AutoQ"
 #define AQ_AUTHOR     "Qisit"
-#define AQ_VERSION    "1.15.1"
-#define AQ_VERSION_SHORT "1.15.1"
+#define AQ_VERSION    "1.16"
+#define AQ_VERSION_SHORT "1.16"

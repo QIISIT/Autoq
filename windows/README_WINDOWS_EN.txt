@@ -1,5 +1,5 @@
 ﻿================================================================
-  AUTOQ 1.15.1 for Windows 10/11 (64-bit) — guide
+  AUTOQ 1.16 for Windows 10/11 (64-bit) — guide
   created by Qisit
 ================================================================
 
@@ -80,11 +80,19 @@ HOW TO USE
    Settings → Appearance → Cards): drag cards by the title, blocks
    by any spot, even into another card; "New card" makes an empty
    named card for your blocks. Each game keeps its own layout.
+   In edit mode, click a small element (step, key, pause chip, mode
+   button, profile buttons, Start, hints…) to change its look,
+   color, corner radius, size or hide it — for all such elements
+   at once ("Elements" in the editor bar does the same).
+   My styles (Settings → Appearance, or "Styles" in the editor):
+   save the whole look under a name, optionally with the card
+   layout; click a style to apply it; ⋯ → "Save to file…" makes an
+   .aqstyle file to share, "From file…" adds someone else's.
 7. First launch asks for an interface style (Studio / Glass /
    Terminal) and animations — redo it in Settings → General.
    Settings → Appearance also has the interface editor and size.
 
-Settings, games and profiles are plain files in %APPDATA%\AutoQ
+Settings, games, profiles and styles are plain files in %APPDATA%\AutoQ
 (portable: AutoQ-data next to the exe) — change the folder in
 Settings → General → Data; copy it to move AutoQ to another PC.
 Settings from older versions (registry) are moved over by itself.

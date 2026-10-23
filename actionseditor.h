@@ -39,6 +39,7 @@ public:
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
     void refreshIcons();
+    void refreshLook();                             // вид мелких элементов сменили (ширина шагов, клавиши)
 signals:
     void changed();
 protected:
@@ -89,6 +90,7 @@ private:
     GameMode mode_ = GameMode::Sequence;
     int startMs_ = 0, intervalMs_ = 100, minIntervalMs_ = 1;   // minIntervalMs_ — минимум игры
     int slotH_ = 88;                        // высота карточек ряда (по содержимому)
+    QString builtLook_;                     // размеры шагов и клавиш, с которыми собран ряд
     FlowLayout* flow_;
     QList<SlotUi> slots_;
     QList<QWidget*> units_;                 // действие + пауза/«+» после него

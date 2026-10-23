@@ -9,6 +9,8 @@
 #include "windowpicker.h"
 #include "gameeditdialog.h"
 #include "settingsdialog.h"
+#include "styles.h"
+#include "styleui.h"
 #include "hotkeydialog.h"
 #include "miniwindow.h"
 #include "overlay.h"
@@ -174,6 +176,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         applySidebarMode(side);
     }
     reloadGames(Games::currentId());
+    applyElementLook();
     refreshIcons();
     syncOverlayUi();
 
@@ -463,6 +466,7 @@ void MainWindow::buildHeader() {
 
     BoardBlock* sblk = board_->addBlock("start", T("Кнопка «Старт»"));
     startBtn_ = new StartButton();
+    startBtn_->setProperty("aqEl", "start");
     sblk->body()->addWidget(startBtn_);
 }
 
@@ -495,6 +499,7 @@ void MainWindow::buildActionsCard() {
     actionsEdit_ = new ActionsEditor();
     lay->addWidget(actionsEdit_);
     actionsHint_ = mkLabel(QString(), "faint");
+    actionsHint_->setProperty("aqEl", "hint");
     actionsHint_->setWordWrap(true);
     lay->addWidget(actionsHint_);
 
@@ -617,6 +622,7 @@ void MainWindow::buildSpeedCard() {
     r4->addWidget(hzBox_);
     lay->addLayout(r4);
     perMinuteLabel_ = mkLabel(QString(), "faint");
+    perMinuteLabel_->setProperty("aqEl", "hint");
     perMinuteLabel_->setWordWrap(true);
     lay->addWidget(perMinuteLabel_);
     {
@@ -709,6 +715,20 @@ void MainWindow::buildProfileCard() {
     profileMoreBtn_->setAccessibleName(T("Ещё: экспорт и импорт профиля"));
     {
         auto* m = new QMenu(profileMoreBtn_);
+        // кнопки профиля спрятаны (редактор интерфейса) — они здесь
+        profileMenuActs_ << m->addAction(T("Новый профиль…"), this, [this]() { newProfile(1); })
+                         << m->addAction(T("Сохранить профиль"), this, &MainWindow::saveProfile)
+                         << m->addAction(T("Сбросить…"), this, [this]() {
+                                QTimer::singleShot(0, this, [this]() { showResetMenu(profileMoreBtn_); });
+                            })
+                         << m->addAction(T("Удалить профиль"), this, &MainWindow::deleteProfile)
+                         << m->addSeparator();
+        connect(m, &QMenu::aboutToShow, this, [this]() {
+            const bool hidden = Theme::element("profile").hidden;
+            for (QAction* a : profileMenuActs_) a->setVisible(hidden);
+            // «Удалить» — только у выбранного профиля (неактивные пункты в теме красные — прячем)
+            if (hidden) profileMenuActs_[3]->setVisible(delProfileBtn_->isEnabled());
+        });
         exportProfileAction_ = m->addAction(T("Экспорт профиля в файл…"), this, &MainWindow::exportProfile);
         m->addAction(T("Импорт профиля из файла…"), this, &MainWindow::importProfile);
         m->addSeparator();
@@ -736,8 +756,10 @@ void MainWindow::buildProfileCard() {
     delProfileBtn_ = new QPushButton(T("Удалить"));
     delProfileBtn_->setObjectName("ghost");
     delProfileBtn_->setToolTip(T("Удалить профиль (настройки игры останутся)"));
-    for (QPushButton* b : {newProfileBtn_, saveProfileBtn_, resetProfileBtn_, delProfileBtn_})
+    for (QPushButton* b : {newProfileBtn_, saveProfileBtn_, resetProfileBtn_, delProfileBtn_}) {
         b->setCursor(Qt::PointingHandCursor);
+        b->setProperty("aqEl", "profile");
+    }
     g->addWidget(newProfileBtn_, 0, 0);
     g->addWidget(saveProfileBtn_, 0, 1);
     g->addWidget(resetProfileBtn_, 1, 0);
@@ -801,6 +823,7 @@ void MainWindow::buildProfileCard() {
     hotkeyStatus_->hide();
     lay->addWidget(hotkeyStatus_);
     hotkeyInfo_ = mkLabel(QString(), "small");
+    hotkeyInfo_->setProperty("aqEl", "hint");
     hotkeyInfo_->setWordWrap(true);
     hotkeyInfo_->hide();
     lay->addWidget(hotkeyInfo_);
@@ -891,6 +914,14 @@ void MainWindow::connectSignals() {
         updateSidebarVisible();               // блок «Игра» спрятали при скрытой панели — панель нужна
     });
     connect(board_, &Board::applyToAllRequested, this, &MainWindow::applyLayoutToAll);
+    connect(board_->stylesMenu(), &QMenu::aboutToShow, this, [this]() { fillStylesMenu(board_->stylesMenu()); });
+    connect(board_, &Board::elementsChanged, this, [this](const Theme::Elements& e) {
+        Theme::Appearance a = Theme::current();
+        a.elements = e;
+        Theme::apply(*qApp, a);
+        Theme::saveAppearance(a);
+        appearanceChanged();
+    });
     connect(board_, &Board::message, this, &MainWindow::notify);
     connect(board_, &Board::sidebarModeChanged, this, [this](int mode) {
         applySidebarMode(mode);
@@ -1189,7 +1220,7 @@ void MainWindow::refreshIcons() {
     profileMoreBtn_->setIcon(AqIcons::ui("more", t.muted, 16));
     profileKeyBtn_->setIcon(AqIcons::ui("keyboard", t.muted, 15));
     newProfileBtn_->setIcon(AqIcons::ui("plus", t.muted, 13, 2.2));
-    saveProfileBtn_->setIcon(AqIcons::ui("save", t.redHi, 14));
+    saveProfileBtn_->setIcon(AqIcons::ui("save", saveIconColor(false), 14));
     resetProfileBtn_->setIcon(AqIcons::ui("undo", t.muted, 14));
     delProfileBtn_->setIcon(AqIcons::ui("trash", t.faint, 13));
     hotkeyPick_->setCurrent(hotkeySpec_.isChord() ? QString() : hotkeySpec_.key, hotkeySpec_.display());
@@ -1218,7 +1249,27 @@ void MainWindow::refreshIcons() {
     syncMini();
 }
 
+// значок «Сохранить» — цветом кнопок профиля (редактор интерфейса), если он свой
+QColor MainWindow::saveIconColor(bool dirty) const {
+    const QString c = Theme::element("profile").color;
+    if (c.isEmpty()) return dirty ? Theme::t().onRed : Theme::t().redHi;
+    return dirty ? Theme::onColor(QColor(c)) : Theme::textColor(QColor(c));
+}
+
+// Вид мелких элементов (редактор интерфейса): что спрятано, ширина шагов
+void MainWindow::applyElementLook() {
+    const bool hints = !Theme::element("hint").hidden;
+    actionsHint_->setVisible(hints);
+    perMinuteLabel_->setVisible(hints);
+    updateHotkeyInfo();
+    const bool profileBtns = !Theme::element("profile").hidden;
+    for (QPushButton* b : {newProfileBtn_, saveProfileBtn_, resetProfileBtn_, delProfileBtn_}) b->setVisible(profileBtns);
+    actionsEdit_->refreshLook();
+    board_->syncElements();
+}
+
 void MainWindow::appearanceChanged() {
+    applyElementLook();
     statusBox_->setProperty("state", QString());   // перерисовать
     applySidebarMode(sideMode_);                   // плотность сменилась — поля боковой панели
     refreshIcons();
@@ -1953,13 +2004,16 @@ void MainWindow::updateProfileState() {
         profileBox_->setCurrentIndex(i >= 0 ? i : 0);
     }
     QString state, text;
+    const bool btnsHidden = Theme::element("profile").hidden;     // кнопки — в меню ⋯ (редактор интерфейса)
     if (active.isEmpty()) {
         state = "none";
-        text = names.isEmpty() ? T("Профилей нет. «Новый» — свой набор настроек.")
-                               : T("Без профиля — настройки сохраняются у игры.");
+        text = !names.isEmpty() ? T("Без профиля — настройки сохраняются у игры.")
+               : btnsHidden     ? T("Профилей нет. «Новый профиль…» — в меню ⋯.")
+                                : T("Профилей нет. «Новый» — свой набор настроек.");
     } else if (dirty) {
         state = "dirty";
-        text = T("● Есть несохранённые изменения — «Сохранить» или «Сбросить».");
+        text = btnsHidden ? T("● Есть несохранённые изменения — «Сохранить» или «Сбросить» в меню ⋯.")
+                          : T("● Есть несохранённые изменения — «Сохранить» или «Сбросить».");
     } else {
         state = "saved";
         text = T("✓ Профиль «%1» — всё сохранено.").arg(elide(active, 28));
@@ -1971,7 +2025,7 @@ void MainWindow::updateProfileState() {
     profileState_->setText(text);
     saveProfileBtn_->setProperty("dirty", dirty);
     Theme::repolish(saveProfileBtn_);
-    saveProfileBtn_->setIcon(AqIcons::ui("save", dirty ? Theme::t().onRed : Theme::t().redHi, 14));
+    saveProfileBtn_->setIcon(AqIcons::ui("save", saveIconColor(dirty), 14));
     saveProfileBtn_->setToolTip(active.isEmpty() ? T("Сохранить текущие настройки как новый профиль")
                                                  : T("Сохранить изменения в «%1»").arg(active));
     delProfileBtn_->setEnabled(!active.isEmpty());
@@ -2870,7 +2924,9 @@ void MainWindow::updateHotkeyInfo() {
         QSignalBlocker b(blockSwitch_);
         blockSwitch_->setChecked(sp.block && sp.canBlock());
     }
-    if (sp.isChord()) {
+    if (Theme::element("hint").hidden) {
+        hotkeyInfo_->hide();                       // подсказки спрятаны (редактор интерфейса)
+    } else if (sp.isChord()) {
         hotkeyInfo_->setText(T("«%1» — две клавиши: зажми %2 и нажми %3. Обе при этом нажимаются в игре как обычно.")
                                  .arg(sp.display(), Keys::label(sp.hold), Keys::label(sp.key)));
         hotkeyInfo_->show();
@@ -3469,6 +3525,70 @@ void MainWindow::setLayoutEditing(bool on) {
     board_->setEditMode(on);
 }
 
+// ---------------------------------------------------------------------------
+// Профили стиля: оформление (и, по желанию, раскладка карточек) под своим именем
+// ---------------------------------------------------------------------------
+QString MainWindow::currentLayoutJson() const {
+    return hasGame() ? CardLayout::exportJson(board_->cardLayout(), board_->sidebarMode()) : QString();
+}
+
+bool MainWindow::applyStyle(const QString& name, QWidget* parent) {
+    Styles::Profile p;
+    if (!Styles::load(name, &p)) {
+        notify(T("Стиль «%1» не найден.").arg(name));
+        return false;
+    }
+    bool allGames = false;
+    const int what = StyleUi::askApply(parent ? parent : dialogParent(), p, &allGames);
+    if (!what) return false;
+    Theme::apply(*qApp, p.look);
+    Theme::saveAppearance(p.look);
+    appearanceChanged();
+    if (what == 2) {
+        CardLayout::Layout l;
+        int side = board_->sidebarMode();
+        if (CardLayout::importJson(p.layout, &l, &side)) {
+            if (allGames)
+                for (const GameDef& g : Games::list()) CardLayout::save(g.id, l);
+            if (hasGame()) board_->applyLayout(l, side);
+        }
+    }
+    notify(what == 2 && allGames ? T("Стиль «%1» поставлен, раскладка — у всех игр.").arg(name)
+                                 : T("Стиль «%1» поставлен.").arg(name));
+    return true;
+}
+
+void MainWindow::fillStylesMenu(QMenu* m) {
+    m->clear();
+    const QStringList names = Styles::names();
+    for (const QString& name : names) {
+        Styles::Profile p;
+        if (!Styles::load(name, &p)) continue;
+        QAction* a = m->addAction(p.hasLayout() ? T("%1 — с раскладкой").arg(name) : name);
+        a->setCheckable(true);
+        a->setChecked(Styles::sameLook(Theme::current(), p.look));
+        connect(a, &QAction::triggered, this, [this, name]() {
+            QTimer::singleShot(0, this, [this, name]() { applyStyle(name, dialogParent()); });
+        });
+    }
+    if (!names.isEmpty()) m->addSeparator();
+    m->addAction(AqIcons::ui("save", Theme::t().text, 14), T("Сохранить текущий вид как стиль…"), this, [this]() {
+        QTimer::singleShot(0, this, [this]() {
+            QString name;
+            if (StyleUi::saveCurrent(dialogParent(), currentLayoutJson(), &name)) notify(T("Стиль «%1» сохранён.").arg(name));
+        });
+    });
+    m->addAction(T("Стиль из файла…"), this, [this]() {
+        QTimer::singleShot(0, this, [this]() {
+            QString name;
+            if (StyleUi::importFile(dialogParent(), &name)) applyStyle(name, dialogParent());
+        });
+    });
+    m->addAction(T("Все стили — в настройках"), this, [this]() {
+        QTimer::singleShot(0, this, [this]() { openSettingsPage(SettingsDialog::Appearance); });
+    });
+}
+
 void MainWindow::applyLayoutToAll() {
     if (!hasGame()) return;
     const QList<GameDef> games = Games::list();
@@ -3558,6 +3678,10 @@ void MainWindow::openSettingsPage(int page) {
         refreshLive();
     });
     connect(&dlg, &SettingsDialog::appearanceChanged, this, &MainWindow::appearanceChanged);
+    dlg.setLayoutSource([this]() { return currentLayoutJson(); });
+    connect(&dlg, &SettingsDialog::styleApplyRequested, this, [this, &dlg](const QString& name) {
+        if (applyStyle(name, &dlg)) dlg.reloadAppearance();
+    });
     connect(&dlg, &SettingsDialog::editLayoutRequested, this, [this, &dlg]() {
         dlg.accept();
         QTimer::singleShot(0, this, [this]() { setLayoutEditing(true); });

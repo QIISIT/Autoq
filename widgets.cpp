@@ -74,6 +74,7 @@ void ToggleSwitch::paintEvent(QPaintEvent*) {
 Segmented::Segmented(const QStringList& labels, bool mono, const QString& suffix, QWidget* parent)
     : QFrame(parent) {
     setObjectName("segBox");
+    setProperty("aqEl", "seg");          // вид — редактор интерфейса, «Переключатели»
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(3, 3, 3, 3);
     lay->setSpacing(4);
@@ -270,7 +271,8 @@ void ElideLabel::paintEvent(QPaintEvent*) {
 void ArrowLine::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
-    QPen pen(Theme::t().redHi, 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    const QString pc = Theme::element("pause").color;
+    QPen pen(pc.isEmpty() ? Theme::t().redHi : Theme::textColor(QColor(pc)), 2, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     p.setPen(pen);
     const qreal y = height() / 2.0, w = width();
     p.drawLine(QPointF(2, y), QPointF(w - 4, y));
@@ -902,13 +904,22 @@ void ChoiceButton::paintEvent(QPaintEvent*) {
     const auto& t = Theme::t();
     const bool hot = underMouse() || hasFocus() || open_ || isDown();
     const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
-    if (hot) {
-        p.setPen(QPen(open_ || hasFocus() ? t.red : t.fieldBorder2, 1));
-        p.setBrush(t.keycap);
-        p.drawRoundedRect(r, 7, 7);
+    // вид — редактор интерфейса («Кнопка режима»): с подложкой или с рамкой всегда
+    const Theme::ElementStyle st = Theme::element("mode");
+    const QColor c = Theme::elementColor("mode", t.red);
+    const qreal rr = Theme::elementRadius("mode", 7);
+    if (hot || st.look) {
+        QColor fill = t.keycap;
+        if (st.look == 1) fill = Theme::mix(c, t.field, 0.16);
+        else if (st.look == 2 && !hot) fill = Qt::transparent;
+        QColor pen = open_ || hasFocus() ? c : st.look ? c : t.fieldBorder2;
+        if (st.look == 1 && !(open_ || hasFocus() || hot)) pen = Qt::transparent;
+        p.setPen(pen.alpha() ? QPen(pen, 1) : QPen(Qt::NoPen));
+        p.setBrush(fill);
+        p.drawRoundedRect(r, rr, rr);
     }
     const qreal cy = height() / 2.0;
-    AqIcons::paint(p, icon_, QRectF(6, cy - 6.5, 13, 13), t.redHi, 2.3);
+    AqIcons::paint(p, icon_, QRectF(6, cy - 6.5, 13, 13), st.color.isEmpty() ? t.redHi : Theme::textColor(c), 2.3);
     p.setFont(choiceFont(11, QFont::DemiBold));
     p.setPen(hot ? t.text : t.text2);
     const int tx = 6 + 13 + 4;
@@ -946,16 +957,20 @@ protected:
         const auto& t = Theme::t();
         const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
         const bool hot = underMouse() || isDown();
+        // свой цвет плашки (редактор интерфейса → «Плашка выбора») — у выбранного пункта
+        const bool own = !Theme::element("plate").color.isEmpty();
+        const QColor c = Theme::elementColor("plate", t.red);
+        const QColor tint = own ? Theme::mix(c, t.card, 0.15) : t.redTint;
         if (current_ || hot || hasFocus()) {
-            p.setPen(hasFocus() ? QPen(t.red, 1) : Qt::NoPen);
-            p.setBrush(current_ ? t.redTint : t.field);
+            p.setPen(hasFocus() ? QPen(c, 1) : Qt::NoPen);
+            p.setBrush(current_ ? tint : t.field);
             p.drawRoundedRect(r, 10, 10);
         }
         const QRectF tile(10, 9, 34, 34);
         p.setPen(current_ ? Qt::NoPen : QPen(t.fieldBorder2, 1));
-        p.setBrush(current_ ? t.red : t.keycap);
+        p.setBrush(current_ ? c : t.keycap);
         p.drawRoundedRect(tile.adjusted(0.5, 0.5, -0.5, -0.5), 9, 9);
-        AqIcons::paint(p, c_.icon, tile.adjusted(8, 8, -8, -8), current_ ? t.onRed : t.text2, 2.3);
+        AqIcons::paint(p, c_.icon, tile.adjusted(8, 8, -8, -8), current_ ? (own ? Theme::onColor(c) : t.onRed) : t.text2, 2.3);
         const QFont tf = choiceFont(13, QFont::DemiBold), df = choiceFont(11, QFont::Normal);
         const QFontMetrics tm(tf);
         const int right = width() - (current_ ? 30 : 12);
@@ -967,7 +982,7 @@ protected:
             p.setPen(t.muted);
             p.drawText(QRect(kText, 9 + tm.height() + 1, width() - kText - 30, height()), Qt::TextWordWrap, c_.text);
         }
-        if (current_) AqIcons::paint(p, "check", QRectF(width() - 25, 9 + tm.height() / 2.0 - 7, 14, 14), t.redHi, 2.6);
+        if (current_) AqIcons::paint(p, "check", QRectF(width() - 25, 9 + tm.height() / 2.0 - 7, 14, 14), own ? Theme::textColor(c) : t.redHi, 2.6);
     }
     void keyPressEvent(QKeyEvent* e) override {
         if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter) { click(); return; }

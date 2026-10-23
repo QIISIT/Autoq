@@ -5,6 +5,7 @@
 #include <QDialog>
 #include <QButtonGroup>
 #include <QList>
+#include <functional>
 #include "theme.h"
 #include "overlay.h"
 
@@ -27,6 +28,9 @@ public:
     enum Page { General = 0, Appearance = 1, Overlay = 2 };
     SettingsDialog(OverlayWindow* overlay, Page page = Appearance, QWidget* parent = nullptr);
     ~SettingsDialog() override;
+    // раскладка открытой игры (для «Сохранить текущий вид» — по желанию со стилем)
+    void setLayoutSource(const std::function<QString()>& f) { layoutSource_ = f; }
+    void reloadAppearance();                // оформление сменили снаружи (поставили стиль)
 
 signals:
     void appearanceChanged();
@@ -36,6 +40,7 @@ signals:
     void adminRestartRequested();   // Windows: «Перезапустить от имени администратора»
     void onboardingRequested();     // «Пройти первый запуск заново»
     void editLayoutRequested();   // «Режим редактирования» карточек — в главном окне
+    void styleApplyRequested(const QString& name);   // «Мои стили»: поставить стиль (с раскладкой — главное окно)
 
 private:
     QWidget* buildGeneralPage();
@@ -46,6 +51,8 @@ private:
     void rebuildBgRow();
     void refreshEditor();
     void rebuildAnimDemo();
+    void rebuildStyles();                   // «Мои стили»: карточки сохранённых стилей
+    void showStyleMenu(const QString& name, const QPoint& global);
     QList<QToolButton*> makeSwatches(const QStringList& colors, QButtonGroup& group, QHBoxLayout* row);
 
     // --- оверлей ---
@@ -93,6 +100,11 @@ private:
     QLabel* scaleNote_ = nullptr;
     QPushButton* scaleRestart_ = nullptr;
     bool loadingEditor_ = false;
+    // мои стили
+    class FlowLayout* stylesFlow_ = nullptr;
+    QLabel* stylesEmpty_ = nullptr;
+    QList<QPair<QPushButton*, Theme::Appearance>> styleCards_;
+    std::function<QString()> layoutSource_;
 
     // оверлей
     OverlayPreview* oPreview_;

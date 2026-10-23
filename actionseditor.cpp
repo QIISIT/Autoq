@@ -40,6 +40,9 @@ private:
     QSize size_;
 };
 
+// размеры шагов и клавиш (редактор → вид элементов): пересобрать ряд, если сменились
+QString lookKey() { return QString("%1/%2").arg(Theme::element("slot").size).arg(Theme::element("key").size); }
+
 // «повтор»: стрелка, которая возвращается к началу цепочки
 class LoopLine : public QWidget {
 public:
@@ -48,7 +51,8 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
-        const QColor c = Theme::t().redHi;
+        const QString pc = Theme::element("pause").color;
+        const QColor c = pc.isEmpty() ? Theme::t().redHi : Theme::textColor(QColor(pc));
         p.setPen(QPen(c, 2, Qt::DashLine, Qt::RoundCap));
         const qreal y = height() / 2.0;
         p.drawLine(QPointF(2, y), QPointF(width() - 22, y));
@@ -71,6 +75,7 @@ QSpinBox* smallSpin(int lo, int hi, const QString& tip) {
 // подпись сверху, число, стрелка снизу — пауза между карточками, «старт через», «повтор через»
 QWidget* chip(const QString& caption, QSpinBox* spin, QWidget* arrow) {
     auto* w = new QWidget();
+    w->setProperty("aqEl", "pause");    // вид — редактор интерфейса, «Плашки пауз»
     w->setFixedWidth(92);               // как стрелка: ширина ряда не скачет от подписи
     auto* v = new QVBoxLayout(w);
     v->setContentsMargins(0, 0, 0, 0);
@@ -168,7 +173,10 @@ void ActionsEditor::rebuild() {
     const int n = actions_.size();
     const bool hold = mode_ == GameMode::Hold;
     const bool paused = mode_ == GameMode::Sequence || steps();     // между карточками — пауза
-    const int slotW = steps() || hold ? 176 : 206;                  // у действия рядом с клавишей — «держать»
+    // у действия рядом с клавишей — «держать»; «Уже» / «Шире» — вид шагов в редакторе
+    const int slotSize = Theme::element("slot").size;
+    const int slotW = (steps() || hold ? 176 : 206) + (slotSize == 0 ? -20 : slotSize == 2 ? 36 : 0);
+    builtLook_ = lookKey();
 
     // старт через N мс
     startSpin_ = smallSpin(0, kMaxStartDelayMs, T("Старт через столько мс после нажатия «Старт» или клавиши (0 — сразу)"));
@@ -190,6 +198,7 @@ void ActionsEditor::rebuild() {
         auto* f = new QFrame();
         ui.frame = f;
         f->setObjectName("slot");
+        f->setProperty("aqEl", "slot");
         f->setProperty("slotIndex", i);
         f->setFixedSize(slotW, slotH_);
         f->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -214,6 +223,8 @@ void ActionsEditor::rebuild() {
         } else {
             // режим действия — над клавишей; щелчок открывает плашку с режимами
             ui.mode = new ChoiceButton();
+            ui.mode->setProperty("aqEl", "mode");
+            ui.mode->setProperty("aqElMore", "plate");     // плашка, которую она открывает
             ui.mode->setToolTip(steps() ? T("Шаг %1: нажать, отпустить или клик — щёлкни, чтобы выбрать").arg(i + 1)
                                         : T("Действие %1: клик или держать нажатым — щёлкни, чтобы выбрать").arg(i + 1));
             g->addWidget(ui.mode, 0, 1, Qt::AlignLeft | Qt::AlignVCenter);
@@ -239,6 +250,7 @@ void ActionsEditor::rebuild() {
         vr->setSpacing(6);
         ui.value = new KeyPicker();
         ui.value->setObjectName("keyPickBig");
+        ui.value->setProperty("aqEl", "key");
         ui.value->setKeys(KeyPicker::actionItems(false), KeyPicker::actionCommon());
         ui.value->setToolTip(T("Кнопка мыши или клавиша — список с поиском"));
         ui.value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -246,6 +258,7 @@ void ActionsEditor::rebuild() {
         if (steps()) {
             ui.dir = new QToolButton();
             ui.dir->setObjectName("stepDir");
+            ui.dir->setProperty("aqEl", "key");
             ui.dir->setFixedSize(36, 36);
             ui.dir->setCursor(Qt::PointingHandCursor);
             vr->addWidget(ui.dir);
@@ -339,6 +352,7 @@ void ActionsEditor::rebuild() {
     if (n < maxItems()) {
         add_ = new SizedButton(QSize(n == 1 ? slotW : 132, slotH_));
         add_->setObjectName("addSecond");
+        add_->setProperty("aqEl", "add");
         add_->setCursor(Qt::PointingHandCursor);
         add_->setText(steps() ? T("Шаг") : n == 1 ? (mode_ == GameMode::Sequence ? T("Действие 2") : T("вместе с…")) : T("Ещё"));
         add_->setToolTip(steps() ? T("Добавить шаг: нажать или отпустить кнопку / клавишу")
@@ -813,6 +827,12 @@ void ActionsEditor::setActiveStep(int i) {
     mark(active_, false);
     active_ = i;
     mark(active_, true);
+}
+
+void ActionsEditor::refreshLook() {
+    if (builtLook_ == lookKey()) return;
+    rebuild();
+    updateValues();
 }
 
 void ActionsEditor::refreshIcons() {

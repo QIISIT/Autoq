@@ -221,6 +221,12 @@ private:
     void fillOverlayMenu(QMenu* m);
     void syncOverlayUi();          // кнопки «оверлей вкл/выкл» в шапке, трее и мини-окне
     void appearanceChanged();      // тема/стиль сменились — перерисовать
+    void applyElementLook();       // вид мелких элементов: спрятанные подсказки и кнопки профиля
+    QColor saveIconColor(bool dirty) const;
+    // профили стиля: раскладка открытой игры (JSON), поставить стиль (спросит про раскладку), меню «Стили»
+    QString currentLayoutJson() const;
+    bool applyStyle(const QString& name, QWidget* parent);
+    void fillStylesMenu(class QMenu* m);
     void finishOnboarding();
 
     std::map<QString, std::unique_ptr<GameRunner>> runners_;
@@ -330,6 +336,7 @@ private:
     QToolButton* profileOverlayBtn_;   // «показывать в оверлее КПС» у профиля
     QToolButton* profileMoreBtn_;      // ⋯ — экспорт, импорт, папка профилей
     QAction* exportProfileAction_ = nullptr;
+    QList<QAction*> profileMenuActs_;   // «Новый / Сохранить / Сбросить / Удалить» в ⋯ — когда кнопки спрятаны
     QToolButton* profileKeyBtn_;
     QLabel* profileState_;
     QPushButton* newProfileBtn_;

@@ -24,6 +24,7 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QActionGroup>
+#include <QWidgetAction>
 
 namespace {
 const char* kCardMime = "application/x-autoq-card";
@@ -68,7 +69,8 @@ public:
     explicit BlockShield(BoardBlock* b) : QWidget(b), block_(b) {
         setCursor(Qt::OpenHandCursor);
         setAttribute(Qt::WA_Hover);
-        setToolTip(T("Перетащи блок на другое место — в эту или другую карточку"));
+        setMouseTracking(true);
+        setToolTip(blockTip());
         eye_ = new QToolButton(this);
         eye_->setObjectName("shieldEye");
         eye_->setFixedSize(24, 24);
@@ -80,6 +82,31 @@ public:
     }
     void refreshIcon() { eye_->setIcon(AqIcons::ui("eye-off", Theme::t().onRed, 14, 2.0)); }
 protected:
+    static QString blockTip() { return T("Перетащи блок на другое место — в эту или другую карточку"); }
+    // мелкий элемент под курсором: самый маленький виджет блока со свойством aqEl (группа вида)
+    QWidget* elementAt(const QPoint& pos) const {
+        QWidget* best = nullptr;
+        qint64 bestArea = 0;
+        const QList<QWidget*> all = block_->findChildren<QWidget*>();
+        for (QWidget* w : all) {
+            if (w == this || isAncestorOf(w)) continue;
+            if (w->property("aqEl").toString().isEmpty() || !w->isVisibleTo(block_)) continue;
+            const QRect r(w->mapTo(block_, QPoint(0, 0)), w->size());
+            if (!r.contains(pos)) continue;
+            const qint64 area = qint64(r.width()) * r.height();
+            if (!best || area < bestArea) { best = w; bestArea = area; }
+        }
+        return best;
+    }
+    void setHovered(QWidget* w) {
+        if (w == hovered_.data()) return;
+        hovered_ = w;
+        setCursor(w ? Qt::PointingHandCursor : Qt::OpenHandCursor);
+        setToolTip(w ? T("«%1» — щёлкни, чтобы поменять вид (у всех таких сразу). Тяни — переставить блок.")
+                           .arg(Theme::elementLabel(w->property("aqEl").toString()))
+                     : blockTip());
+        update();
+    }
     void resizeEvent(QResizeEvent*) override { eye_->move(width() - eye_->width() - 6, 5); }
     void paintEvent(QPaintEvent*) override {
         const auto& t = Theme::t();
@@ -105,9 +132,33 @@ protected:
         p.setFont(f);
         p.setPen(t.onRed);
         p.drawText(tag.adjusted(25, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft, name);
+        // мелкий элемент под курсором: рамка и ярлык с названием группы
+        if (QWidget* w = hovered_.data(); w && w->isVisibleTo(block_)) {
+            const QRectF er = QRectF(QRect(w->mapTo(block_, QPoint(0, 0)), w->size())).adjusted(-3, -3, 3, 3);
+            QColor hl = t.red;
+            hl.setAlphaF(0.12);
+            p.setBrush(hl);
+            p.setPen(QPen(t.red, 1.6));
+            p.drawRoundedRect(er, 8, 8);
+            QFont ef = font();
+            ef.setPixelSize(10);
+            ef.setWeight(QFont::DemiBold);
+            const QFontMetricsF efm(ef);
+            const QString label = Theme::elementLabel(w->property("aqEl").toString());
+            const qreal tw = efm.horizontalAdvance(label) + 30;
+            QRectF etag(qBound(2.0, er.left(), width() - tw - 2.0), er.top() - 20, tw, 18);
+            if (etag.top() < 30) etag.moveTop(qMin(er.bottom() + 2, height() - 20.0));   // над ним — ярлык блока
+            p.setPen(Qt::NoPen);
+            p.setBrush(t.red);
+            p.drawRoundedRect(etag, 9, 9);
+            AqIcons::paint(p, "palette", QRectF(etag.left() + 6, etag.top() + 3, 12, 12), t.onRed, 2.0);
+            p.setFont(ef);
+            p.setPen(t.onRed);
+            p.drawText(etag.adjusted(22, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, label);
+        }
     }
     void enterEvent(QEnterEvent*) override { update(); }
-    void leaveEvent(QEvent*) override { update(); }
+    void leaveEvent(QEvent*) override { setHovered(nullptr); update(); }
     void mousePressEvent(QMouseEvent* e) override {
         if (e->button() != Qt::LeftButton) return;
         press_ = e->position().toPoint();
@@ -115,17 +166,25 @@ protected:
         setCursor(Qt::ClosedHandCursor);
     }
     void mouseMoveEvent(QMouseEvent* e) override {
-        if (!pressed_ || (e->position().toPoint() - press_).manhattanLength() < QApplication::startDragDistance()) return;
+        if (!pressed_) { setHovered(elementAt(e->position().toPoint())); return; }
+        if ((e->position().toPoint() - press_).manhattanLength() < QApplication::startDragDistance()) return;
         pressed_ = false;
+        setHovered(nullptr);
         setCursor(Qt::OpenHandCursor);
         emit block_->dragStarted(block_);
     }
-    void mouseReleaseEvent(QMouseEvent*) override {
+    void mouseReleaseEvent(QMouseEvent* e) override {
+        const bool click = pressed_ && e->button() == Qt::LeftButton;
         pressed_ = false;
-        setCursor(Qt::OpenHandCursor);
+        QWidget* w = click ? elementAt(press_) : nullptr;
+        setCursor(w ? Qt::PointingHandCursor : Qt::OpenHandCursor);
+        // щелчок (не перетаскивание) по мелкому элементу — меню его вида
+        if (w) emit block_->elementClicked(w->property("aqEl").toString(), w->property("aqElMore").toString(),
+                                           e->globalPosition().toPoint());
     }
 private:
     BoardBlock* block_;
+    QPointer<QWidget> hovered_;
     QToolButton* eye_;
     QPoint press_;
     bool pressed_ = false;
@@ -592,6 +651,7 @@ bool BoardCard::eventFilter(QObject* o, QEvent* e) {
 // ===========================================================================
 Board::Board(QWidget* parent) : QWidget(parent) {
     setAcceptDrops(true);
+    elements_ = Theme::current().elements;
     strip_ = new QWidget(this);
     strip_->setObjectName("cardStrip");
     stripLay_ = new FlowLayout(strip_, 8, 8);
@@ -643,6 +703,9 @@ BoardBlock* Board::addBlock(const QString& id, const QString& name) {
         QTimer::singleShot(0, this, [this, id]() {
             change([id](CardLayout::Layout& l) { CardLayout::hideBlock(l, id); });
         });
+    });
+    connect(b, &BoardBlock::elementClicked, this, [this](const QString& group, const QString& more, const QPoint& global) {
+        QTimer::singleShot(0, this, [this, group, more, global]() { showElementMenu(group, more, global); });
     });
     return b;
 }
@@ -716,7 +779,7 @@ void Board::setSidebarMode(int mode, bool record) {
     if (mode == sidebar_) return;
     if (record) {                                  // как правка в редакторе: Ctrl+Z вернёт
         remember();
-        applyState(State{layout_, mode}, true);
+        applyState(state(layout_, mode), true);
         return;
     }
     sidebar_ = mode;
@@ -724,7 +787,7 @@ void Board::setSidebarMode(int mode, bool record) {
 }
 
 void Board::remember() {
-    undo_ << State{layout_, sidebar_};
+    undo_ << state(layout_, sidebar_);
     while (undo_.size() > kUndoMax) undo_.removeFirst();
     redo_.clear();
 }
@@ -732,15 +795,21 @@ void Board::remember() {
 void Board::applyState(const State& s, bool animate, const std::function<void()>& then) {
     if (resizeEdge_ >= 0) cancelResize();          // край тянули — раскладка уже другая
     const bool sideChanged = s.sidebar != sidebar_;
+    const bool layoutChanged = sideChanged || s.layout != layout_;
     // панель меняется в том же снимке, что и карточки (переход — по всему окну). Скрытая
     // панель появляется, когда прячут блок «Игра» (edited → MainWindow) — тоже по всему окну
-    auto apply = [this, s, sideChanged, then]() {
-        layout_ = s.layout;
-        sidebar_ = s.sidebar;
-        if (sideChanged) emit sidebarModeChanged(sidebar_);
-        rebuild();
+    auto apply = [this, s, sideChanged, layoutChanged, then]() {
+        // вид мелких элементов (отмена / возврат) — тоже внутри перехода
+        elements_ = s.elements;
+        if (s.elements != Theme::current().elements) emit elementsChanged(s.elements);
+        if (layoutChanged) {
+            layout_ = s.layout;
+            sidebar_ = s.sidebar;
+            if (sideChanged) emit sidebarModeChanged(sidebar_);
+            rebuild();
+        }
         updateBar();
-        emit edited();                             // внутри: монитор и панель — уже в снимке «после»
+        if (layoutChanged) emit edited();          // внутри: монитор и панель — уже в снимке «после»
         if (then) then();
     };
     const bool wholeWindow = sideChanged || s.sidebar == 3;
@@ -755,12 +824,12 @@ void Board::change(const std::function<void(CardLayout::Layout&)>& f, bool anima
     l = CardLayout::normalize(l);
     if (l == layout_) return;
     remember();
-    applyState(State{l, sidebar_}, animate, then);
+    applyState(state(l, sidebar_), animate, then);
 }
 
 bool Board::undo() {
     if (undo_.isEmpty()) return false;
-    redo_ << State{layout_, sidebar_};
+    redo_ << state(layout_, sidebar_);
     while (redo_.size() > kUndoMax) redo_.removeFirst();
     applyState(undo_.takeLast(), true);
     return true;
@@ -768,7 +837,7 @@ bool Board::undo() {
 
 bool Board::redo() {
     if (redo_.isEmpty()) return false;
-    undo_ << State{layout_, sidebar_};
+    undo_ << state(layout_, sidebar_);
     while (undo_.size() > kUndoMax) undo_.removeFirst();
     applyState(redo_.takeLast(), true);
     return true;
@@ -1039,7 +1108,8 @@ void Board::buildBar() {
     auto* title = new QLabel(T("Редактор интерфейса"));
     title->setObjectName("cardTitle");
     auto* hint = new QLabel(T("Карточки тащи за заголовок, блоки — за любое место, края карточек — чтобы поменять размер. "
-                              "Шестерёнка на карточке — её вид, глаз на блоке — спрятать. У каждой игры своя раскладка."));
+                              "Шестерёнка на карточке — её вид, глаз на блоке — спрятать. Щелчок по мелкому элементу "
+                              "(шаг, клавиша, плашка, кнопка) — его вид. У каждой игры своя раскладка, вид элементов — общий."));
     hint->setObjectName("small");
     hint->setWordWrap(true);
     texts->addWidget(title);
@@ -1075,6 +1145,16 @@ void Board::buildBar() {
     hiddenMenu_ = new QMenu(barHidden_);
     barHidden_->setMenu(hiddenMenu_);
     connect(hiddenMenu_, &QMenu::aboutToShow, this, &Board::fillHiddenMenu);
+    auto* elements = new QPushButton(T("Элементы"));
+    elements->setToolTip(T("Вид мелких элементов: шаги, клавиши, плашки, кнопки профиля… Или щёлкни по элементу прямо в карточке"));
+    elementsMenu_ = new QMenu(elements);
+    elementsMenu_->setToolTipsVisible(true);
+    elements->setMenu(elementsMenu_);
+    connect(elementsMenu_, &QMenu::aboutToShow, this, &Board::fillElementsMenu);
+    auto* styles = new QPushButton(T("Стили"));
+    styles->setToolTip(T("Мои стили: сохранить текущий вид под именем, поставить другой, загрузить из файла"));
+    stylesMenu_ = new QMenu(styles);
+    styles->setMenu(stylesMenu_);
     auto* add = barAdd_ = new QPushButton(T("Новая карточка"));
     add->setIcon(AqIcons::ui("plus", Theme::t().text, 14));
     add->setToolTip(T("Пустая карточка со своим названием — перетащи в неё нужные блоки"));
@@ -1093,7 +1173,7 @@ void Board::buildBar() {
             connect(a, &QAction::triggered, this, [this, i]() {
                 if (i == sidebar_) return;
                 remember();
-                applyState(State{layout_, i}, false);
+                applyState(state(layout_, i), false);
             });
         }
         connect(side, &QMenu::aboutToShow, this, [side, this]() {
@@ -1110,8 +1190,8 @@ void Board::buildBar() {
             change([](CardLayout::Layout& l) { l = CardLayout::defaults(); });
         });
     }
-    for (QPushButton* b : {templates, barHidden_, more}) b->setProperty("menuBtn", true);
-    for (QWidget* b : std::initializer_list<QWidget*>{barUndo_, barRedo_, templates, barHidden_, add, more}) {
+    for (QPushButton* b : {templates, barHidden_, elements, styles, more}) b->setProperty("menuBtn", true);
+    for (QWidget* b : std::initializer_list<QWidget*>{barUndo_, barRedo_, templates, barHidden_, elements, styles, add, more}) {
         b->setCursor(Qt::PointingHandCursor);
         tools->addWidget(b);
     }
@@ -1129,7 +1209,8 @@ void Board::updateBar() {
     if (barUndo_) barUndo_->setEnabled(!undo_.isEmpty());
     if (barRedo_) barRedo_->setEnabled(!redo_.isEmpty());
     if (barHidden_) {
-        const int n = CardLayout::hiddenBlocks(layout_).size();
+        int n = CardLayout::hiddenBlocks(layout_).size();
+        for (const Theme::ElementStyle& e : Theme::current().elements) n += e.hidden ? 1 : 0;
         barHidden_->setText(n ? T("Скрытые (%1)").arg(n) : T("Скрытые"));
     }
 }
@@ -1137,8 +1218,17 @@ void Board::updateBar() {
 void Board::fillHiddenMenu() {
     hiddenMenu_->clear();
     const QStringList hidden = CardLayout::hiddenBlocks(layout_);
+    // спрятанные мелкие элементы (подсказки, кнопки профиля) — тоже отсюда
+    QStringList hiddenEl;
+    for (const QString& id : Theme::elementIds())
+        if (Theme::element(id).hidden) hiddenEl << id;
+    for (const QString& id : hiddenEl)
+        hiddenMenu_->addAction(AqIcons::ui("eye", Theme::t().text, 14, 2.0), T("Вернуть «%1»").arg(Theme::elementLabel(id)), this, [this, id]() {
+            QTimer::singleShot(0, this, [this, id]() { changeElement(id, [](Theme::ElementStyle& s) { s.hidden = false; }); });
+        });
+    if (!hiddenEl.isEmpty() && !hidden.isEmpty()) hiddenMenu_->addSeparator();
     if (hidden.isEmpty()) {
-        hiddenMenu_->addAction(T("Скрытых блоков нет — спрятать: глаз на блоке"))->setEnabled(false);
+        if (hiddenEl.isEmpty()) hiddenMenu_->addAction(T("Скрытых блоков нет — спрятать: глаз на блоке"))->setEnabled(false);
         return;
     }
     for (const QString& b : hidden) {
@@ -1173,7 +1263,7 @@ void Board::fillTemplatesMenu() {
                 const CardLayout::Layout l = CardLayout::templateLayout(i, &side);
                 if (l == layout_ && side == sidebar_) return;
                 remember();
-                applyState(State{l, side}, true);
+                applyState(state(l, side), true);
                 emit message(T("Шаблон «%1». Не то — Ctrl+Z.").arg(CardLayout::templateName(i)));
             });
         });
@@ -1211,7 +1301,7 @@ void Board::importLayout() {
         return;
     }
     remember();
-    applyState(State{l, side}, true);
+    applyState(state(l, side), true);
     emit message(T("Раскладка загружена. Не то — Ctrl+Z."));
 }
 
@@ -1292,6 +1382,154 @@ void Board::showCardMenu(const QString& cardId, QToolButton* from, const QPoint&
     if (from) from->setDown(true);
     m.exec(global);
     if (from) from->setDown(false);
+}
+
+// ---------------------------------------------------------------------------
+// Вид мелких элементов (по группам): меню, правка с отменой
+// ---------------------------------------------------------------------------
+void Board::showElementMenu(const QString& group, const QString& more, const QPoint& global) {
+    if (!edit_ || !Theme::elementCaps(group)) return;
+    QMenu m(this);
+    // заголовок: что это за группа (меняется у всех таких элементов сразу)
+    auto* head = new QWidget();
+    auto* hv = new QVBoxLayout(head);
+    hv->setContentsMargins(12, 8, 12, 6);
+    hv->setSpacing(1);
+    auto* title = new QLabel(Theme::elementLabel(group));
+    title->setObjectName("cardTitle");
+    auto* note = new QLabel(Theme::elementNote(group) + "\n" + T("Меняется у всех таких элементов сразу"));
+    note->setObjectName("small");
+    hv->addWidget(title);
+    hv->addWidget(note);
+    auto* wa = new QWidgetAction(&m);
+    wa->setDefaultWidget(head);
+    m.addAction(wa);
+    m.addSeparator();
+    fillElementMenu(&m, group);
+    if (Theme::elementCaps(more)) {
+        m.addSeparator();
+        fillElementMenu(m.addMenu(Theme::elementLabel(more)), more);
+    }
+    m.exec(global);
+}
+
+void Board::fillElementMenu(QMenu* m, const QString& group) {
+    const Theme::ElementStyle e = Theme::element(group);
+    const int caps = Theme::elementCaps(group);
+    auto set = [this, group](const std::function<void(Theme::ElementStyle&)>& f) {
+        QTimer::singleShot(0, this, [this, group, f]() { changeElement(group, f); });
+    };
+    if (caps & Theme::ElLook) {
+        QMenu* look = m->addMenu(T("Вид"));
+        const QStringList looks = Theme::elementLooks(group);
+        for (int k = 0; k < looks.size(); ++k) {
+            QAction* a = look->addAction(looks[k]);
+            a->setCheckable(true);
+            a->setChecked(e.look == k);
+            connect(a, &QAction::triggered, this, [set, k]() { set([k](Theme::ElementStyle& s) { s.look = k; }); });
+        }
+    }
+    if (caps & Theme::ElColor) {
+        QAction* color = m->addAction(AqIcons::ui("palette", Theme::t().text, 14, 2.0),
+                                      e.color.isEmpty() ? T("Свой цвет…") : T("Свой цвет (%1)…").arg(e.color));
+        connect(color, &QAction::triggered, this, [this, set, e]() {
+            QTimer::singleShot(0, this, [this, set, e]() {
+                QColor c = e.color.isEmpty() ? Theme::t().red : QColor(e.color);
+                if (!ColorPickerDialog::getColor(window(), ColorPickerDialog::Plain, c)) return;
+                const QString name = c.name().toUpper();
+                set([name](Theme::ElementStyle& s) { s.color = name; });
+            });
+        });
+        if (!e.color.isEmpty())
+            connect(m->addAction(T("Цвет как в теме")), &QAction::triggered, this,
+                    [set]() { set([](Theme::ElementStyle& s) { s.color.clear(); }); });
+    }
+    if (caps & Theme::ElRadius) {
+        QMenu* rm = m->addMenu(T("Скругление"));
+        QList<int> radii{-1};
+        radii += Theme::elementRadii();
+        for (int r : radii) {
+            QAction* a = rm->addAction(r < 0 ? T("Как в теме") : r == 0 ? T("0 px — прямые углы") : T("%1 px").arg(r));
+            a->setCheckable(true);
+            a->setChecked(e.radius == r);
+            connect(a, &QAction::triggered, this, [set, r]() { set([r](Theme::ElementStyle& s) { s.radius = r; }); });
+        }
+    }
+    if (caps & Theme::ElSize) {
+        QMenu* sm = m->addMenu(T("Размер"));
+        const QStringList sizes = Theme::elementSizes(group);
+        for (int k = 0; k < sizes.size(); ++k) {
+            QAction* a = sm->addAction(sizes[k]);
+            a->setCheckable(true);
+            a->setChecked(e.size == k);
+            connect(a, &QAction::triggered, this, [set, k]() { set([k](Theme::ElementStyle& s) { s.size = k; }); });
+        }
+    }
+    if (caps & Theme::ElHide) {
+        QAction* hide = m->addAction(group == "profile" ? T("Спрятать (они будут в меню ⋯ у профиля)") : T("Спрятать"));
+        hide->setCheckable(true);
+        hide->setChecked(e.hidden);
+        connect(hide, &QAction::toggled, this, [set](bool on) { set([on](Theme::ElementStyle& s) { s.hidden = on; }); });
+    }
+    if (!e.isDefault()) {
+        m->addSeparator();
+        connect(m->addAction(T("Как в теме — сбросить")), &QAction::triggered, this,
+                [set]() { set([](Theme::ElementStyle& s) { s = Theme::ElementStyle(); }); });
+    }
+}
+
+void Board::fillElementsMenu() {
+    elementsMenu_->clear();
+    const Theme::Elements& el = Theme::current().elements;
+    for (const QString& id : Theme::elementIds()) {
+        const Theme::ElementStyle e = el.value(id);
+        QString name = Theme::elementLabel(id);
+        if (e.hidden) name += T(" — спрятаны");
+        else if (!e.isDefault()) name += T(" — свой вид");
+        QMenu* sub = elementsMenu_->addMenu(name);
+        sub->setToolTipsVisible(true);
+        sub->menuAction()->setToolTip(Theme::elementNote(id));
+        fillElementMenu(sub, id);
+    }
+    if (!el.isEmpty()) {
+        elementsMenu_->addSeparator();
+        elementsMenu_->addAction(T("Все элементы — как в теме"), this, [this]() {
+            QTimer::singleShot(0, this, [this]() { changeElements({}); });
+        });
+    }
+}
+
+void Board::applyLayout(const CardLayout::Layout& in, int sidebar) {
+    const CardLayout::Layout l = CardLayout::normalize(in);
+    if (l == layout_ && sidebar == sidebar_) return;
+    remember();
+    applyState(state(l, sidebar), true);
+}
+
+void Board::syncElements() {
+    const Theme::Elements& cur = Theme::current().elements;
+    if (cur != elements_) {
+        // отмена вернёт раскладку, а вид элементов останется новым (он — часть оформления)
+        for (State& st : undo_) st.elements = cur;
+        for (State& st : redo_) st.elements = cur;
+        elements_ = cur;
+    }
+    updateBar();
+}
+
+void Board::changeElements(const Theme::Elements& in) {
+    const Theme::Elements el = Theme::normalizeElements(in);
+    if (el == Theme::current().elements) return;
+    remember();
+    applyState(State{layout_, sidebar_, el}, false);
+}
+
+void Board::changeElement(const QString& group, const std::function<void(Theme::ElementStyle&)>& f) {
+    Theme::Elements el = Theme::current().elements;
+    Theme::ElementStyle e = el.value(group);
+    f(e);
+    el[group] = e;
+    changeElements(el);
 }
 
 void Board::askNewCard() {
