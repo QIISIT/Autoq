@@ -58,7 +58,17 @@ jobs:
       - name: Сборка AutoQ.app и DMG
         env:
           ARCHS: arm64;x86_64
-        run: ./macos/build-mac.sh
+        run: |
+          set -o pipefail
+          ./macos/build-mac.sh 2>&1 | tee build.log
+
+      # ошибки — аннотациями: их видно на странице запуска и через API, без скачивания логов
+      - name: Ошибки сборки
+        if: failure()
+        run: |
+          enc() { sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}'; }
+          echo "::error title=Ошибки::$(grep -E -B2 -A3 'error:|Error [0-9]|fatal' build.log | head -120 | enc)"
+          echo "::error title=Конец лога::$(tail -60 build.log | enc)"
 
       - uses: actions/upload-artifact@v4
         with:
