@@ -2623,8 +2623,11 @@ QString MainWindow::startProblemFor(const GameDef& g, const GameState& st) const
     // действие = клавиша, которая что-то включает: кликер нажимал бы её сам
     for (const HkBinding& b : bindings_) {
         if (!(b.spec.mods == 0 || b.spec.mods == ModShift)) continue;
-        // сочетание из двух клавиш ловится только с клавиатуры человека — нажатия кликера его не включат
-        if (b.spec.isChord()) continue;
+        // «сквозные» клавиши (буквы, цифры, кнопки мыши, сочетания) ловятся только с клавиатуры и мыши
+        // человека: свои нажатия кликера хуки и сырые события пропускают. Значит, F может и включать,
+        // и нажиматься: зажал F — кликер жмёт F. Забранные себе (F6, «не пропускать в игру») —
+        // ловились бы и с кликера, а его нажатия до игры не дошли бы
+        if (b.spec.isChord() || b.spec.passthrough()) continue;
         for (const ActionStep& a : st.runList(g.mode)) {
             const bool same = b.spec.isMouse() ? (a.mouse && a.button == b.spec.mouseButton())
                                                : (!a.mouse && a.key.compare(b.spec.key, Qt::CaseInsensitive) == 0);
