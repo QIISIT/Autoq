@@ -70,14 +70,7 @@ int main(int argc, char** argv) {
     QCoreApplication::setAttribute(Qt::AA_MacDontSwapCtrlAndMeta);
 #endif
     QApplication app(argc, argv);
-    // Размер меньше 100 % на экране 100 %: Qt рисовал бы окно кусками — сразу
-    // перезапускаемся с масштабом 1:1 (на Windows это проверено ещё до запуска)
-    if (const double clamp = Theme::scaleClampNeeded(); clamp > 0) {
-        qputenv("AQ_SCALE_CLAMP", QByteArray::number(clamp, 'f', 4));
-        QStringList args = QCoreApplication::arguments().mid(1);
-        QProcess::startDetached(QCoreApplication::applicationFilePath(), args);
-        return 0;
-    }
+    I18n::installQtTranslator();    // меню правки у полей, кнопки окон Qt — на языке AutoQ
 #if !defined(_WIN32) && !defined(__APPLE__)
     // Ставим ПОСЛЕ QApplication: Qt при подключении к X11 ставит свой обработчик
     // ошибок, и тогда программа не узнала бы, что клавиша запуска занята.

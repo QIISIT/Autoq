@@ -127,12 +127,17 @@ struct GameState {
     bool usesMouse(GameMode m) const;
     // меньше какого «повтор через» в этом режиме нельзя (см. repeatMinMs)
     int repeatMin(GameMode m, int gameMinMs) const;
+    // круг целиком — не быстрее (см. minCycleMs)
+    int minCycle(GameMode m, int gameMinMs) const;
     bool operator==(const GameState& o) const;
 };
 // «Повтор через» — не меньше минимума игры. Но в «По шагам» и «По очереди» из 2+ действий
-// это пауза между клавишами — там от 0 (круг целиком всё равно не быстрее минимума игры:
-// за этим следит кликер, ClickerConfig::minCycleMs)
+// это пауза между клавишами — там от 0
 int repeatMinMs(GameMode m, int count, int gameMinMs);
+// Круг целиком (от начала до начала следующего) — не быстрее: там, где «повтор через» от 0, —
+// 1 мс (только чтобы кликер не крутился вхолостую), иначе — минимум игры. Следит кликер
+// (ClickerConfig::minCycleMs)
+int minCycleMs(GameMode m, int count, int gameMinMs);
 constexpr int kMaxActions = 64;
 constexpr int kMaxSteps = 128;
 constexpr int kMaxStartDelayMs = 60000;

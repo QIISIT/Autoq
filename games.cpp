@@ -112,6 +112,12 @@ int GameState::repeatMin(GameMode m, int gameMinMs) const {
     return repeatMinMs(m, int(m == GameMode::Steps ? runList(m).size() : actions.size()), gameMinMs);
 }
 
+int minCycleMs(GameMode m, int count, int gameMinMs) { return repeatMinMs(m, count, gameMinMs) == 0 ? 1 : gameMinMs; }
+
+int GameState::minCycle(GameMode m, int gameMinMs) const {
+    return minCycleMs(m, int(m == GameMode::Steps ? runList(m).size() : actions.size()), gameMinMs);
+}
+
 bool GameState::usesMouse(GameMode m) const {
     for (const ActionStep& a : runList(m)) if (a.mouse) return true;
     return false;

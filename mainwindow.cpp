@@ -999,12 +999,9 @@ void MainWindow::connectSignals() {
         }
         cur_.startDelayMs = actionsEdit_->startDelay();
         // «повтор через» — тот же интервал, что в карточке «Скорость»
-        const int iv = qBound(repeatMin(), actionsEdit_->interval(), 60000);
-        if (iv != cur_.intervalMs) {
-            cur_.intervalMs = iv;
-            syncSlider();
-        }
-        syncSpeedBox();         // от числа действий зависит, можно ли интервал меньше минимума
+        cur_.intervalMs = qBound(repeatMin(), actionsEdit_->interval(), 60000);
+        syncSlider();           // от числа действий зависит, можно ли интервал меньше минимума
+        syncSpeedBox();
         applyModeLayout();
         commit();
     });
@@ -1025,8 +1022,8 @@ void MainWindow::connectSignals() {
     connect(slider_, &QSlider::valueChanged, this, [this](int v) {
         if (loading_) return;
         // логарифмическая шкала: слева 5 секунд, справа — минимум игры (вправо — быстрее)
-        const double lo = game_.minIntervalMs, hi = 5000.0;
-        cur_.intervalMs = qBound(game_.minIntervalMs, int(qRound(lo * qPow(hi / lo, (1000 - v) / 1000.0))), 60000);
+        const double lo = sliderLo(), hi = 5000.0;
+        cur_.intervalMs = qBound(int(lo), int(qRound(lo * qPow(hi / lo, (1000 - v) / 1000.0))), 60000);
         syncSpeedBox();
         commit();
     });
@@ -1201,7 +1198,7 @@ void MainWindow::refreshIcons() {
     for (QLabel* l : findChildren<QLabel*>())
         if (l->property("brandName").toBool())
             l->setText(QString("Auto<span style=\"color:%1\">Q</span>").arg(t.redHi.name()));
-    footerLabel_->setText(QString(AQ_NAME " " AQ_VERSION_SHORT " · created by "
+    footerLabel_->setText(QString(AQ_NAME " " AQ_VERSION " · created by "
                                   "<span style=\"color:%1; font-weight:600\">" AQ_AUTHOR "</span>")
                               .arg(t.redHi.name()));
     addGameBtn_->setIcon(AqIcons::ui("plus", t.redHi, 16, 2.2));
@@ -1726,7 +1723,7 @@ void MainWindow::stateToUi() {
 }
 
 void MainWindow::syncSlider() {
-    const double lo = game_.minIntervalMs, hi = 5000.0;
+    const double lo = sliderLo(), hi = 5000.0;
     const double iv = qBound(lo, double(cur_.intervalMs), hi);
     const int v = lo >= hi ? 1000 : 1000 - qRound(1000.0 * qLn(iv / lo) / qLn(hi / lo));
     const bool wasLoading = loading_;
@@ -1777,7 +1774,7 @@ ClickerConfig MainWindow::buildConfig(const GameDef& g, const GameState& st, con
         for (ActionStep& a : c.actions) a.afterMs = 0;
     c.startDelayMs = st.startDelayMs;
     c.intervalMs = qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs));
-    c.minCycleMs = g.minIntervalMs;
+    c.minCycleMs = st.minCycle(g.mode, g.minIntervalMs);
     c.randomize = st.randomize;
     c.jitterMs = st.jitterMs;
     c.lockToWindow = st.lockWindow;
@@ -1875,8 +1872,8 @@ double MainWindow::perSecond(const GameDef& g, const GameState& st) const {
         for (const ActionStep& a : list) n += a.press != ActionStep::Up;
     }
     const bool combo = g.mode == GameMode::Combo && n > 1;
-    // круг целиком — не быстрее минимума игры (паузы между клавишами бывают 0)
-    double cycle = qMax<double>(g.minIntervalMs, FrameSync::cycleMs(list, qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs)),
+    // круг целиком — не быстрее minCycle (минимум игры, а где паузы свои — 1 мс)
+    double cycle = qMax<double>(st.minCycle(g.mode, g.minIntervalMs), FrameSync::cycleMs(list, qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs)),
                                                                      g.mode == GameMode::Combo));
     if (st.frameSync) {                 // в такт: целое число кадров на цикл
         const double f = FrameSync::frameMs(syncHz(st, boundHandle(g.id)));
@@ -1907,13 +1904,14 @@ void MainWindow::updateRate() {
             const double hz = syncHz(cur_, boundHandle(game_.id)), f = FrameSync::frameMs(hz);
             const int fr = qMax(FrameSync::frames(FrameSync::cycleMs(cur_.runList(game_.mode), qMax(cur_.intervalMs, repeatMin()),
                                                                      game_.mode == GameMode::Combo), f),
-                                FrameSync::frames(game_.minIntervalMs, f));
+                                FrameSync::frames(minCycle(), f));
             QString every = everyFrames(fr);
             if (cur_.randomize && cur_.jitterMs > 0) every = T("в среднем ") + every;
             t = T("В такт %1 Гц: %2 (%3 мс) · %4 в минуту")
                     .arg(qRound(hz)).arg(every, dec(fr * f), num(qRound64(ps * 60)));
         } else {
-            t = T("%1 в минуту · минимум %2 мс").arg(num(qRound64(ps * 60))).arg(game_.minIntervalMs);
+            t = repeatMin() > 0 ? T("%1 в минуту · минимум %2 мс").arg(num(qRound64(ps * 60))).arg(repeatMin())
+                                : T("%1 в минуту").arg(num(qRound64(ps * 60)));
             if (cur_.randomize && cur_.jitterMs > 0) t = T("в среднем ") + t;
         }
         perMinuteLabel_->setText(t);

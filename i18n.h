@@ -15,6 +15,9 @@ namespace I18n {
     QLocale locale();                     // числа: «1 200» или «1,200»
     int dictionarySize();
     bool hasTranslation(const QString& ru);
+    // Встроенные строки Qt (меню правки у полей ввода, полоса прокрутки, кнопки окон,
+    // запасное окно выбора файла) — по-русски, если язык русский. После QApplication
+    void installQtTranslator();
 }
 
 QString T(const char* ru);

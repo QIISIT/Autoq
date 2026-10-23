@@ -1330,6 +1330,11 @@ static void testV114() {
         GameState two = cb; two.actions = {st("e", ActionStep::Click, 0), st("f", ActionStep::Click, 0)};
         CHECK(two.repeatMin(GameMode::Sequence, 20) == 0 && two.repeatMin(GameMode::Combo, 20) == 20 &&
               two.repeatMin(GameMode::Hold, 20) == 20);
+        // круг целиком: где «повтор через» от 0 — от 1 мс (один шаг тоже), иначе — от минимума игры
+        GameState one = cb; one.steps = {st("e", D, 0)}; one.actions = {st("e", ActionStep::Click, 0)};
+        CHECK(one.minCycle(GameMode::Steps, 20) == 1 && cb.minCycle(GameMode::Steps, 20) == 1);
+        CHECK(two.minCycle(GameMode::Sequence, 20) == 1 && one.minCycle(GameMode::Sequence, 20) == 20 &&
+              two.minCycle(GameMode::Combo, 20) == 20 && minCycleMs(GameMode::Hold, 3, 20) == 20);
         Games::saveState("genshin", back);
     }
     CHECK(back.startDelayMs == kMaxStartDelayMs);

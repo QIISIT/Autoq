@@ -141,6 +141,8 @@ private:
     void syncSpeedBox();
     double perSecond(const GameDef& g, const GameState& st) const;
     int repeatMin() const { return cur_.repeatMin(game_.mode, game_.minIntervalMs); }   // «повтор через» от
+    int minCycle() const { return cur_.minCycle(game_.mode, game_.minIntervalMs); }     // круг целиком — не быстрее
+    double sliderLo() const { return qMax(1, repeatMin()); }   // левый край шкалы скорости (самый быстрый)
 
     // --- профили ---
     void updateProfileState();

@@ -703,17 +703,6 @@ QWidget* SettingsDialog::buildAppearancePage() {
     scaleNote_ = lbl(QString(), "small");
     scaleNote_->setWordWrap(true);
     lay->addWidget(scaleNote_);
-    // мельче 100 % — только на экранах с масштабом больше 100 % (иначе Qt рисует кусками)
-    const int minScale = Theme::minUsableGuiScale();
-    for (int i = 0; i < Theme::guiScaleChoices().size(); ++i)
-        if (Theme::guiScaleChoices()[i] < minScale) {
-            scaleSeg_->button(i)->setEnabled(false);
-            scaleSeg_->button(i)->setToolTip(T("Мельче 100 % — только когда масштаб экрана в системе больше 100 % (например 125 %): мельче пикселя экрана окно не рисуется."));
-        }
-    auto* scaleLimit = lbl(T("Мельче 100 % на этом экране нельзя: масштаб в системе 100 %. Сделай его больше (например 125 %) — и 90 % станет доступно."), "faint");
-    scaleLimit->setWordWrap(true);
-    scaleLimit->setVisible(minScale > 90);
-    lay->addWidget(scaleLimit);
     scaleRestart_ = new QPushButton(T("Перезапустить AutoQ"));
     scaleRestart_->setObjectName("accent");
     scaleRestart_->hide();

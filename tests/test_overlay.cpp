@@ -12,6 +12,10 @@
 #include <QKeyEvent>
 #include <QFileInfo>
 #include <QJsonObject>
+#include <QLineEdit>
+#include <QMenu>
+#include <memory>
+#include "i18n.h"
 
 static int g_fail = 0, g_pass = 0;
 #define CHECK(cond) do { if (cond) ++g_pass; else { ++g_fail; \
@@ -304,6 +308,30 @@ int main(int argc, char** argv) {
         key(QEvent::KeyPress, Qt::Key_Backtab, 23, Qt::ShiftModifier);
         key(QEvent::KeyRelease, Qt::Key_Tab, 0);
         CHECK(fin == 1 && got.toString() == "shift+tab");
+    }
+
+    // строки самого Qt (меню правки у полей ввода, кнопки окон) — на языке AutoQ
+    {
+        auto menuTexts = []() {
+            QLineEdit le;
+            std::unique_ptr<QMenu> m(le.createStandardContextMenu());
+            QStringList out;
+            for (QAction* a : m->actions()) out << a->text().section('\t', 0, 0);
+            return out;
+        };
+        const I18n::Lang was = I18n::language();
+        I18n::setLanguage(I18n::En);
+        I18n::installQtTranslator();                       // английский — как в Qt, переводчик не ставится
+        CHECK(menuTexts().contains("Cu&t") && menuTexts().contains("Select All"));
+        I18n::setLanguage(I18n::Ru);
+        I18n::installQtTranslator();
+        const QStringList ru = menuTexts();
+        CHECK(ru.contains("&Отменить") && ru.contains("&Вырезать") && ru.contains("Вст&авить") && ru.contains("Выделить всё"));
+        CHECK(!ru.join(' ').contains("Cut") && !ru.join(' ').contains("Undo"));
+        CHECK(QCoreApplication::translate("QPlatformTheme", "Cancel") == "Отмена");
+        CHECK(QCoreApplication::translate("QScrollBar", "Scroll here") == "Прокрутить сюда");
+        CHECK(QCoreApplication::translate("QLineEdit", "не строка Qt") == "не строка Qt");
+        I18n::setLanguage(was);
     }
 
     std::printf("\n%d проверок пройдено, %d провалено\n", g_pass, g_fail);

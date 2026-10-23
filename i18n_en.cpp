@@ -2403,5 +2403,7 @@ extern const AqTranslation kAqEnglish[] = {
      "No profiles yet. \"New profile…\" is in the ⋯ menu."},
     {"● Есть несохранённые изменения — «Сохранить» или «Сбросить» в меню ⋯.",
      "● Unsaved changes: \"Save\" or \"Reset\" in the ⋯ menu."},
+    {"%1 в минуту",
+     "%1 per minute"},
 };
 extern const int kAqEnglishCount = sizeof(kAqEnglish) / sizeof(kAqEnglish[0]);

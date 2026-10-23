@@ -849,7 +849,12 @@ bool InputGuard::eventFilter(QObject* o, QEvent* e) {
         auto* w = static_cast<QWidget*>(o);
         // фокус от колёсика: иначе первый же оборот колёсика над полем «выбирал» бы его
         if (w->focusPolicy() == Qt::WheelFocus) w->setFocusPolicy(Qt::StrongFocus);
-        if (auto* sb = qobject_cast<QAbstractSpinBox*>(o)) keepCursorInNumber(sb);
+        if (auto* sb = qobject_cast<QAbstractSpinBox*>(o)) {
+            keepCursorInNumber(sb);
+            // правый щелчок по числу — не меню правки текста («Вырезать», «Шаг вверх»…),
+            // а меню того, что вокруг (шаг, карточка)
+            if (sb->contextMenuPolicy() == Qt::DefaultContextMenu) sb->setContextMenuPolicy(Qt::NoContextMenu);
+        }
     } else if (e->type() == QEvent::Wheel) {
         static QElapsedTimer clock;
         if (!clock.isValid()) clock.start();
