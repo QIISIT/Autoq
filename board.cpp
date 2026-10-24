@@ -38,7 +38,8 @@ QString builtinName(const QString& id) {
     if (id == "actions") return T("Действия");
     if (id == "speed") return T("Скорость");
     if (id == "window") return T("Окно игры");
-    if (id == "profile") return T("Профиль и запуск");
+    if (id == "profile") return T("Профиль");
+    if (id == "launch") return T("Запуск");
     return QString();
 }
 
@@ -240,6 +241,107 @@ private:
     bool down_ = false;
 };
 
+// Заголовок карточки: слева номер и название, справа служебные кнопки, между ними —
+// кнопки первого блока (режимы «Действий» и т. п.). Не влезают в ширину — уходят второй
+// строкой под название: узкое окно не упирается в длинный заголовок карточки.
+class CardHeadLayout : public QLayout {
+public:
+    enum Role { Left, Middle, Right };
+    explicit CardHeadLayout(QWidget* parent) : QLayout(parent) { setContentsMargins(0, 0, 0, 0); setSpacing(10); }
+    ~CardHeadLayout() override { while (QLayoutItem* it = takeAt(0)) delete it; }
+    void addItem(QLayoutItem* it) override { items_ << Item{it, Left}; }
+    void add(QWidget* w, Role role) {
+        addChildWidget(w);
+        items_ << Item{new QWidgetItem(w), role};
+        invalidate();
+    }
+    void setMiddle(QWidget* w) {
+        for (int i = items_.size() - 1; i >= 0; --i)
+            if (items_[i].role == Middle && items_[i].it->widget() != w) delete items_.takeAt(i).it;
+        for (const Item& x : items_)
+            if (x.role == Middle) { invalidate(); return; }      // уже здесь
+        if (!w) { invalidate(); return; }
+        addChildWidget(w);
+        int at = 0;
+        while (at < items_.size() && items_[at].role == Left) ++at;
+        items_.insert(at, Item{new QWidgetItem(w), Middle});
+        invalidate();
+    }
+    int count() const override { return items_.size(); }
+    QLayoutItem* itemAt(int i) const override { return i >= 0 && i < items_.size() ? items_[i].it : nullptr; }
+    QLayoutItem* takeAt(int i) override { return i >= 0 && i < items_.size() ? items_.takeAt(i).it : nullptr; }
+    Qt::Orientations expandingDirections() const override { return Qt::Horizontal; }
+    bool hasHeightForWidth() const override { return true; }
+    int heightForWidth(int w) const override { return arrange(QRect(0, 0, w, 0), true); }
+    QSize sizeHint() const override {
+        int w = 0, h = 0, n = 0;
+        for (const Item& x : items_) {
+            if (x.it->isEmpty()) continue;
+            w += x.it->sizeHint().width() + (n++ ? spacing() : 0);
+            h = qMax(h, x.it->sizeHint().height());
+        }
+        return QSize(w, h);
+    }
+    QSize minimumSize() const override {
+        int line = 0, mid = 0, h = 0, n = 0;
+        for (const Item& x : items_) {
+            if (x.it->isEmpty()) continue;
+            if (x.role == Middle) mid = qMax(mid, x.it->minimumSize().width());
+            else line += x.it->minimumSize().width() + (n++ ? spacing() : 0);
+            h = qMax(h, x.it->minimumSize().height());
+        }
+        return QSize(qMax(line, mid), h);
+    }
+    void setGeometry(const QRect& r) override { QLayout::setGeometry(r); arrange(r, false); }
+private:
+    struct Item { QLayoutItem* it; int role; };
+    int arrange(const QRect& r, bool test) const {
+        const int sp = spacing();
+        int leftW = 0, rightW = 0, midW = 0, h1 = 0, midH = 0, nl = 0, nr = 0;
+        QLayoutItem* mid = nullptr;
+        for (const Item& x : items_) {
+            if (x.it->isEmpty()) continue;
+            const QSize s = x.it->sizeHint();
+            if (x.role == Middle) { mid = x.it; midW = s.width(); midH = s.height(); continue; }
+            (x.role == Left ? leftW : rightW) += s.width() + ((x.role == Left ? nl++ : nr++) ? sp : 0);
+            h1 = qMax(h1, s.height());
+        }
+        const bool one = !mid || leftW + sp + midW + (rightW ? sp + rightW : 0) <= r.width();
+        if (mid && one) h1 = qMax(h1, midH);
+        const int total = one || !mid ? h1 : h1 + 8 + midH;
+        if (test) return total;
+        // слева — по порядку; название получает, что осталось (не меньше своего минимума)
+        int x = r.left(), right = r.right() + 1;
+        for (int i = items_.size() - 1; i >= 0; --i) {
+            const Item& it = items_[i];
+            if (it.it->isEmpty() || it.role != Right) continue;
+            const QSize s = it.it->sizeHint();
+            right -= s.width();
+            it.it->setGeometry(QRect(right, r.top() + (h1 - s.height()) / 2, s.width(), s.height()));
+            right -= sp;
+        }
+        if (mid) {
+            const int w = qMin(midW, r.width());
+            if (one) {
+                right -= w;
+                mid->setGeometry(QRect(right, r.top() + (h1 - midH) / 2, w, midH));
+                right -= sp;
+            } else {
+                mid->setGeometry(QRect(r.left(), r.top() + h1 + 8, w, midH));
+            }
+        }
+        for (const Item& it : items_) {
+            if (it.it->isEmpty() || it.role != Left) continue;
+            const QSize s = it.it->sizeHint();
+            const int w = qMax(it.it->minimumSize().width(), qMin(s.width(), right - x));
+            it.it->setGeometry(QRect(x, r.top() + (h1 - s.height()) / 2, w, s.height()));
+            x += w + sp;
+        }
+        return total;
+    }
+    QList<Item> items_;
+};
+
 // Блоки в ряд (шапка): слева направо; растягивающиеся забирают свободное место.
 // Не влезают — переносятся; перенесённая строка без растягивающихся — по правому краю.
 class RowFlow : public QLayout {
@@ -386,13 +488,13 @@ void BoardBlock::setDivider(bool on) {
 
 void BoardBlock::setHead(QWidget* head) {
     head_ = head;
-    placeHead(nullptr, 0);
+    placeHead(nullptr);
 }
 
-void BoardBlock::placeHead(QHBoxLayout* cardHead, int index) {
+void BoardBlock::placeHead(CardHeadLayout* cardHead) {
     if (!head_) { top_->hide(); return; }
     if (cardHead) {
-        cardHead->insertWidget(index, head_);
+        cardHead->setMiddle(head_);
         top_->hide();
     } else {
         if (head_->parentWidget() != top_) topLay_->addWidget(head_);
@@ -447,9 +549,7 @@ BoardCard::BoardCard(const QString& id, QWidget* parent) : QFrame(parent), id_(i
     mainLay_->setSpacing(10);
     headW_ = new QWidget();
     headW_->installEventFilter(this);
-    headLay_ = new QHBoxLayout(headW_);
-    headLay_->setContentsMargins(0, 0, 0, 0);
-    headLay_->setSpacing(10);
+    headLay_ = new CardHeadLayout(headW_);
     grip_ = new QToolButton();
     grip_->setObjectName("resetMini");
     grip_->setFixedSize(18, 24);
@@ -467,14 +567,13 @@ BoardCard::BoardCard(const QString& id, QWidget* parent) : QFrame(parent), id_(i
     delete_ = miniButton(T("Удалить карточку (блоки вернутся на свои места)"));
     delete_->hide();
     collapse_ = miniButton(T("Свернуть карточку"));
-    headLay_->addWidget(grip_);
-    headLay_->addWidget(num_);
-    headLay_->addWidget(title_, 0);
-    headLay_->addStretch(1);
-    headLay_->addWidget(settings_);
-    headLay_->addWidget(rename_);
-    headLay_->addWidget(delete_);
-    headLay_->addWidget(collapse_);
+    headLay_->add(grip_, CardHeadLayout::Left);
+    headLay_->add(num_, CardHeadLayout::Left);
+    headLay_->add(title_, CardHeadLayout::Left);
+    headLay_->add(settings_, CardHeadLayout::Right);
+    headLay_->add(rename_, CardHeadLayout::Right);
+    headLay_->add(delete_, CardHeadLayout::Right);
+    headLay_->add(collapse_, CardHeadLayout::Right);
     mainLay_->addWidget(headW_);
     blocksLay_ = new QVBoxLayout();
     blocksLay_->setContentsMargins(0, 0, 0, 0);
@@ -577,9 +676,8 @@ void BoardCard::setBlocks(const QList<BoardBlock*>& blocks, bool editing) {
     // остаются при блоке, чтобы было видно, что едут вместе с ним; не в ряду и не
     // без заголовка — там они над своим блоком)
     const bool headFree = !editing && !row && !spec_.hideTitle;
-    const int headAt = headLay_->indexOf(settings_);
     for (int i = 0; i < blocks.size(); ++i)
-        blocks[i]->placeHead(i == 0 && headFree ? headLay_ : nullptr, headAt);
+        blocks[i]->placeHead(i == 0 && headFree ? headLay_ : nullptr);
     if (row) {
         for (int i = 0; i < blocks.size(); ++i) {
             rowLay_->addWidget(blocks[i]);
@@ -899,7 +997,7 @@ void Board::rebuild() {
     for (const QString& b : CardLayout::hiddenBlocks(layout_)) {
         BoardBlock* blk = blocks_.value(b);
         if (!blk) continue;
-        blk->placeHead(nullptr, 0);
+        blk->placeHead(nullptr);
         blk->setEditing(false);
         if (blk->parentWidget() != this) blk->setParent(this);
         blk->hide();

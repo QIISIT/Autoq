@@ -28,6 +28,7 @@ class QHBoxLayout;
 class QMenu;
 class QShortcut;
 class FlowLayout;
+class CardHeadLayout;
 class RowFlow;
 class EdgeGrip;
 
@@ -48,7 +49,7 @@ public:
     int rowMin = 0;               // в ряду — не уже этого (иначе ряд переносится)
     void setDivider(bool on);     // тонкая линия над блоком, если он в карточке не первый
     void showDivider(bool on) { if (divider_) divider_->setVisible(on); }
-    void placeHead(QHBoxLayout* cardHead, int index);   // nullptr — над самим блоком
+    void placeHead(CardHeadLayout* cardHead);   // nullptr — над самим блоком
     void setEditing(bool on);
     QSize minimumSizeHint() const override;   // в редактировании — не уже 150 (ярлык и глаз)
     int plainWidth(bool hint) const;          // ширина как вне редактора (без полей 8 + 8 и без «не уже 150»)
@@ -106,7 +107,7 @@ private:
     CardLayout::Card spec_;
     QVBoxLayout* mainLay_;
     QWidget* headW_;
-    QHBoxLayout* headLay_;
+    CardHeadLayout* headLay_;
     QToolButton* grip_;
     QLabel* num_;
     QLabel* title_;
