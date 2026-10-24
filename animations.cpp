@@ -47,10 +47,12 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter p(this);
         p.setRenderHint(QPainter::SmoothPixmapTransform);
+        // непрозрачная основа: под оверлеем живые виджеты уже в новом виде, и сквозь
+        // полупрозрачные снимки они давали второе, сдвинутое изображение — «тряску»
+        p.fillRect(rect(), Theme::t().bg);
         const qreal ms = clock_.elapsed() * speed_;       // время с учётом скорости анимаций
         if (style_ == "cascade") {
             const qreal e = easeOut(ms / 160.0);
-            p.setOpacity(1 - e);
             p.drawPixmap(0, 0, before_);
             p.setOpacity(e);
             p.drawPixmap(0, 0, after_);          // «после» без карточек (их места залиты фоном)
@@ -72,7 +74,6 @@ protected:
             p.setOpacity(e);
             p.drawPixmap(0, qRound((1 - e) * 22), after_);
         } else {
-            p.setOpacity(1 - e);
             p.drawPixmap(0, 0, before_);
             p.setOpacity(e);
             p.drawPixmap(0, 0, after_);
@@ -101,6 +102,9 @@ void Anim::transition(QWidget* area, const std::function<void()>& change, const 
         change();
         return;
     }
+    // «до» — то, что видно сейчас, вместе с недоигранным переходом на странице:
+    // при быстрых переключениях новый переход начинается с того же кадра, без скачка
+    const QPixmap before = area->grab();
     // прошлый переход ещё идёт — убираем его: здесь, внутри (на странице) и снаружи
     // (по всему окну — его снимок лежал бы поверх нового перехода)
     auto drop = [](QObject* o) {
@@ -109,7 +113,6 @@ void Anim::transition(QWidget* area, const std::function<void()>& change, const 
     for (QWidget* w : area->findChildren<QWidget*>()) drop(w);
     for (QWidget* up = area->parentWidget(); up; up = up->isWindow() ? nullptr : up->parentWidget())
         for (QObject* o : up->children()) drop(o);
-    const QPixmap before = area->grab();
     change();
     // раскладки, которые change() только запросил (карточки, боковая панель, ряд действий), —
     // применить сейчас, иначе «после» снимется со старым расположением и в конце всё прыгнет
