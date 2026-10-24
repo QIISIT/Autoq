@@ -73,17 +73,20 @@ CardLayout::Layout cardsFrom(const QJsonArray& arr) {
 }
 }
 
-QStringList CardLayout::builtinCards() { return {"head", "actions", "speed", "window", "profile"}; }
+QStringList CardLayout::builtinCards() { return {"head", "launch", "actions", "speed", "window", "profile"}; }
 
 QStringList CardLayout::blockIds() {
     return {"game", "counter", "tools", "start",
             "actions", "monitor",
             "speed", "interval", "jitter", "framesync",
             "window", "rules", "capture",
-            "profile", "preset", "hotkey", "keymode", "sounds", "armed"};
+            "profile", "preset",
+            "hotkey", "keymode", "sounds", "armed"};
 }
 
-QStringList CardLayout::defaultHidden() { return {"monitor"}; }
+// «Процесс и заголовок» — то же, что в окне «Изменить игру»; «Используется» — то же, что кружок
+// у игры в списке: на карточках их по умолчанию нет
+QStringList CardLayout::defaultHidden() { return {"monitor", "rules", "armed"}; }
 
 QString CardLayout::homeOf(const QString& block) {
     static const QHash<QString, QString> home = {
@@ -91,8 +94,8 @@ QString CardLayout::homeOf(const QString& block) {
         {"actions", "actions"}, {"monitor", "actions"},
         {"speed", "speed"}, {"interval", "speed"}, {"jitter", "speed"}, {"framesync", "speed"},
         {"window", "window"}, {"rules", "window"}, {"capture", "window"},
-        {"profile", "profile"}, {"preset", "profile"}, {"hotkey", "profile"}, {"keymode", "profile"},
-        {"sounds", "profile"}, {"armed", "profile"},
+        {"profile", "profile"}, {"preset", "profile"},
+        {"hotkey", "launch"}, {"keymode", "launch"}, {"sounds", "launch"}, {"armed", "launch"},
     };
     return home.value(block);
 }
@@ -115,12 +118,14 @@ CardLayout::Card CardLayout::defaultCard(const QString& id) {
         c.style = Clear;
         c.hideTitle = c.hideNumber = true;
     }
+    if (id == "launch") c.row = true;   // клавиша, «как работает» и звук — в одну строку (узко — переносятся)
     return c;
 }
 
 CardLayout::Layout CardLayout::defaults() {
     Layout l;
-    QStringList order{"head", "actions"};
+    // «Запуск» (клавиша, как работает, звук) — сразу под шапкой, рядом с «Старт»
+    QStringList order{"head", "launch", "actions"};
     order += legacyOrder();
     for (const QString& id : order) l << defaultCard(id);
     Card hidden;
@@ -135,13 +140,18 @@ CardLayout::Layout CardLayout::normalize(const Layout& in) {
     QStringList seenCards, seenBlocks;
     Card hidden;
     hidden.id = kHidden;
+    // раскладка до 1.17: «Профиль и запуск» — одна карточка. Блоки запуска из неё — в новую
+    // «Запуск» («Используется» — в «Скрытые»); перенесённые в другие карточки остаются там
+    const bool splitLaunch = indexOf(in, "launch") < 0;
     for (Card c : in) {
         const bool isHidden = c.id == kHidden;
         if (seenCards.contains(c.id) || (!isHidden && !isBuiltin(c.id) && !isCustom(c.id))) continue;
         seenCards << c.id;
         QStringList blocks;
-        for (const QString& b : c.blocks)
+        for (const QString& b : c.blocks) {
+            if (splitLaunch && c.id == "profile" && homeOf(b) == "launch") continue;
             if (blockIds().contains(b) && !seenBlocks.contains(b)) { blocks << b; seenBlocks << b; }
+        }
         if (isHidden) { hidden.blocks = blocks; continue; }
         c.blocks = blocks;
         if (isBuiltin(c.id)) c.title.clear();

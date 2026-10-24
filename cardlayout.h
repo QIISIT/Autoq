@@ -19,7 +19,7 @@ namespace CardLayout {
     inline const QString kHidden = QStringLiteral("hidden");
 
     struct Card {
-        QString id;               // head / actions / speed / window / profile, своя: c1, c2… или hidden
+        QString id;               // head / actions / speed / window / profile / launch, своя: c1, c2… или hidden
         QString title;            // название своей карточки (у встроенных — пусто)
         QStringList blocks;       // id блоков сверху вниз (в ряд — слева направо)
         bool collapsed = false;   // свёрнута в маленький прямоугольник
@@ -39,7 +39,7 @@ namespace CardLayout {
     };
     using Layout = QList<Card>;
 
-    QStringList builtinCards();                  // head, actions, speed, window, profile
+    QStringList builtinCards();                  // head, launch, actions, speed, window, profile
     QStringList blockIds();                      // все блоки, в порядке «по умолчанию»
     QStringList defaultHidden();                 // новые блоки, которых по умолчанию не видно
     QString homeOf(const QString& block);        // в какой встроенной карточке блок живёт по умолчанию
