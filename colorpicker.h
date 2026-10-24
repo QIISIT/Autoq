@@ -2,8 +2,7 @@
 // Выбор цвета с живым образцом интерфейса:
 //  - ThemePreview — маленький макет окна AutoQ в выбранных цветах;
 //  - ColorPickerDialog — свой цвет акцента/фона (квадрат оттенков, полоса тона,
-//    #HEX, готовые цвета) — образец меняется сразу, ещё до «Применить»;
-//  - AppearancePopup — быстрый выбор темы и цвета (кнопка в мини-окне).
+//    #HEX, готовые цвета) — образец меняется сразу, ещё до «Применить».
 #include <QDialog>
 #include <QFrame>
 #include <QWidget>
@@ -87,18 +86,3 @@ private:
     ThemePreview* preview_;
 };
 
-// Всплывающее окошко «Оформление»: тема + цвет акцента + «Все настройки…»
-class AppearancePopup : public QFrame {
-    Q_OBJECT
-public:
-    explicit AppearancePopup(QWidget* parent = nullptr);
-    void popupBelow(QWidget* anchor);
-signals:
-    void changed();                 // оформление применено и сохранено
-    void moreRequested();           // открыть окно «Настройки»
-private:
-    void apply(const Theme::Appearance& a);
-    void refresh();
-    Segmented* themeSeg_;
-    QList<QToolButton*> swatches_;
-};
