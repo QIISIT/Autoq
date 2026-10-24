@@ -185,6 +185,9 @@ QFrame#slot { background: @field@; border: 1px solid @fieldBorder@; border-radiu
 QFrame#slot QLabel { background: transparent; }
 QFrame#slot[active="true"] { border: 1px solid @red@; }
 QFrame#slot[warn="true"] { border: 1px dashed @warn@; }
+QFrame#slot[selected="true"] { background: @redTint@; border: 1px solid @red@; }
+QPushButton#groupName { background: @keycap@; border: 1px solid @redLine@; border-bottom: 4px solid @redLine@; border-radius: 8px; padding: 2px 8px; min-height: 26px; font-size: 14px; font-weight: 700; text-align: left; }
+QPushButton#groupName:hover, QPushButton#groupName:focus { border-color: @red@; }
 QToolButton#slotGrip { background: transparent; border: none; padding: 0; }
 QToolButton#stepDir { background: @keycap@; border: 1px solid @fieldBorder2@; border-bottom: 3px solid @fieldBorder2@; border-radius: 8px; }
 QToolButton#stepDir:hover, QToolButton#stepDir:focus { border-color: @red@; }
@@ -368,6 +371,7 @@ QFrame#slot { background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @fieldH
 QPushButton#start { border-radius: 28px; }
 QPushButton#primary { border-radius: 17px; }
 QPushButton#keyPick, QPushButton#keyPickMini, QPushButton#keyPickBig { border-bottom: 1px solid @fieldBorder2@; }
+QPushButton#groupName { border-bottom: 1px solid @redLine@; }
 QLabel#keycapLabel { border-bottom: 1px solid @fieldBorder2@; }
 QLabel#num { color: @redSoft@; }
 QFrame#counterBox { border-radius: 18px; }
@@ -385,6 +389,7 @@ QFrame#card[cstyle="2"] { border-left: 3px solid @red@; }
 QFrame#statusbar { border-top: 1px solid @fieldBorder2@; }
 QPushButton#keyPick, QPushButton#keyPickMini { border-bottom: 2px solid @fieldBorder2@; }
 QPushButton#keyPickBig { border-bottom: 2px solid @fieldBorder2@; }
+QPushButton#groupName { border-bottom: 2px solid @redLine@; }
 QLabel#keycapLabel { border-bottom: 2px solid @fieldBorder2@; }
 QFrame#toast { border-left: 4px solid @red@; }
 )QSS";
@@ -813,7 +818,7 @@ QString Theme::elementNote(const QString& id) {
     if (id == "pause") return T("«Пауза», «старт через», «повтор через» и стрелки между ними");
     if (id == "plate") return T("Всплывает, когда щёлкаешь по кнопке режима");
     if (id == "add") return T("Добавить действие или шаг");
-    if (id == "profile") return T("«Новый», «Сохранить», «Сбросить», «Удалить»");
+    if (id == "profile") return T("«Новый» и «Сохранить»");
     if (id == "seg") return T("Режим, мс / КПС / КПМ, «Вкл / выкл» и другие");
     if (id == "start") return T("Большая кнопка в шапке");
     if (id == "hint") return T("Серые пояснения под блоками");
