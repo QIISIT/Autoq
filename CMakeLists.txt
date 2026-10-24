@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19)
-project(AutoQ VERSION 1.16.2 LANGUAGES CXX)
+project(AutoQ VERSION 1.17.0 LANGUAGES CXX)
 if(APPLE)
     enable_language(OBJCXX)     # macsupport.mm — AppKit (NSWorkspace, NSWindow)
 endif()
@@ -60,6 +60,7 @@ set(APP_SOURCES
     autostart.cpp       autostart.h
     animations.cpp      animations.h
     actionseditor.cpp   actionseditor.h
+    groupdialog.cpp     groupdialog.h
     onboarding.cpp      onboarding.h
     hotkeydialog.cpp    hotkeydialog.h
     keycapturebutton.h
