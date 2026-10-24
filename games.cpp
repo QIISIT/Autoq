@@ -7,6 +7,7 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QRegularExpression>
+#include <QRandomGenerator>
 #include <utility>
 
 namespace {
@@ -15,7 +16,6 @@ void dropProfileCache(const QString& gameId);
 }
 
 // ---------------------------------------------------------------------------
-QList<int> Prefs::captureChoices() { return {3, 5, 7, 10}; }
 
 int Prefs::captureSeconds() {
     auto s = AppSettings::open();
@@ -74,11 +74,13 @@ QString gameModeName(GameMode m) {
 }
 
 bool ActionStep::sameInput(const ActionStep& o) const {
+    if (isGroup() || o.isGroup()) return group == o.group;      // вызов группы — не кнопка
     return mouse == o.mouse && (mouse ? button == o.button : key.compare(o.key, Qt::CaseInsensitive) == 0);
 }
 
 bool ActionStep::operator==(const ActionStep& o) const {
-    return sameInput(o) && holdMs == o.holdMs && afterMs == o.afterMs && press == o.press;
+    return sameInput(o) && holdMs == o.holdMs && afterMs == o.afterMs && press == o.press &&
+           (!isGroup() || repeat == o.repeat);
 }
 
 QString ActionStep::itemName() const { return mouse ? MouseButtons::itemName(button) : key; }
@@ -90,19 +92,32 @@ ActionStep ActionStep::fromItem(const QString& name) {
     return a;
 }
 
-QString ActionStep::label() const { return mouse ? MouseButtons::shortLabel(button) : Keys::label(key); }
+QString ActionStep::label() const {
+    if (isGroup()) return QStringLiteral("▣");
+    return mouse ? MouseButtons::shortLabel(button) : Keys::label(key);
+}
 
 QString ActionStep::pressMark() const {
     return press == Up ? QStringLiteral("↑") : press == Down ? QStringLiteral("↓") : QStringLiteral("↕");
 }
 
-QList<ActionStep> GameState::runList(GameMode m) const {
+QList<ActionStep> GameState::chain(GameMode m) const {
     if (m != GameMode::Steps) return actions;
     return steps.isEmpty() ? Steps::fromActions(actions) : steps;
 }
 
+QList<ActionStep> GameState::runList(GameMode m) const {
+    return Groups::expand(chain(m), groups, m == GameMode::Steps, m == GameMode::Combo || m == GameMode::Hold);
+}
+
+QList<int> GameState::runOwners(GameMode m) const {
+    QList<int> owner;
+    Groups::expand(chain(m), groups, m == GameMode::Steps, m == GameMode::Combo || m == GameMode::Hold, &owner);
+    return owner;
+}
+
 QList<ActionStep> GameState::pressList(GameMode m) const {
-    return m == GameMode::Steps ? Steps::pressedInputs(runList(m)) : actions;
+    return m == GameMode::Steps ? Steps::pressedInputs(runList(m)) : runList(m);
 }
 
 int repeatMinMs(GameMode m, int count, int gameMinMs) {
@@ -110,13 +125,13 @@ int repeatMinMs(GameMode m, int count, int gameMinMs) {
 }
 
 int GameState::repeatMin(GameMode m, int gameMinMs) const {
-    return repeatMinMs(m, int(m == GameMode::Steps ? runList(m).size() : actions.size()), gameMinMs);
+    return repeatMinMs(m, int(runList(m).size()), gameMinMs);
 }
 
 int minCycleMs(GameMode m, int count, int gameMinMs) { return repeatMinMs(m, count, gameMinMs) == 0 ? 1 : gameMinMs; }
 
 int GameState::minCycle(GameMode m, int gameMinMs) const {
-    return minCycleMs(m, int(m == GameMode::Steps ? runList(m).size() : actions.size()), gameMinMs);
+    return minCycleMs(m, int(runList(m).size()), gameMinMs);
 }
 
 bool GameState::usesMouse(GameMode m) const {
@@ -131,11 +146,144 @@ bool GameState::operator==(const GameState& o) const {
 }
 
 // ---------------------------------------------------------------------------
+// Группы действий
+// ---------------------------------------------------------------------------
+bool Groups::validId(const QString& id) {
+    static const QRegularExpression re("^[0-9a-f]{8}$");
+    return re.match(id).hasMatch();
+}
+
+QString Groups::newId(const QList<ActionGroup>& taken) {
+    for (;;) {
+        const QString id = QString("%1").arg(QRandomGenerator::global()->generate(), 8, 16, QChar('0'));
+        if (!find(taken, id)) return id;
+    }
+}
+
+const ActionGroup* Groups::find(const QList<ActionGroup>& groups, const QString& id) {
+    for (const ActionGroup& g : groups)
+        if (g.id == id) return &g;
+    return nullptr;
+}
+
+// содержимое группы так, как его жмут в ряду этого вида
+static QList<ActionStep> groupItems(const ActionGroup& g, bool steps) {
+    QList<ActionStep> items;
+    for (const ActionStep& a : g.items)
+        if (!a.isGroup()) items << a;                  // группа в группе — нельзя
+    if (steps && !g.steps) return Steps::fromActions(items);
+    if (!steps && g.steps) {
+        // шаги в ряду действий (бывает, только если файл правили руками): «нажать» — клик
+        QList<ActionStep> out;
+        for (ActionStep a : items) {
+            if (a.press == ActionStep::Up) continue;
+            a.press = ActionStep::Click;
+            out << a;
+        }
+        return out;
+    }
+    return items;
+}
+
+QList<ActionStep> Groups::expand(const QList<ActionStep>& chain, const QList<ActionGroup>& groups,
+                                 bool steps, bool once, QList<int>* owner) {
+    QList<ActionStep> out;
+    if (owner) owner->clear();
+    for (int i = 0; i < chain.size(); ++i) {
+        const ActionStep& a = chain[i];
+        if (!a.isGroup()) {
+            if (out.size() >= kMaxRun) break;
+            out << a;
+            if (owner) *owner << i;
+            continue;
+        }
+        const ActionGroup* g = find(groups, a.group);
+        if (!g) continue;                               // группы нет — вызов ничего не жмёт
+        const QList<ActionStep> items = groupItems(*g, steps);
+        if (items.isEmpty()) continue;
+        const int reps = once ? 1 : qBound(1, a.repeat, kMaxRepeat);
+        for (int r = 0; r < reps; ++r)
+            for (int j = 0; j < items.size(); ++j) {
+                if (out.size() >= kMaxRun) return out;
+                ActionStep x = items[j];
+                if (j + 1 == items.size()) x.afterMs = a.afterMs;   // пауза после вызова
+                out << x;
+                if (owner) *owner << i;
+            }
+    }
+    return out;
+}
+
+QList<ActionStep> Groups::inlineCall(const ActionStep& call, const ActionGroup& g, bool steps) {
+    ActionStep c = call;
+    c.repeat = qBound(1, call.repeat, kMaxRepeat);
+    return expand({c}, {g}, steps);
+}
+
+QList<ActionStep> Groups::inlineAll(const QList<ActionStep>& chain, const ActionGroup& g, bool steps, int max) {
+    QList<ActionStep> out;
+    for (const ActionStep& a : chain) {
+        const QList<ActionStep> part = a.isGroup() && a.group == g.id ? inlineCall(a, g, steps) : QList<ActionStep>{a};
+        for (const ActionStep& x : part)
+            if (out.size() < max) out << x;
+    }
+    return out;
+}
+
+QStringList Groups::usedIds(const QList<ActionStep>& chain) {
+    QStringList ids;
+    for (const ActionStep& a : chain)
+        if (a.isGroup() && !ids.contains(a.group)) ids << a.group;
+    return ids;
+}
+
+int Groups::uses(const QList<ActionStep>& chain, const QString& id) {
+    int n = 0;
+    for (const ActionStep& a : chain) n += a.group == id;
+    return n;
+}
+
+QString Groups::preview(const ActionGroup& g, int max) {
+    QStringList parts;
+    for (int i = 0; i < g.items.size(); ++i) {
+        if (parts.size() == max) { parts << QString("+%1").arg(g.items.size() - i); break; }
+        const ActionStep& a = g.items[i];
+        parts << (g.steps ? a.label() + ' ' + a.pressMark() : a.label());
+    }
+    return parts.join(QStringLiteral(" · "));
+}
+
+bool Groups::validName(const QString& name, QString* why) {
+    const QString n = name.trimmed();
+    QString err;
+    if (n.isEmpty()) err = T("Имя не может быть пустым.");
+    else if (n.length() > 40) err = T("Слишком длинное имя (максимум 40 символов).");
+    if (why) *why = err;
+    return err.isEmpty();
+}
+
+QString Groups::freeName(const QList<ActionGroup>& groups) {
+    for (int i = 1;; ++i) {
+        const QString n = T("Группа %1").arg(i);
+        bool taken = false;
+        for (const ActionGroup& g : groups) taken = taken || g.name.compare(n, Qt::CaseInsensitive) == 0;
+        if (!taken) return n;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // «По шагам»
 // ---------------------------------------------------------------------------
 QList<ActionStep> Steps::fromActions(const QList<ActionStep>& actions) {
     QList<ActionStep> out;
     for (const ActionStep& a : actions) {
+        if (a.isGroup()) {                  // вызов группы остаётся вызовом (развернёт Groups::expand)
+            if (out.size() + 1 > kMaxSteps) break;
+            ActionStep c = a;
+            c.press = ActionStep::Click;
+            out << c;
+            continue;
+        }
         if (out.size() + 2 > kMaxSteps) break;
         ActionStep d = a, u = a;
         d.press = ActionStep::Down;
@@ -300,6 +448,7 @@ QList<GamePreset> Games::presets(const GameDef& g) {
 GameState Games::defaultState(const GameDef& g) {
     GameState s = presets(g).value(0).state;
     s.intervalMs = qMax(s.intervalMs, g.minIntervalMs);
+    s.groups = groups(g.id);
     return s;
 }
 
@@ -497,8 +646,10 @@ void Games::setCurrentId(const QString& id) {
 // ---------------------------------------------------------------------------
 // Действия хранятся строками: "m:1:<держать>:<пауза после>" или "k:f3:<держать>:<пауза после>";
 // шаги «По шагам» — с пятым полем: "m:1:0:150:d" (нажать) / "m:1:0:0:u" (отпустить) /
-// "m:1:0:0:c" (нажать и отпустить; шаг без поля — «нажать», как в 1.14)
+// "m:1:0:0:c" (нажать и отпустить; шаг без поля — «нажать», как в 1.14).
+// Вызов группы: "g:<id группы>:<повторы>:<пауза после>" (версии до 1.17 его пропускают)
 static QString encodeStep(const ActionStep& a, bool step = false) {
+    if (a.isGroup()) return QString("g:%1:%2:%3").arg(a.group).arg(qBound(1, a.repeat, kMaxRepeat)).arg(a.afterMs);
     QString s = QString("%1:%2:%3:%4").arg(a.mouse ? "m" : "k", a.mouse ? QString::number(a.button) : a.key)
                                       .arg(a.holdMs).arg(a.afterMs);
     if (a.press == ActionStep::Down) s += ":d";
@@ -516,6 +667,17 @@ static bool decodeStep(const QString& str, ActionStep* out) {
     const QStringList p = str.split(':');
     if (p.size() < 2) return false;
     ActionStep a;
+    if (p[0] == "g") {
+        if (!Groups::validId(p[1])) return false;
+        a.group = p[1];
+        a.mouse = false;
+        a.key.clear();
+        a.repeat = qBound(1, p.value(2).toInt(), kMaxRepeat);
+        a.afterMs = qBound(0, p.value(3).toInt(), 60000);
+        a.press = ActionStep::Click;
+        *out = a;
+        return true;
+    }
     if (p[0] == "m") {
         const int b = p[1].toInt();
         if (!MouseButtons::valid(b)) return false;
@@ -592,6 +754,7 @@ static GameState readState(QSettings& s, const QString& prefix, const GameState&
         ActionStep a;
         if (!decodeStep(e, &a) || st.steps.size() >= kMaxSteps) continue;
         if (a.press < 0) a.press = ActionStep::Down;     // без пятого поля — «нажать»
+        if (a.isGroup()) a.press = ActionStep::Click;
         a.holdMs = 0;
         st.steps << a;
     }
@@ -609,11 +772,78 @@ static GameState readState(QSettings& s, const QString& prefix, const GameState&
     return st;
 }
 
+// Группы: <prefix>groups — порядок (id), <prefix>group/<id>/name, steps, items
+static void writeGroups(QSettings& s, const QString& prefix, const QList<ActionGroup>& groups) {
+    s.remove(prefix + "group");
+    QStringList order;
+    for (const ActionGroup& g : groups) {
+        if (!Groups::validId(g.id) || order.contains(g.id)) continue;
+        order << g.id;
+        const QString k = prefix + "group/" + g.id + "/";
+        s.setValue(k + "name", g.name.trimmed().left(40));
+        s.setValue(k + "steps", g.steps);
+        QStringList items;
+        for (const ActionStep& a : g.items)
+            if (!a.isGroup()) items << encodeStep(a, g.steps);
+        s.setValue(k + "items", items);
+    }
+    if (order.isEmpty()) s.remove(prefix + "groups");
+    else s.setValue(prefix + "groups", order);
+}
+
+static QList<ActionGroup> readGroups(QSettings& s, const QString& prefix) {
+    QList<ActionGroup> out;
+    for (const QString& id : s.value(prefix + "groups").toStringList()) {
+        if (!Groups::validId(id) || Groups::find(out, id) || out.size() >= kMaxGroups) continue;
+        const QString k = prefix + "group/" + id + "/";
+        ActionGroup g;
+        g.id = id;
+        g.name = s.value(k + "name").toString().trimmed().left(40);
+        if (g.name.isEmpty()) g.name = Groups::freeName(out);
+        g.steps = s.value(k + "steps", false).toBool();
+        for (const QString& e : s.value(k + "items").toStringList()) {
+            ActionStep a;
+            if (!decodeStep(e, &a) || a.isGroup() || g.items.size() >= (g.steps ? kMaxSteps : kMaxActions)) continue;
+            if (!g.steps) a.press = ActionStep::Click;
+            else if (a.press < 0) a.press = ActionStep::Down;
+            if (g.steps) a.holdMs = 0;
+            g.items << a;
+        }
+        if (!g.items.isEmpty()) out << g;
+    }
+    return out;
+}
+
+QList<ActionGroup> Games::groups(const QString& gameId) {
+    auto s = AppSettings::open();
+    return readGroups(*s, gkey(gameId, ""));
+}
+
+void Games::saveGroups(const QString& gameId, const QList<ActionGroup>& groups) {
+    if (gameId.isEmpty()) return;
+    auto s = AppSettings::open();
+    writeGroups(*s, gkey(gameId, ""), groups);
+    s->sync();
+}
+
+// Группы игры — в состояние. embedded — копии из файла профиля: каких у игры нет,
+// те добавляются к игре (профиль принёс их с собой). Свои группы игры важнее копий:
+// группу могли поправить после того, как профиль сохранили
+static void attachGroups(GameState& st, const QString& gameId, const QList<ActionGroup>& embedded = {}) {
+    QList<ActionGroup> mine = Games::groups(gameId);
+    bool added = false;
+    for (const ActionGroup& g : embedded)
+        if (!Groups::find(mine, g.id) && mine.size() < kMaxGroups) { mine << g; added = true; }
+    if (added) Games::saveGroups(gameId, mine);
+    st.groups = mine;
+}
+
 GameState Games::loadState(const GameDef& g) {
     auto s = AppSettings::open();
     GameState def = defaultState(g);
     GameState st = (s->contains(gkey(g.id, "state/interval")) || s->contains(gkey(g.id, "state/actions")))
                        ? readState(*s, gkey(g.id, "state/"), def) : def;
+    attachGroups(st, g.id);
     st.intervalMs = qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs));
     return st;
 }
@@ -666,9 +896,16 @@ QList<ProfileFile> profileFiles(const QString& gameId) {
         QString n = f.value("AutoQ/name").toString().trimmed();
         if (n.isEmpty()) n = fi.completeBaseName().trimmed();     // файл положили руками
         if (!Games::validProfileName(n, nullptr)) continue;
-        bool dup = false;
-        for (const ProfileFile& p : out) dup = dup || p.name.compare(n, Qt::CaseInsensitive) == 0;
-        if (!dup) out << ProfileFile{n, fi.absoluteFilePath()};
+        // имя уже занято (в папку положили копию или экспорт с тем же именем) — «Имя (2)»:
+        // иначе файл лежит в папке, а в списке его нет. Сохранение запишет в файл новое имя
+        auto taken = [&out](const QString& name) {
+            for (const ProfileFile& p : out)
+                if (p.name.compare(name, Qt::CaseInsensitive) == 0) return true;
+            return false;
+        };
+        const QString base = n.left(54);
+        for (int i = 2; taken(n); ++i) n = QString("%1 (%2)").arg(base).arg(i);
+        out << ProfileFile{n, fi.absoluteFilePath()};
     }
     c = ProfileCache{dirPath, di.lastModified(), now, out};
     return out;
@@ -706,6 +943,11 @@ void writeProfileFile(const QString& path, const QString& gameId, const QString&
     const GameDef g = Games::get(gameId, &ok);
     if (ok) f->setValue("AutoQ/gameName", g.name);
     writeState(*f, kProfilePrefix, st);
+    // копии групп, которые профиль вызывает: на другом ПК он принесёт их с собой
+    QList<ActionGroup> used;
+    for (const QString& id : Groups::usedIds(st.actions + st.steps))
+        if (const ActionGroup* gr = Groups::find(st.groups, id)) used << *gr;
+    writeGroups(*f, kProfilePrefix, used);
     if (mode >= 0 && mode <= kLastMode) f->setValue(QString(kProfilePrefix) + "mode", mode);
     if (!hotkey.isEmpty()) f->setValue(QString(kProfilePrefix) + "hotkey", hotkey);
     if (!inOverlay) f->setValue(QString(kProfilePrefix) + "overlay", false);
@@ -720,6 +962,7 @@ GameState defaultFor(const QString& gameId) {
 }
 
 QString Games::profileFile(const QString& gameId, const QString& name) { return findProfile(gameId, name).path; }
+void Games::reloadProfiles() { profileCache().clear(); }
 QString Games::profilesFolder(const QString& gameId) { return profileDir(gameId); }
 
 QStringList Games::profiles(const QString& gameId) {
@@ -748,6 +991,7 @@ GameState Games::loadProfile(const QString& gameId, const QString& name, int* mo
     if (pf.path.isEmpty()) return def;
     auto f = openProfile(pf.path);
     GameState st = readState(*f, kProfilePrefix, def);
+    attachGroups(st, gameId, readGroups(*f, kProfilePrefix));
     const int m = f->value(QString(kProfilePrefix) + "mode", -1).toInt();
     const bool hasMode = m >= 0 && m <= kLastMode;
     // режим профиля (если он свой) — от него зависит, можно ли «повтор через» меньше минимума
@@ -830,6 +1074,7 @@ QString Games::importProfile(const QString& gameId, const QString& file, QString
     }
     const GameState def = defaultFor(gameId);
     GameState st = readState(*f, kProfilePrefix, def);
+    attachGroups(st, gameId, readGroups(*f, kProfilePrefix));     // группы профиля — к игре
     bool ok = false;
     const GameDef g = get(gameId, &ok);
     const int m = f->value(QString(kProfilePrefix) + "mode", -1).toInt();

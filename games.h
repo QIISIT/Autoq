@@ -23,6 +23,10 @@ namespace AppSettings {
     void setScope(const QString& org, const QString& app);  // для тестов: своя временная папка
     void dropScope(const QString& org, const QString& app); // для тестов: удалить её
     std::unique_ptr<QSettings> open();                      // settings.ini
+    // Горячая перезагрузка: settings.ini поправили снаружи (руками, синхронизацией) —
+    // а не сама программа. Свои записи запоминаются (их отпечаток), чужие — нет.
+    bool changedOutside();
+    void markSeen();                      // текущий файл принят — дальше сравнивать с ним
     QString dataDir();
     QString defaultDataDir();
     QString portableDir();                // <папка программы>/AutoQ-data
@@ -40,7 +44,6 @@ namespace AppSettings {
 
 // Общие настройки программы
 namespace Prefs {
-    QList<int> captureChoices();          // 3, 5, 7, 10 секунд — быстрые кнопки
     int captureSeconds();                 // сколько ждать, пока переключишься в игру (1–120)
     void setCaptureSeconds(int sec);
 
@@ -99,6 +102,9 @@ struct ActionStep {
     int holdMs = 0;           // сколько держать нажатым (0 — обычный щелчок)
     int afterMs = 0;          // пауза после действия перед следующим («По очереди», «По шагам»)
     int press = Click;        // «По шагам»: Down — нажать, Up — отпустить, Click — нажать и отпустить
+    QString group;            // не пусто — вызов группы (её id): кнопка и «держать» не нужны
+    int repeat = 1;           // вызов группы: сколько раз подряд (1…kMaxRepeat)
+    bool isGroup() const { return !group.isEmpty(); }
     bool sameInput(const ActionStep& o) const;   // та же кнопка / клавиша
     bool operator==(const ActionStep& o) const;
     bool operator!=(const ActionStep& o) const { return !(*this == o); }
@@ -107,6 +113,45 @@ struct ActionStep {
     QString label() const;                       // "ЛКМ", "F"
     QString pressMark() const;                   // шаг: "↓" нажать, "↑" отпустить, "↕" нажать и отпустить
 };
+
+// Группа действий — как функция: несколько действий или шагов под своим именем. В ряд
+// ставится вызов группы (ActionStep::group); поправил группу — поменялось во всех вызовах.
+// Группы живут у игры, общие для всех её профилей. В файл профиля пишется копия групп,
+// которые он вызывает: профиль с другого ПК приносит их с собой. Группа в группе — нельзя.
+struct ActionGroup {
+    QString id;               // 8 знаков 0-9a-f: случайный, у копий одной группы — один
+    QString name;
+    bool steps = false;       // шаги («По шагам»: нажать / отпустить) или действия («По очереди»)
+    QList<ActionStep> items;
+    bool operator==(const ActionGroup& o) const {
+        return id == o.id && name == o.name && steps == o.steps && items == o.items;
+    }
+    bool operator!=(const ActionGroup& o) const { return !(*this == o); }
+};
+constexpr int kMaxGroups = 50;
+constexpr int kMaxRepeat = 99;
+constexpr int kMaxRun = 4096;         // круг с развёрнутыми группами — не длиннее (шагов)
+
+namespace Groups {
+    bool validId(const QString& id);
+    QString newId(const QList<ActionGroup>& taken);
+    const ActionGroup* find(const QList<ActionGroup>& groups, const QString& id);
+    // Развернуть вызовы групп — то, что жмёт кликер. steps — ряд «По шагам» (группа из
+    // действий становится шагами), once — «Вместе» / «Зажать» (без повторов). Пауза после
+    // вызова — после последнего действия группы (и между повторами). owner[i] — номер
+    // карточки ряда, из которой шаг i (подсветить, что жмётся сейчас)
+    QList<ActionStep> expand(const QList<ActionStep>& chain, const QList<ActionGroup>& groups,
+                             bool steps, bool once = false, QList<int>* owner = nullptr);
+    // вызов -> обычные карточки («Разгруппировать», группу удалили)
+    QList<ActionStep> inlineCall(const ActionStep& call, const ActionGroup& g, bool steps);
+    // группу удалили: все её вызовы в ряду — её действиями (не больше max)
+    QList<ActionStep> inlineAll(const QList<ActionStep>& chain, const ActionGroup& g, bool steps, int max);
+    QStringList usedIds(const QList<ActionStep>& chain);
+    int uses(const QList<ActionStep>& chain, const QString& id);
+    QString preview(const ActionGroup& g, int max = 4);     // «ЛКМ ↓ ПКМ ↕ ЛКМ ↑ +2»
+    bool validName(const QString& name, QString* why = nullptr);
+    QString freeName(const QList<ActionGroup>& groups);    // «Группа 1», «Группа 2»…
+}
 
 // Настройки действий одной игры (текущие и в профилях)
 struct GameState {
@@ -120,9 +165,15 @@ struct GameState {
     bool frameSync = false;      // «В такт с монитором»: клики на сетке кадров
     int frameHz = 0;             // частота такта: 0 — как у монитора, иначе своя (FPS игры)
     QString soundOn, soundOff;   // свой звук включения / выключения ("" — как в настройках)
-    bool multi() const { return actions.size() > 1; }
-    // что жмёт кликер в этом режиме: шаги («По шагам») или действия
+    // группы игры — копия: хранятся у игры (Games::groups), не в состоянии и не в профиле;
+    // в сравнении не участвуют (поправил группу — профиль не стал «несохранённым»)
+    QList<ActionGroup> groups;
+    bool multi() const { return actions.size() > 1 || (actions.size() == 1 && actions[0].isGroup()); }
+    // ряд в редакторе: шаги («По шагам») или действия, с вызовами групп
+    QList<ActionStep> chain(GameMode m) const;
+    // что жмёт кликер в этом режиме: ряд, группы развёрнуты
     QList<ActionStep> runList(GameMode m) const;
+    QList<int> runOwners(GameMode m) const;      // шаг кликера -> номер карточки ряда
     // кнопки и клавиши, которые нажимаются (для подписей и счётчиков): действия,
     // а в «По шагам» — каждая клавиша, которую шаги нажимают, один раз
     QList<ActionStep> pressList(GameMode m) const;
@@ -191,8 +242,12 @@ namespace Games {
     void saveProfile(const QString& gameId, const QString& name, const GameState& st, int mode = -1);
     void removeProfile(const QString& gameId, const QString& name);
     bool renameProfile(const QString& gameId, const QString& from, const QString& to);
+    // Группы действий игры (общие для её профилей)
+    QList<ActionGroup> groups(const QString& gameId);
+    void saveGroups(const QString& gameId, const QList<ActionGroup>& groups);
     QString profileFile(const QString& gameId, const QString& name);   // путь к файлу профиля ("" — нет)
     QString profilesFolder(const QString& gameId);                     // папка профилей игры
+    void reloadProfiles();     // файлы в папках профилей поменяли снаружи — читать списки заново
     // Профиль в файл — поделиться или сохранить копию (без клавиши профиля)
     bool exportProfile(const QString& gameId, const QString& name, const QString& file, QString* error = nullptr);
     // Профиль из файла — в профили игры; вернёт имя (занято — «Имя (2)»), "" — не вышло.
