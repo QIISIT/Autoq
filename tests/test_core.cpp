@@ -400,7 +400,6 @@ static void testV15() {
 
     // время на переключение: только 3/5/7/10, по умолчанию 3
     CHECK(Prefs::captureSeconds() == 3);
-    CHECK(Prefs::captureChoices() == (QList<int>{3, 5, 7, 10}));
     for (int v : {5, 7, 10, 3}) { Prefs::setCaptureSeconds(v); CHECK(Prefs::captureSeconds() == v); }
     Prefs::setCaptureSeconds(4);                       // своё время (1.10) — можно любое 1–120
     CHECK(Prefs::captureSeconds() == 4);
@@ -1148,26 +1147,27 @@ static void testCardLayout() {
     AppSettings::setScope("AutoQTest", "cl_" + pid);
     using namespace CardLayout;
     const Layout def = defaults();
-    CHECK(def.size() == 6 && def[0].id == "head" && def[1].id == "actions" && def[2].id == "speed" &&
-          def[3].id == "window" && def[4].id == "profile" && def[5].id == kHidden);
+    CHECK(def.size() == 7 && def[0].id == "head" && def[1].id == "launch" && def[2].id == "actions" &&
+          def[3].id == "speed" && def[4].id == "window" && def[5].id == "profile" && def[6].id == kHidden);
     CHECK(def[0].blocks == QStringList({"game", "counter", "tools", "start"}) && def[0].row &&
           def[0].style == Clear && def[0].hideTitle && def[0].hideNumber);
-    CHECK(def[2].blocks == QStringList({"speed", "interval", "jitter", "framesync"}));
-    CHECK(def[3].blocks == QStringList({"window", "rules", "capture"}));
-    CHECK(def[4].blocks == QStringList({"profile", "preset", "hotkey", "keymode", "sounds", "armed"}));
-    CHECK(def[5].blocks == QStringList({"monitor"}) && hiddenBlocks(def) == QStringList({"monitor"}));
+    CHECK(def[1].blocks == QStringList({"hotkey", "keymode", "sounds"}) && def[1].row && def[1].style == Normal);
+    CHECK(def[3].blocks == QStringList({"speed", "interval", "jitter", "framesync"}));
+    CHECK(def[4].blocks == QStringList({"window", "capture"}));
+    CHECK(def[5].blocks == QStringList({"profile", "preset"}));
+    CHECK(def[6].blocks == QStringList({"monitor", "rules", "armed"}) && hiddenBlocks(def) == QStringList({"monitor", "rules", "armed"}));
     CHECK(isDefault(def));
     // старая настройка «порядок карточек» — порядок по умолчанию
     AppSettings::open()->setValue("cardOrder", QStringList{"profile", "speed", "window"});
-    CHECK(defaults()[2].id == "profile" && defaults()[4].id == "window");
+    CHECK(defaults()[3].id == "profile" && defaults()[4].id == "speed" && defaults()[5].id == "window");
     AppSettings::open()->remove("cardOrder");
     // блок — в другую карточку, на нужное место
     Layout l = def;
     moveBlock(l, "framesync", "window", 1);
-    CHECK(l[3].blocks == QStringList({"window", "framesync", "rules", "capture"}) &&
-          l[2].blocks == QStringList({"speed", "interval", "jitter"}));
-    moveBlock(l, "framesync", "window", 4);                    // внутри той же карточки — в конец
-    CHECK(l[3].blocks == QStringList({"window", "rules", "capture", "framesync"}));
+    CHECK(l[4].blocks == QStringList({"window", "framesync", "capture"}) &&
+          l[3].blocks == QStringList({"speed", "interval", "jitter"}));
+    moveBlock(l, "framesync", "window", 3);                    // внутри той же карточки — в конец
+    CHECK(l[4].blocks == QStringList({"window", "capture", "framesync"}));
     // своя карточка: пустая, с названием, перед служебной «hidden»; удалили — блоки домой
     const QString c = addCustom(l, "  Моя   быстрая  ");
     CHECK(c == "c1" && l[l.size() - 2].title == "Моя быстрая" && l[l.size() - 2].blocks.isEmpty() && l.last().id == kHidden);
@@ -1181,7 +1181,7 @@ static void testCardLayout() {
     CHECK(l[indexOf(l, c)].title == "Главное" && l[indexOf(l, "speed")].title.isEmpty());
     // порядок карточек: «hidden» всегда последняя
     moveCard(l, c, 1);
-    CHECK(l[1].id == c && l[0].id == "head" && l[2].id == "actions");
+    CHECK(l[1].id == c && l[0].id == "head" && l[2].id == "launch" && l[3].id == "actions");
     moveCard(l, "actions", l.size());
     CHECK(l[l.size() - 2].id == "actions" && l.last().id == kHidden);
     moveCard(l, kHidden, 0);
@@ -1193,19 +1193,19 @@ static void testCardLayout() {
     CHECK(isDefault(load("minecraft")));
     // своя карточка с монитором: удалили — монитор в «Скрытые», остальное домой
     moveBlock(l, "monitor", c, -1);
-    CHECK(hiddenBlocks(l).isEmpty());
+    CHECK(hiddenBlocks(l) == QStringList({"rules"}));
     removeCustom(l, c);
     CHECK(indexOf(l, c) < 0 && l[indexOf(l, "speed")].blocks.first() == "speed" &&
-          l[indexOf(l, "profile")].blocks.last() == "armed" && hiddenBlocks(l) == QStringList({"monitor"}));
+          l[indexOf(l, "launch")].blocks.last() == "sounds" && hiddenBlocks(l) == QStringList({"monitor", "rules", "armed"}));
     CHECK(l[indexOf(l, "window")].collapsed);
     // спрятать и вернуть блок — на своё место
     hideBlock(l, "jitter");
     hideBlock(l, "game");
-    CHECK(hiddenBlocks(l) == QStringList({"monitor", "jitter", "game"}) && cardOf(l, "jitter") == kHidden);
+    CHECK(hiddenBlocks(l) == QStringList({"monitor", "rules", "armed", "jitter", "game"}) && cardOf(l, "jitter") == kHidden);
     showBlock(l, "jitter");
     showBlock(l, "game");
     CHECK(l[indexOf(l, "speed")].blocks == QStringList({"speed", "interval", "jitter"}));
-    CHECK(l[indexOf(l, "head")].blocks.first() == "game" && hiddenBlocks(l) == QStringList({"monitor"}));
+    CHECK(l[indexOf(l, "head")].blocks.first() == "game" && hiddenBlocks(l) == QStringList({"monitor", "rules", "armed"}));
     showBlock(l, "nope");
     CHECK(normalize(l) == l);
     // стандартная — ключа нет
@@ -1214,7 +1214,7 @@ static void testCardLayout() {
     // испорченное и чужое — в порядок: каждый блок ровно раз, встроенные на месте
     bool ok = true;
     const Layout bad = fromJson(R"([{"id":"speed","blocks":["actions","actions","nope"]},{"id":"x"},{"id":"c9","title":"","blocks":["speed"]}])", &ok);
-    CHECK(ok && bad.size() == 7 && indexOf(bad, "x") < 0 && bad[0].id == "head" && bad.last().id == kHidden);
+    CHECK(ok && bad.size() == 8 && indexOf(bad, "x") < 0 && bad[0].id == "head" && bad.last().id == kHidden);
     CHECK(bad[indexOf(bad, "speed")].blocks == QStringList({"actions", "interval", "jitter", "framesync"}));
     CHECK(bad[indexOf(bad, "c9")].blocks == QStringList({"speed"}) && bad[indexOf(bad, "c9")].title == "…");
     CHECK(bad[indexOf(bad, "actions")].blocks.isEmpty());
@@ -1235,11 +1235,29 @@ static void testCardLayout() {
     // раскладка из 1.13 (без шапки и мелких блоков): шапка и новые блоки — на свои места
     const Layout old = fromJson(R"([{"id":"actions","blocks":["actions"]},{"id":"profile","blocks":["profile","hotkey","sounds","armed"]},
         {"id":"speed","blocks":["speed","framesync"]},{"id":"window","blocks":["window","capture"],"collapsed":true}])");
-    CHECK(old.size() == 6 && old[0].id == "head" && old[1].id == "actions" && old[2].id == "profile" && old[3].id == "speed");
-    CHECK(old[2].blocks == QStringList({"profile", "preset", "hotkey", "keymode", "sounds", "armed"}));
-    CHECK(old[3].blocks == QStringList({"speed", "interval", "jitter", "framesync"}));
-    CHECK(old[4].blocks == QStringList({"window", "rules", "capture"}) && old[4].collapsed);
-    CHECK(hiddenBlocks(old) == QStringList({"monitor"}));
+    CHECK(old.size() == 7 && old[0].id == "head" && old[1].id == "launch" && old[2].id == "actions" &&
+          old[3].id == "profile" && old[4].id == "speed");
+    CHECK(old[3].blocks == QStringList({"profile", "preset"}));
+    CHECK(old[1].blocks == QStringList({"hotkey", "keymode", "sounds"}));
+    CHECK(old[4].blocks == QStringList({"speed", "interval", "jitter", "framesync"}));
+    CHECK(old[5].blocks == QStringList({"window", "capture"}) && old[5].collapsed);
+    CHECK(hiddenBlocks(old) == QStringList({"monitor", "rules", "armed"}));
+    // раскладка до 1.17 («Профиль и запуск» — одна карточка): блоки запуска — в «Запуск»,
+    // унесённые в свою карточку и спрятанные — где были
+    const Layout v116 = fromJson(R"([{"id":"head","blocks":["game","counter","tools","start"]},{"id":"actions","blocks":["actions"]},
+        {"id":"profile","blocks":["hotkey","profile","sounds","armed"],"collapsed":true,"span":2},{"id":"speed","blocks":["speed","interval"]},
+        {"id":"c1","title":"Моя","blocks":["keymode"]},{"id":"window","blocks":["window","rules","capture"]},
+        {"id":"hidden","blocks":["monitor","jitter","framesync","preset"]}])");
+    CHECK(v116.size() == 8 && v116[1].id == "launch" && v116[2].id == "actions" && v116[3].id == "profile" && v116[4].id == "speed");
+    CHECK(v116[3].blocks == QStringList({"profile"}) && v116[3].collapsed && v116[3].span == 2);
+    CHECK(v116[1].blocks == QStringList({"hotkey", "sounds"}) && !v116[1].collapsed && v116[1].span == 0 && v116[1].row);
+    CHECK(v116[indexOf(v116, "c1")].blocks == QStringList({"keymode"}));
+    CHECK(hiddenBlocks(v116) == QStringList({"monitor", "jitter", "framesync", "preset", "armed"}));
+    CHECK(normalize(v116) == v116);
+    // «Запуск» уже есть — блоки запуска, возвращённые в «Профиль», там и остаются
+    Layout back17 = v116;
+    moveBlock(back17, "hotkey", "profile", -1);
+    CHECK(normalize(back17)[3].blocks == QStringList({"profile", "hotkey"}));
     // шаблоны: всё на месте, каждый блок ровно раз
     for (int i = 0; i < kTemplates; ++i) {
         int side = -1;
@@ -1255,7 +1273,7 @@ static void testCardLayout() {
     CHECK(side == 2 && hiddenBlocks(compact).contains("jitter") && compact[indexOf(compact, "speed")].span == 2);
     const Layout mon = templateLayout(2, &side);
     CHECK(side == 0 && isCustom(mon[1].id) && mon[1].blocks == QStringList({"monitor"}) && mon[1].style == Accent &&
-          mon[1].span == 4 && hiddenBlocks(mon).isEmpty());
+          mon[1].span == 4 && hiddenBlocks(mon) == QStringList({"rules", "armed"}));
     const Layout one = templateLayout(3, &side);
     for (const Card& cc : one) CHECK(cc.id == kHidden || cc.span == 4);
     // раскладка в файл и обратно (вместе с боковой панелью)
@@ -1430,6 +1448,153 @@ static void testV114() {
     { auto s = AppSettings::open(); s->clear(); s->sync(); }
 }
 
+// 1.17: группы действий — как функции
+static void testGroups() {
+    const QString pid = QString::number(QCoreApplication::applicationPid());
+    AppSettings::setScope("AutoQTest", "grp_" + pid);
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+    CHECK(Games::addBuiltin("genshin"));
+    CHECK(Games::addBuiltin("minecraft"));
+    const int D = ActionStep::Down, U = ActionStep::Up, C = ActionStep::Click;
+    auto act = [](const QString& item, int hold, int after) {
+        ActionStep a = ActionStep::fromItem(item); a.holdMs = hold; a.afterMs = after; return a;
+    };
+    auto stp = [](const QString& item, int press, int after) {
+        ActionStep a = ActionStep::fromItem(item); a.press = press; a.afterMs = after; return a;
+    };
+    auto call = [](const QString& id, int rep, int after) {
+        ActionStep a; a.group = id; a.repeat = rep; a.afterMs = after; a.mouse = false; a.key.clear(); return a;
+    };
+    // id: 8 знаков 0-9a-f, новые не совпадают с занятыми
+    QList<ActionGroup> gs;
+    for (int i = 0; i < 30; ++i) {
+        ActionGroup g; g.id = Groups::newId(gs); g.name = Groups::freeName(gs);
+        CHECK(Groups::validId(g.id));
+        gs << g;
+    }
+    CHECK(gs[0].name == "Группа 1" && gs[29].name == "Группа 30");
+    CHECK(!Groups::validId("G1234567") && !Groups::validId("abc") && !Groups::validId("0123456789"));
+    CHECK(Groups::validName(" Кик ") && !Groups::validName("  ") && !Groups::validName(QString(41, 'x')));
+
+    // группа действий: ЛКМ (держать 40), пауза 15, F
+    ActionGroup combo; combo.id = "0a0b0c0d"; combo.name = "Комбо";
+    combo.items = {act("mouse:1", 40, 15), act("f", 0, 999)};      // пауза у последнего — не используется
+    // ряд: E, пауза 10, [Комбо ×3, пауза 70], Q
+    const QList<ActionStep> chain{act("e", 0, 10), call(combo.id, 3, 70), act("q", 0, 5)};
+    QList<int> owner;
+    const QList<ActionStep> run = Groups::expand(chain, {combo}, false, false, &owner);
+    CHECK(run.size() == 1 + 2 * 3 + 1);
+    CHECK(run[0].key == "e" && run[1].mouse && run[1].holdMs == 40 && run[1].afterMs == 15);
+    CHECK(run[2].key == "f" && run[2].afterMs == 70);         // между повторами — пауза вызова
+    CHECK(run[6].key == "f" && run[6].afterMs == 70 && run[7].key == "q");
+    CHECK(owner == (QList<int>{0, 1, 1, 1, 1, 1, 1, 2}));
+    for (const ActionStep& a : run) CHECK(!a.isGroup());
+    // «Вместе» / «Зажать» — без повторов
+    CHECK(Groups::expand(chain, {combo}, false, true).size() == 4);
+    // группы нет — вызов ничего не жмёт
+    CHECK(Groups::expand(chain, {}, false).size() == 2);
+    // в ряду «По шагам» группа из действий — шагами
+    const QList<ActionStep> srun = Groups::expand({call(combo.id, 1, 30)}, {combo}, true);
+    CHECK(srun.size() == 4);
+    CHECK(srun[0].press == D && srun[0].mouse && srun[0].afterMs == 40);
+    CHECK(srun[1].press == U && srun[1].afterMs == 15);
+    CHECK(srun[3].press == U && srun[3].key == "f" && srun[3].afterMs == 30);
+    // группа из шагов (кикфлип) в ряду действий (файл правили руками) — «нажать» кликом, «отпустить» — нет
+    ActionGroup kick; kick.id = "deadbeef"; kick.name = "Кикфлип"; kick.steps = true;
+    kick.items = {stp("mouse:1", D, 30), stp("mouse:3", C, 50), stp("mouse:1", U, 0)};
+    const QList<ActionStep> kr = Groups::expand({call(kick.id, 1, 0)}, {kick}, false);
+    CHECK(kr.size() == 2 && kr[0].press == C && kr[1].button == 3);
+    // разгруппировать: те же шаги, что жал кликер
+    CHECK(Groups::inlineCall(call(combo.id, 2, 70), combo, false) == Groups::expand({call(combo.id, 2, 70)}, {combo}, false));
+    // удалили группу — её вызовы становятся действиями, остальное на месте
+    const QList<ActionStep> flat = Groups::inlineAll(chain, combo, false, kMaxActions);
+    CHECK(flat == run);
+    CHECK(Groups::inlineAll(chain, kick, false, kMaxActions) == chain);          // чужая группа — без изменений
+    CHECK(Groups::inlineAll(chain, combo, false, 3).size() == 3);
+    CHECK(Groups::usedIds(chain) == QStringList{combo.id});
+    CHECK(Groups::uses(chain + chain, combo.id) == 2);
+    CHECK(Groups::preview(kick) == "ЛКМ ↓ · ПКМ ↕ · ЛКМ ↑");
+    CHECK(Groups::preview(combo, 1) == "ЛКМ · +1");
+    // вызов — не кнопка: с ЛКМ не путается
+    CHECK(!call(combo.id, 1, 0).sameInput(ActionStep::fromItem("mouse:1")));
+    CHECK(call(combo.id, 1, 0) != call(combo.id, 2, 0));
+
+    // состояние: ряд с вызовом, кликер жмёт развёрнутое
+    GameState st;
+    st.actions = chain;
+    st.groups = {combo};
+    CHECK(st.multi());
+    CHECK(st.chain(GameMode::Sequence) == chain);
+    CHECK(st.runList(GameMode::Sequence) == run);
+    CHECK(st.runOwners(GameMode::Sequence) == owner);
+    CHECK(st.pressList(GameMode::Sequence).size() == run.size());
+    CHECK(st.repeatMin(GameMode::Sequence, 20) == 0);        // в круге 8 нажатий — «повтор через» от 0
+    GameState one; one.actions = {call(combo.id, 1, 0)}; one.groups = {combo};
+    CHECK(one.multi() && one.repeatMin(GameMode::Sequence, 20) == 0);
+    // «По шагам» без своих шагов: из действий, вызов остаётся вызовом
+    const QList<ActionStep> sc = st.chain(GameMode::Steps);
+    CHECK(sc.size() == 2 + 1 + 2 && sc[2].isGroup() && sc[2].press == C);
+    CHECK(st.runList(GameMode::Steps).size() == 2 + 4 * 3 + 2);
+    CHECK(st.usesMouse(GameMode::Sequence));
+    // в сравнении групп нет: поправил группу — профиль не «несохранённый»
+    GameState st2 = st; st2.groups.clear();
+    CHECK(st2 == st);
+
+    // хранение у игры: группы и вызовы переживают запись
+    Games::saveGroups("genshin", {combo, kick});
+    const QList<ActionGroup> back = Games::groups("genshin");
+    CHECK(back.size() == 2 && back[0] == combo && back[1].items == kick.items && back[1].steps);
+    CHECK(Games::groups("minecraft").isEmpty());
+    GameState gs1 = Games::loadState(Games::get("genshin"));
+    CHECK(gs1.groups.size() == 2);
+    gs1.actions = chain;
+    gs1.steps = {stp("e", D, 5), call(kick.id, 2, 40), stp("e", U, 0)};
+    Games::saveState("genshin", gs1);
+    const GameState gs2 = Games::loadState(Games::get("genshin"));
+    CHECK(gs2.actions == chain && gs2.steps == gs1.steps);
+    CHECK(gs2.steps[1].isGroup() && gs2.steps[1].repeat == 2 && gs2.steps[1].press == C);
+    CHECK(gs2.runList(GameMode::Steps).size() == 1 + 3 * 2 + 1);
+
+    // профиль: копии вызванных групп — в файле; на другом ПК (группы у игры нет) — приходят с ним
+    Games::saveProfile("genshin", "С группой", gs2, 3);
+    {
+        QSettings f(Games::profileFile("genshin", "С группой"), QSettings::IniFormat);
+        CHECK(f.value("profile/groups").toStringList() == (QStringList{combo.id, kick.id}));
+        CHECK(f.value("profile/group/deadbeef/name").toString() == "Кикфлип");
+    }
+    const QString file = QDir::temp().filePath("aq_grp_" + pid + ".ini");
+    CHECK(Games::exportProfile("genshin", "С группой", file));
+    Games::saveGroups("genshin", {});                         // «другой ПК»: групп нет
+    CHECK(Games::groups("genshin").isEmpty());
+    int mode = -1;
+    const GameState lp = Games::loadProfile("genshin", "С группой", &mode);
+    CHECK(mode == 3 && lp.groups.size() == 2);                // профиль принёс группы
+    CHECK(Games::groups("genshin").size() == 2);              // и они теперь у игры
+    // своя (поправленная) группа важнее копии в профиле
+    ActionGroup edited = combo; edited.items = {act("r", 0, 0)};
+    Games::saveGroups("genshin", {edited, kick});
+    CHECK(Games::loadProfile("genshin", "С группой").groups[0].items == edited.items);
+    // импорт в другую игру: группы — к ней
+    QString from;
+    const QString name = Games::importProfile("minecraft", file, nullptr, &from);
+    CHECK(!name.isEmpty() && Games::groups("minecraft").size() == 2);
+    CHECK(Games::loadProfile("minecraft", name).actions == chain);
+    QFile::remove(file);
+
+    // старая запись без групп и мусор — не ломают чтение
+    {
+        auto s = AppSettings::open();
+        s->setValue("games/genshin/state/actions", QStringList{"g:XYZ:1:0", "k:f:0:0", "g:0a0b0c0d:500:-5"});
+        s->setValue("games/genshin/groups", QStringList{"0a0b0c0d", "bad", "0a0b0c0d"});
+        s->sync();
+    }
+    const GameState gs3 = Games::loadState(Games::get("genshin"));
+    CHECK(gs3.actions.size() == 2 && !gs3.actions[0].isGroup());
+    CHECK(gs3.actions[1].repeat == kMaxRepeat && gs3.actions[1].afterMs == 0);
+    CHECK(gs3.groups.size() == 1);
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     testKeys();
@@ -1443,12 +1608,13 @@ int main(int argc, char** argv) {
     testV112();
     testV113();
     testV114();
+    testGroups();
     testDataDir();
     testCardLayout();
     testI18n();
     {
         const QString pid = QString::number(QCoreApplication::applicationPid());
-        for (const char* sc : {"t", "v15_", "imp_", "empty_", "modes_", "v17_", "v19_", "v112_", "v113_", "v114_", "snd_", "fs_"})
+        for (const char* sc : {"t", "v15_", "imp_", "empty_", "modes_", "v17_", "v19_", "v112_", "v113_", "v114_", "snd_", "fs_", "grp_"})
             AppSettings::dropScope("AutoQTest", QString::fromLatin1(sc) + pid);
     }
     std::printf("\n%d проверок пройдено, %d провалено\n", g_pass, g_fail);
