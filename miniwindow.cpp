@@ -6,8 +6,6 @@
 #include "appinfo.h"
 #include "keys.h"
 #include "keypicker.h"
-#include "keycapturebutton.h"
-#include "colorpicker.h"
 #include "animations.h"
 #include "games.h"
 #include <QVBoxLayout>
@@ -70,8 +68,6 @@ MiniWindow::MiniWindow(QWidget* parent)
     overlayBtn_->setCheckable(true);
     overlayBtn_->setContextMenuPolicy(Qt::CustomContextMenu);
     top->addWidget(overlayBtn_);
-    paletteBtn_ = iconBtn(T("Цвет и тема оформления"));
-    top->addWidget(paletteBtn_);
     settingsBtn_ = iconBtn(T("Настройки AutoQ"));
     top->addWidget(settingsBtn_);
     collapseBtn_ = iconBtn(T("Свернуть: оставить только статус, счётчик и Старт"));
@@ -161,19 +157,6 @@ MiniWindow::MiniWindow(QWidget* parent)
     profRow->addWidget(saveProfileBtn_);
     profRow->addWidget(resetProfileBtn_);
     grid->addLayout(profRow, 0, 1);
-    grid->addWidget(mkLabel(T("Старт / стоп"), "muted"), 1, 0);
-    auto* hkRow = new QHBoxLayout();
-    hkRow->setSpacing(6);
-    hotkeyPick_ = new KeyPicker();
-    hotkeyPick_->setKeys(KeyPicker::hotkeyItems(), Keys::hotkeyPresetNames());
-    hotkeyPick_->setAccessibleName(T("Клавиша старт/стоп"));
-    keyCapture_ = new KeyCaptureButton(false);
-    keyCapture_->setObjectName("captureOval");
-    keyCapture_->setLabels(T("Своё…"), T("Жми…"));
-    hkRow->addWidget(hotkeyPick_);
-    hkRow->addWidget(keyCapture_);
-    hkRow->addStretch(1);
-    grid->addLayout(hkRow, 1, 1);
     grid->setColumnStretch(1, 1);
     auto* gridBox = new QWidget();
     gridBox->setLayout(grid);
@@ -224,12 +207,6 @@ MiniWindow::MiniWindow(QWidget* parent)
     });
     connect(overlayBtn_, &QToolButton::clicked, this, [this]() { emit overlayMenuRequested(overlayBtn_); });
     connect(overlayBtn_, &QToolButton::customContextMenuRequested, this, &MiniWindow::overlaySettingsRequested);
-    connect(paletteBtn_, &QToolButton::clicked, this, [this]() {
-        auto* pop = new AppearancePopup(this);
-        connect(pop, &AppearancePopup::changed, this, &MiniWindow::appearanceChanged);
-        connect(pop, &AppearancePopup::moreRequested, this, &MiniWindow::settingsRequested);
-        pop->popupBelow(paletteBtn_);
-    });
     connect(gameBox_, QOverload<int>::of(&QComboBox::activated), this, [this](int i) {
         emit gameChosen(gameBox_->itemData(i).toString());
     });
@@ -247,10 +224,6 @@ MiniWindow::MiniWindow(QWidget* parent)
     });
     connect(saveProfileBtn_, &QToolButton::clicked, this, &MiniWindow::profileSaveRequested);
     connect(resetProfileBtn_, &QToolButton::clicked, this, [this]() { emit profileResetRequested(resetProfileBtn_); });
-    connect(hotkeyPick_, &KeyPicker::picked, this, &MiniWindow::hotkeyPicked);
-    connect(keyCapture_, &KeyCaptureButton::captureStarted, this, &MiniWindow::hotkeyCaptureStarted);
-    connect(keyCapture_, &KeyCaptureButton::captureFinished, this, &MiniWindow::hotkeyCaptured);
-    connect(keyCapture_, &KeyCaptureButton::hint, this, &MiniWindow::hotkeyHint);
     connect(captureBtn_, &QPushButton::clicked, this, [this]() {
         if (countdown_->active()) { countdown_->cancel(); return; }
         startCapture();
@@ -309,13 +282,10 @@ void MiniWindow::refreshTheme() {
     expandBtn_->setIcon(AqIcons::ui("expand", t.muted, 15));
     settingsBtn_->setIcon(AqIcons::ui("settings", t.muted, 15, 1.8));
     collapseBtn_->setIcon(AqIcons::ui(compact_ ? "chevron" : "minus", t.muted, 15, 2.2));
-    paletteBtn_->setIcon(AqIcons::ui("palette", t.muted, 16, 1.8));
     overlayBtn_->setIcon(AqIcons::ui("gauge", overlayBtn_->isChecked() ? t.redHi : t.muted, 17, 1.9));
     resetProfileBtn_->setIcon(AqIcons::ui("undo", t.muted, 15));
     saveProfileBtn_->setIcon(AqIcons::ui("save", profileDirty_ ? t.redHi : t.muted, 15));
-    keyCapture_->setIcon(AqIcons::ui("keyboard", t.muted, 15));
     captureBtn_->setIcon(AqIcons::ui("target", t.redHi, 15));
-    hotkeyPick_->setCurrent(hotkeyPick_->currentKey(), hotkeyPick_->text());
     footer_->setText(QString("created by <span style=\"color:%1; font-weight:600\">" AQ_AUTHOR "</span>")
                          .arg(t.redHi.name()));
     sep_->setStyleSheet(QString("color: %1; font-weight: 700; font-size: 15px; background: transparent;")
@@ -337,25 +307,29 @@ void MiniWindow::setGames(const QList<GameItem>& games, const QString& currentId
 void MiniWindow::setState(const GameState& st, GameMode mode, int minInterval) {
     mode_ = mode;
     const bool steps = mode == GameMode::Steps;
-    if (steps) {
-        // шаги здесь не правятся — коротко, что жмётся (править — в большом окне)
-        const QList<ActionStep> list = st.runList(mode);
+    // шаги и группы здесь не правятся — коротко, что жмётся (править — в большом окне)
+    const bool fixed = steps || st.actions.value(0).isGroup() || (st.multi() && st.actions.value(1).isGroup());
+    if (fixed) {
+        const QList<ActionStep> list = st.chain(mode);
         QStringList parts;
         for (int i = 0; i < list.size(); ++i) {
             if (parts.size() == 3) { parts << QString("+%1").arg(list.size() - i); break; }
-            parts << list[i].label() + list[i].pressMark();
+            const ActionStep& a = list[i];
+            const ActionGroup* g = a.isGroup() ? Groups::find(st.groups, a.group) : nullptr;
+            parts << (a.isGroup() ? QStringLiteral("▣ ") + (g ? g->name : QStringLiteral("?"))
+                                  : a.label() + (steps ? a.pressMark() : QString()));
         }
-        moreActs_->setText(parts.join(' '));
-        moreActs_->setToolTip(T("Шаги меняются в большом окне"));
+        moreActs_->setText(parts.join(steps ? QStringLiteral(" ") : QStringLiteral(" · ")));
+        moreActs_->setToolTip(steps ? T("Шаги меняются в большом окне") : T("Действия с группами меняются в большом окне"));
     } else {
         act1_->setCurrentItem(st.actions.value(0).itemName());
         act2_->setCurrentItem(st.multi() ? st.actions.value(1).itemName() : QString("none"));
         moreActs_->setText(st.actions.size() > 2 ? QString("+%1").arg(st.actions.size() - 2) : QString());
         moreActs_->setToolTip(T("Остальные действия — в большом окне"));
     }
-    act1_->setVisible(!steps);
-    act2_->setVisible(!steps);
-    moreActs_->setVisible(steps || st.actions.size() > 2);
+    act1_->setVisible(!fixed);
+    act2_->setVisible(!fixed);
+    moreActs_->setVisible(fixed || st.actions.size() > 2);
     {
         QSignalBlocker b(interval_);
         interval_->setMinimum(minInterval);
@@ -388,10 +362,6 @@ void MiniWindow::setProfiles(const QStringList& names, const QString& active, bo
     saveProfileBtn_->setToolTip(active.isEmpty() ? T("Сохранить настройки как новый профиль")
                                 : dirty ? T("Сохранить изменения в «%1»").arg(active)
                                         : T("Профиль «%1» сохранён").arg(active));
-}
-
-void MiniWindow::setHotkey(const QString& keyName, const QString& display) {
-    hotkeyPick_->setCurrent(keyName, display);
 }
 
 void MiniWindow::setRunning(bool running, const QString& hotkey, bool pending, bool unused) {
@@ -439,7 +409,6 @@ void MiniWindow::startCapture() {
 
 void MiniWindow::cancelCapture() { countdown_->cancel(); }
 bool MiniWindow::capturing() const { return countdown_->active(); }
-bool MiniWindow::capturingKey() const { return keyCapture_->isCapturing(); }
 
 void MiniWindow::setOverlayOn(bool on) {
     QSignalBlocker b(overlayBtn_);
