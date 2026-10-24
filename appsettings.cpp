@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QTemporaryFile>
+#include <QCryptographicHash>
 
 #ifdef _WIN32
     #ifndef NOMINMAX
@@ -93,7 +94,7 @@ void writeReadme(const QString& dir) {
             u8"==================\n"
             u8"settings.ini          — все настройки и игры\n"
             u8"profiles/<игра>/*.ini — профили, по файлу на каждый. Файл профиля можно\n"
-            u8"                        отправить другу: AutoQ → Профиль и запуск → ⋯ → Импорт.\n"
+            u8"                        отправить другу: AutoQ → Профиль → ⋯ → Импорт.\n"
             u8"Папку можно сменить: Настройки → Основные → Данные. Чтобы перенести AutoQ на\n"
             u8"другой компьютер — скопируй эту папку целиком.\n"
             u8"\n"
@@ -169,8 +170,47 @@ bool AppSettings::customDataDir() {
 QString AppSettings::settingsFile() { return dataDir() + "/settings.ini"; }
 QString AppSettings::profilesDir() { return dataDir() + "/profiles"; }
 
+namespace {
+QByteArray g_ownHash;               // settings.ini после нашей последней записи (или принятый)
+bool g_outside = false;             // заметили чужую правку, ещё не приняли
+
+QByteArray fileHash(const QString& path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return {};
+    return QCryptographicHash::hash(f.readAll(), QCryptographicHash::Sha1);
+}
+
+// settings.ini, который запоминает свои записи: файл поменялся, пока объект жил, — это мы
+class TrackedSettings : public QSettings {
+public:
+    explicit TrackedSettings(const QString& file)
+        : QSettings(file, QSettings::IniFormat), file_(file), before_(fileHash(file)) {
+        // файл уже не тот, что мы записали, — правили снаружи (запись ниже это не скроет)
+        if (!g_ownHash.isEmpty() && before_ != g_ownHash) g_outside = true;
+    }
+    ~TrackedSettings() override {
+        sync();
+        const QByteArray after = fileHash(file_);
+        if (after != before_) g_ownHash = after;
+    }
+private:
+    QString file_;
+    QByteArray before_;
+};
+}
+
 std::unique_ptr<QSettings> AppSettings::open() {
-    return std::make_unique<QSettings>(settingsFile(), QSettings::IniFormat);
+    return std::make_unique<TrackedSettings>(settingsFile());
+}
+
+bool AppSettings::changedOutside() {
+    const QByteArray now = fileHash(settingsFile());
+    return g_outside || (!now.isEmpty() && now != g_ownHash);
+}
+
+void AppSettings::markSeen() {
+    g_ownHash = fileHash(settingsFile());
+    g_outside = false;
 }
 
 static bool copyTree(const QString& from, const QString& to, QString* err) {
