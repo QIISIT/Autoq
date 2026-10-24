@@ -47,6 +47,7 @@
 #include <QApplication>
 #include <QTimer>
 #include <QScrollArea>
+#include <QFileSystemWatcher>
 #include <QScreen>
 #include <QSlider>
 #include <QListWidget>
@@ -171,7 +172,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     stepTimer_->setInterval(50);
     connect(stepTimer_, &QTimer::timeout, this, [this]() {
         const bool run = hasGame() && clk().isRunning();
-        actionsEdit_->setActiveStep(run ? clk().currentStep() : -1);
+        // кликер жмёт развёрнутый ряд (группы — по действиям); подсвечиваем карточку-хозяина
+        actionsEdit_->setActiveStep(run ? cur_.runOwners(game_.mode).value(clk().currentStep(), -1) : -1);
         updateMonitor(false);
         if (!run) stepTimer_->stop();
     });
@@ -404,15 +406,13 @@ void MainWindow::buildHeader() {
         b->setAccessibleName(name);
         return b;
     };
-    editGameBtn_ = iconBtn(34, T("Изменить игру: значок, режим, процесс, заголовок окна"), T("Изменить игру"));
-    delGameBtn_ = iconBtn(34, T("Убрать игру из списка"), T("Убрать игру"));
+    editGameBtn_ = iconBtn(34, T("Изменить игру: значок, режим, процесс, заголовок окна. Там же — убрать игру"), T("Изменить игру"));
     // боковая панель скрыта — игры, «добавить» и настройки отсюда
     switchGameBtn_ = iconBtn(34, T("Другая игра, добавить игру, настройки"), T("Другая игра"));
     switchGameBtn_->hide();
     nameRow->addWidget(nameLabel_, 1);
     nameRow->addWidget(switchGameBtn_);
     nameRow->addWidget(editGameBtn_);
-    nameRow->addWidget(delGameBtn_);
     h->addLayout(nameRow, 1);
     gblk->body()->addLayout(h);
 
@@ -594,7 +594,10 @@ void MainWindow::buildSpeedCard() {
         0, Qt::AlignVCenter);
     r3->addStretch(1);
     lay->addLayout(r3);
-    auto* r4 = new QHBoxLayout();
+    // частота кадров нужна только в такте — без него строки нет
+    hzRow_ = new QWidget();
+    auto* r4 = new QHBoxLayout(hzRow_);
+    r4->setContentsMargins(0, 0, 0, 0);
     r4->setSpacing(8);
     hzCaption_ = mkLabel(T("Частота кадров"), "muted");
     r4->addWidget(hzCaption_, 1);
@@ -603,7 +606,8 @@ void MainWindow::buildSpeedCard() {
     hzBox_->setToolTip(T("«Авто» — частота монитора, на котором игра. Своё значение — если в игре ограничен FPS."));
     hzBox_->setAccessibleName(T("Частота кадров"));
     r4->addWidget(hzBox_);
-    lay->addLayout(r4);
+    hzRow_->hide();
+    lay->addWidget(hzRow_);
     perMinuteLabel_ = mkLabel(QString(), "faint");
     perMinuteLabel_->setProperty("aqEl", "hint");
     perMinuteLabel_->setWordWrap(true);
@@ -647,10 +651,9 @@ void MainWindow::buildWindowCard() {
     BoardBlock* cblk = board_->addBlock("capture", T("Выбрать окно"));
     cblk->bottom = true;
     lay = cblk->body();
-    lay->addWidget(mkLabel(T("Время на переключение в игру"), "small"));
+    auto* capRow = new QHBoxLayout();
+    capRow->setSpacing(8);
     timeSeg_ = new TimeChoice();
-    timeSeg_->setToolTip(T("Сколько секунд дать себе, чтобы переключиться в игру после «Выбрать окно»"));
-    lay->addWidget(timeSeg_);
     checkBtn_ = new QPushButton();
     checkBtn_->setObjectName("outline");
     checkBtn_->setMinimumHeight(38);
@@ -658,8 +661,10 @@ void MainWindow::buildWindowCard() {
     checkBtn_->setToolTip(T("Нажми и переключись в игру — AutoQ выберет её окно и будет кликать только в нём"));
     checkBtn_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     countdown_ = new CaptureCountdown(checkBtn_, this);
-    countdown_->setIdleText(T("Выбрать окно (%1 сек)").arg(Prefs::captureSeconds()));
-    lay->addWidget(checkBtn_);
+    countdown_->setIdleText(T("Выбрать окно"));
+    capRow->addWidget(checkBtn_, 1);
+    capRow->addWidget(timeSeg_);
+    lay->addLayout(capRow);
 }
 
 void MainWindow::buildProfileCard() {
@@ -671,47 +676,28 @@ void MainWindow::buildProfileCard() {
     profileBox_->setToolTip(T("Профиль — выбери, и он сразу загрузится"));
     profileBox_->setAccessibleName(T("Профиль"));
     prow->addWidget(profileBox_, 1);
-    profileKeyBtn_ = new QToolButton();
-    profileKeyBtn_->setObjectName("icon");
-    profileKeyBtn_->setMinimumSize(30, 30);
-    profileKeyBtn_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    profileKeyBtn_->setAccessibleName(T("Клавиша профиля"));
-    prow->addWidget(profileKeyBtn_);
-    renameProfileBtn_ = new QToolButton();
-    renameProfileBtn_->setObjectName("icon");
-    renameProfileBtn_->setFixedSize(30, 30);
-    renameProfileBtn_->setToolTip(T("Переименовать профиль"));
-    renameProfileBtn_->setAccessibleName(T("Переименовать профиль"));
-    prow->addWidget(renameProfileBtn_);
-    profileOverlayBtn_ = new QToolButton();
-    profileOverlayBtn_->setObjectName("icon");
-    profileOverlayBtn_->setFixedSize(30, 30);
-    profileOverlayBtn_->setCheckable(true);
-    profileOverlayBtn_->setAccessibleName(T("Показывать в оверлее КПС"));
-    prow->addWidget(profileOverlayBtn_);
-    // ⋯ — профиль в файл и обратно: поделиться с другом, перенести на другой ПК
+    // ⋯ — всё остальное о профиле: переименовать, клавиша, оверлей, сбросить, удалить, файл
     profileMoreBtn_ = new QToolButton();
     profileMoreBtn_->setObjectName("icon");
     profileMoreBtn_->setFixedSize(30, 30);
     profileMoreBtn_->setPopupMode(QToolButton::InstantPopup);
-    profileMoreBtn_->setToolTip(T("Профиль в файл и из файла"));
-    profileMoreBtn_->setAccessibleName(T("Ещё: экспорт и импорт профиля"));
+    profileMoreBtn_->setToolTip(T("Ещё: переименовать, клавиша профиля, оверлей, сбросить, удалить, файл"));
+    profileMoreBtn_->setAccessibleName(T("Ещё о профиле"));
     {
         auto* m = new QMenu(profileMoreBtn_);
         // кнопки профиля спрятаны (редактор интерфейса) — они здесь
         profileMenuActs_ << m->addAction(T("Новый профиль…"), this, [this]() { newProfile(1); })
-                         << m->addAction(T("Сохранить профиль"), this, &MainWindow::saveProfile)
-                         << m->addAction(T("Сбросить…"), this, [this]() {
-                                QTimer::singleShot(0, this, [this]() { showResetMenu(profileMoreBtn_); });
-                            })
-                         << m->addAction(T("Удалить профиль"), this, &MainWindow::deleteProfile)
-                         << m->addSeparator();
-        connect(m, &QMenu::aboutToShow, this, [this]() {
-            const bool hidden = Theme::element("profile").hidden;
-            for (QAction* a : profileMenuActs_) a->setVisible(hidden);
-            // «Удалить» — только у выбранного профиля (неактивные пункты в теме красные — прячем)
-            if (hidden) profileMenuActs_[3]->setVisible(delProfileBtn_->isEnabled());
+                         << m->addAction(T("Сохранить профиль"), this, &MainWindow::saveProfile);
+        m->addSeparator();
+        renameProfileAct_ = m->addAction(T("Переименовать…"), this, &MainWindow::renameProfile);
+        profileKeyAct_ = m->addAction(T("Клавиша профиля…"), this, &MainWindow::editProfileKey);
+        profileOverlayAct_ = m->addAction(T("Показывать в оверлее КПС"));
+        profileOverlayAct_->setCheckable(true);
+        m->addAction(T("Сбросить…"), this, [this]() {
+            QTimer::singleShot(0, this, [this]() { showResetMenu(profileMoreBtn_); });
         });
+        delProfileAct_ = m->addAction(T("Удалить профиль"), this, &MainWindow::deleteProfile);
+        m->addSeparator();
         exportProfileAction_ = m->addAction(T("Экспорт профиля в файл…"), this, &MainWindow::exportProfile);
         m->addAction(T("Импорт профиля из файла…"), this, &MainWindow::importProfile);
         m->addSeparator();
@@ -721,6 +707,23 @@ void MainWindow::buildProfileCard() {
             QDir().mkpath(dir);
             QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
         });
+        // AutoQ и сам видит новые файлы в папке; кнопка — на случай, если система не сообщила
+        // (сетевой диск, облачная папка)
+        m->addAction(AqIcons::ui("loop", Theme::t().muted, 16), T("Обновить список профилей"), this,
+                     [this]() { profilesChangedOnDisk(true); });
+        connect(m, &QMenu::aboutToShow, this, [this]() {
+            const bool hidden = Theme::element("profile").hidden;
+            for (QAction* a : profileMenuActs_) a->setVisible(hidden);
+            // что относится к выбранному профилю — только когда он выбран
+            // (неактивные пункты в теме красные — прячем)
+            const QString active = hasGame() ? Games::activeProfile(game_.id) : QString();
+            for (QAction* a : {renameProfileAct_, profileKeyAct_, delProfileAct_, exportProfileAction_})
+                a->setVisible(!active.isEmpty());
+            const HotkeySpec pk = active.isEmpty() ? HotkeySpec{} : Games::profileKey(game_.id, active);
+            profileKeyAct_->setText(pk.isValid() ? T("Клавиша профиля: %1…").arg(pk.display()) : T("Клавиша профиля…"));
+            const QSignalBlocker b(profileOverlayAct_);
+            profileOverlayAct_->setChecked(!hasGame() || Games::profileInOverlay(game_.id, active));
+        });
         profileMoreBtn_->setMenu(m);
     }
     prow->addWidget(profileMoreBtn_);
@@ -728,25 +731,17 @@ void MainWindow::buildProfileCard() {
     profileState_ = mkLabel(QString(), "profileState");
     profileState_->setWordWrap(true);
     lay->addWidget(profileState_);
-    auto* g = new QGridLayout();
+    auto* g = new QHBoxLayout();
     g->setSpacing(6);
     newProfileBtn_ = new QPushButton(T("Новый"));
     newProfileBtn_->setToolTip(T("Создать профиль: с нуля, из текущих настроек или из пресета"));
     saveProfileBtn_ = new QPushButton(T("Сохранить"));
     saveProfileBtn_->setObjectName("accent");
-    resetProfileBtn_ = new QPushButton(T("Сбросить"));
-    resetProfileBtn_->setToolTip(T("Вернуть сохранённое в профиле или стандартные настройки игры"));
-    delProfileBtn_ = new QPushButton(T("Удалить"));
-    delProfileBtn_->setObjectName("ghost");
-    delProfileBtn_->setToolTip(T("Удалить профиль (настройки игры останутся)"));
-    for (QPushButton* b : {newProfileBtn_, saveProfileBtn_, resetProfileBtn_, delProfileBtn_}) {
+    for (QPushButton* b : {newProfileBtn_, saveProfileBtn_}) {
         b->setCursor(Qt::PointingHandCursor);
         b->setProperty("aqEl", "profile");
+        g->addWidget(b, 1);
     }
-    g->addWidget(newProfileBtn_, 0, 0);
-    g->addWidget(saveProfileBtn_, 0, 1);
-    g->addWidget(resetProfileBtn_, 1, 0);
-    g->addWidget(delProfileBtn_, 1, 1);
     lay->addLayout(g);
 
     // пресеты — готовые настройки игры
@@ -771,14 +766,12 @@ void MainWindow::buildProfileCard() {
     BoardBlock* hblk = board_->addBlock("hotkey", T("Клавиша старт/стоп"));
     hblk->setDivider(true);
     lay = hblk->body();
-    auto* hkCaption = mkLabel(T("Старт / стоп этой игры"), "muted");
-    hkCaption->setToolTip(T("У каждой игры своя клавиша. Из списка (с поиском) или своё сочетание — любая буква, цифра, Ctrl+…, колёсико или Mouse 4/5"));
-    lay->addWidget(hkCaption);
     auto* hk = new QHBoxLayout();
     hk->setSpacing(8);
     hotkeyPick_ = new KeyPicker();
     hotkeyPick_->setKeys(KeyPicker::hotkeyItems(), Keys::hotkeyPresetNames());
     hotkeyPick_->setAccessibleName(T("Клавиша старт/стоп"));
+    hotkeyPick_->setToolTip(T("Клавиша старт/стоп этой игры. У каждой игры своя: из списка (с поиском) или своё сочетание — любая буква, цифра, Ctrl+…, колёсико или Mouse 4/5"));
     hk->addWidget(hotkeyPick_);
     captureBtn_ = new KeyCaptureButton(false);
     captureBtn_->setObjectName("captureOval");
@@ -820,43 +813,21 @@ void MainWindow::buildProfileCard() {
     km->addWidget(keyModeSeg_, 1);
     lay->addLayout(km);
 
-    // свой звук включения и выключения — у игры и у каждого профиля
-    BoardBlock* sblk = board_->addBlock("sounds", T("Звуки старт/стоп"));
+    // звук старт/стоп: сами звуки — в настройках, здесь — только «без звука» у игры (и профиля)
+    BoardBlock* sblk = board_->addBlock("sounds", T("Звук старт/стоп"));
     lay = sblk->body();
-    auto* sg = new QGridLayout();
-    sg->setHorizontalSpacing(8);
-    sg->setVerticalSpacing(6);
-    sg->setColumnStretch(1, 1);
-    auto soundRow = [this, sg](int r, Sounds::Kind kind, const QString& caption) {
-        sg->addWidget(mkLabel(caption, "muted"), r, 0);
-        auto* box = new SoundBox(kind, true);
-        box->setAccessibleName(caption);
-        box->setToolTip(T("Свой звук этой игры (сохраняется и в профиле). «Как в настройках» — общий звук."));
-        sg->addWidget(box, r, 1);
-        auto* play = new QToolButton();
-        play->setObjectName("icon");
-        play->setFixedSize(30, 30);
-        play->setToolTip(T("Послушать"));
-        play->setAccessibleName(T("Послушать"));
-        sg->addWidget(play, r, 2);
-        soundPlayBtns_ << play;
-        connect(play, &QToolButton::clicked, this, [this, kind]() {
-            Sounds::preview(Sounds::resolve(kind, kind == Sounds::On ? cur_.soundOn : cur_.soundOff));
-        });
-        connect(box, &SoundBox::soundChosen, this, [this, kind](const QString& id) {
-            if (loading_ || !hasGame()) return;
-            (kind == Sounds::On ? cur_.soundOn : cur_.soundOff) = id;
-            commit();
-        });
-        return box;
-    };
-    soundOnBox_ = soundRow(0, Sounds::On, T("Звук вкл"));
-    soundOffBox_ = soundRow(1, Sounds::Off, T("Звук выкл"));
-    lay->addLayout(sg);
-    soundsOffHint_ = mkLabel(T("Звуки выключены: Настройки → Основные → Звук."), "faint");
-    soundsOffHint_->setWordWrap(true);
-    soundsOffHint_->hide();
-    lay->addWidget(soundsOffHint_);
+    auto* sr = new QHBoxLayout();
+    sr->setSpacing(8);
+    soundBtn_ = new QToolButton();
+    soundBtn_->setObjectName("chip");
+    soundBtn_->setPopupMode(QToolButton::InstantPopup);
+    soundBtn_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    soundBtn_->setAccessibleName(T("Звук старт/стоп"));
+    soundBtn_->setMenu(new QMenu(soundBtn_));
+    connect(soundBtn_->menu(), &QMenu::aboutToShow, this, &MainWindow::fillSoundMenu);
+    sr->addWidget(soundBtn_);
+    sr->addStretch(1);
+    lay->addLayout(sr);
 
     BoardBlock* ablk = board_->addBlock("armed", T("Используется"));
     lay = ablk->body();
@@ -924,7 +895,6 @@ void MainWindow::connectSignals() {
     connect(gameList_, &QListWidget::customContextMenuRequested, this, &MainWindow::showGameMenu);
     connect(addGameBtn_, &QPushButton::clicked, this, &MainWindow::addGame);
     connect(editGameBtn_, &QToolButton::clicked, this, &MainWindow::editGame);
-    connect(delGameBtn_, &QToolButton::clicked, this, &MainWindow::removeGame);
     connect(miniBtn_, &QToolButton::clicked, this, &MainWindow::showMini);
     connect(overlayBtn_, &QToolButton::clicked, this, [this]() {
         syncOverlayUi();                 // нажатие не переключает само — выбор в меню
@@ -941,11 +911,7 @@ void MainWindow::connectSignals() {
     });
     connect(newProfileBtn_, &QPushButton::clicked, this, [this]() { newProfile(1); });
     connect(saveProfileBtn_, &QPushButton::clicked, this, &MainWindow::saveProfile);
-    connect(resetProfileBtn_, &QPushButton::clicked, this, [this]() { showResetMenu(resetProfileBtn_); });
-    connect(delProfileBtn_, &QPushButton::clicked, this, &MainWindow::deleteProfile);
-    connect(renameProfileBtn_, &QToolButton::clicked, this, &MainWindow::renameProfile);
-    connect(profileKeyBtn_, &QToolButton::clicked, this, &MainWindow::editProfileKey);
-    connect(profileOverlayBtn_, &QToolButton::toggled, this, [this](bool on) {
+    connect(profileOverlayAct_, &QAction::toggled, this, [this](bool on) {
         if (loading_ || !hasGame()) return;
         const QString active = Games::activeProfile(game_.id);
         Games::setProfileInOverlay(game_.id, active, on);
@@ -969,6 +935,20 @@ void MainWindow::connectSignals() {
     });
     connect(actionsEdit_, &ActionsEditor::changed, this, [this]() {
         if (loading_) return;
+        // группы игры: сделали, поправили или удалили (у удалённой вызовы в другом ряду —
+        // «По шагам» или действия — тоже становятся обычными карточками)
+        const QList<ActionGroup> groups = actionsEdit_->groups();
+        if (groups != cur_.groups) {
+            const bool steps = game_.mode == GameMode::Steps;
+            for (const ActionGroup& g : cur_.groups) {
+                if (Groups::find(groups, g.id)) continue;
+                if (steps) cur_.actions = Groups::inlineAll(cur_.actions, g, false, kMaxActions);
+                else if (!cur_.steps.isEmpty()) cur_.steps = Groups::inlineAll(cur_.steps, g, true, kMaxSteps);
+            }
+            if (cur_.actions.isEmpty()) cur_.actions << ActionStep{};
+            cur_.groups = groups;
+            Games::saveGroups(game_.id, groups);
+        }
         if (game_.mode == GameMode::Steps) {
             cur_.steps = actionsEdit_->actions();
         } else {
@@ -1136,18 +1116,6 @@ void MainWindow::connectMini() {
     });
     connect(mini_, &MiniWindow::profileSaveRequested, this, &MainWindow::saveProfile);
     connect(mini_, &MiniWindow::profileResetRequested, this, &MainWindow::showResetMenu);
-    connect(mini_, &MiniWindow::hotkeyPicked, this, [this](const QString& k) {
-        HotkeySpec sp; sp.key = k;
-        setHotkey(sp, true);
-    });
-    connect(mini_, &MiniWindow::hotkeyCaptureStarted, this, [this]() { suspendHotkeys(true); });
-    connect(mini_, &MiniWindow::hotkeyCaptured, this, [this](bool ok, const HotkeySpec& sp) {
-        suspendHotkeys(false);
-        if (ok) setHotkey(sp, true);
-    });
-    connect(mini_, &MiniWindow::hotkeyHint, this, [this](const QString& t) {
-        if (mini_->isVisible()) mini_->toast(t);
-    });
     connect(mini_, &MiniWindow::captureStarted, this, [this]() {
         resultUntil_ = 0;
         countdown_->cancel();
@@ -1162,7 +1130,6 @@ void MainWindow::connectMini() {
         updateTrayState();
         refreshLive();
     });
-    connect(mini_, &MiniWindow::appearanceChanged, this, &MainWindow::appearanceChanged);
     connect(mini_, &MiniWindow::settingsRequested, this, &MainWindow::openSettings);
     connect(mini_, &MiniWindow::overlayMenuRequested, this, [this](QWidget* a) { syncOverlayUi(); showOverlayMenu(a); });
     connect(mini_, &MiniWindow::overlaySettingsRequested, this, &MainWindow::openOverlaySettings);
@@ -1175,7 +1142,7 @@ void MainWindow::refreshIcons() {
     const auto& t = Theme::t();
     const qreal dpr = devicePixelRatioF();
     board_->refreshIcons();
-    for (QToolButton* b : soundPlayBtns_) b->setIcon(AqIcons::ui("play", t.muted, 12));
+    updateSoundBtn();
     qApp->setWindowIcon(AqIcons::appIcon());
     brandLogo_->setPixmap(AqIcons::logo(26, dpr));
     for (QLabel* l : findChildren<QLabel*>())
@@ -1187,7 +1154,6 @@ void MainWindow::refreshIcons() {
     addGameBtn_->setIcon(AqIcons::ui("plus", t.redHi, 16, 2.2));
     settingsBtn_->setIcon(AqIcons::ui("settings", t.muted, 17, 1.8));
     editGameBtn_->setIcon(AqIcons::ui("pencil", t.muted, 15));
-    delGameBtn_->setIcon(AqIcons::ui("trash", t.muted, 15));
     miniBtn_->setIcon(AqIcons::ui("mini", t.muted, 17));
     layoutBtn_->setIcon(AqIcons::ui("layout", layoutBtn_->isChecked() ? t.redHi : t.muted, 16));
     switchGameBtn_->setIcon(AqIcons::ui("chevron", t.muted, 14, 2.2));
@@ -1196,13 +1162,9 @@ void MainWindow::refreshIcons() {
     actionsEdit_->refreshIcons();
     checkBtn_->setIcon(AqIcons::ui("target", t.redHi, 15));
     captureBtn_->setIcon(AqIcons::ui("keyboard", t.muted, 16));
-    renameProfileBtn_->setIcon(AqIcons::ui("pencil", t.muted, 14));
     profileMoreBtn_->setIcon(AqIcons::ui("more", t.muted, 16));
-    profileKeyBtn_->setIcon(AqIcons::ui("keyboard", t.muted, 15));
     newProfileBtn_->setIcon(AqIcons::ui("plus", t.muted, 13, 2.2));
     saveProfileBtn_->setIcon(AqIcons::ui("save", saveIconColor(false), 14));
-    resetProfileBtn_->setIcon(AqIcons::ui("undo", t.muted, 14));
-    delProfileBtn_->setIcon(AqIcons::ui("trash", t.faint, 13));
     hotkeyPick_->setCurrent(hotkeySpec_.isChord() ? QString() : hotkeySpec_.key, hotkeySpec_.display());
     presetBtn_->setIcon(AqIcons::ui("chevron", t.muted, 12, 2.4));
     startBtn_->refreshIcon();
@@ -1243,7 +1205,7 @@ void MainWindow::applyElementLook() {
     perMinuteLabel_->setVisible(hints);
     updateHotkeyInfo();
     const bool profileBtns = !Theme::element("profile").hidden;
-    for (QPushButton* b : {newProfileBtn_, saveProfileBtn_, resetProfileBtn_, delProfileBtn_}) b->setVisible(profileBtns);
+    for (QPushButton* b : {newProfileBtn_, saveProfileBtn_}) b->setVisible(profileBtns);
     actionsEdit_->refreshLook();
     board_->syncElements();
 }
@@ -1311,6 +1273,7 @@ void MainWindow::reloadGames(const QString& selectId) {
     rebuildTrayGames();
     updateGameItems();
     updateSidebarVisible();          // скрыта — но без игр её не спрятать
+    watchProfiles();                 // у новой игры — своя папка профилей
 }
 
 void MainWindow::updateGameItems() {
@@ -1459,6 +1422,7 @@ void MainWindow::editGame() {
     const int capBefore = Prefs::captureSeconds();
     const bool accepted = dlg.exec() == QDialog::Accepted;
     if (Prefs::captureSeconds() != capBefore) setCaptureSeconds(Prefs::captureSeconds());   // меняли в диалоге
+    if (dlg.removeRequested()) { removeGame(); return; }
     if (!accepted) return;
     GameDef res = dlg.result();
     Games::save(res);
@@ -1475,6 +1439,7 @@ void MainWindow::removeGame() {
     cancelPending();
     const QString id = game_.id;
     const int idx = gameList_->currentRow();
+    unwatchProfiles();
     Games::remove(id);
     runners_.erase(id);
     game_ = GameDef{};
@@ -1493,6 +1458,7 @@ void MainWindow::removeGameById(const QString& id) {
         return;
     stopGame(id);
     runners_.erase(id);
+    unwatchProfiles();
     Games::remove(id);
     reloadGames(game_.id);
 }
@@ -1640,11 +1606,12 @@ void MainWindow::applyModeLayout() {
         w->setEnabled(!hold);
     if (!hold) jitterBox_->setEnabled(cur_.randomize);
     hzBox_->setEnabled(!hold && cur_.frameSync);
+    hzRow_->setVisible(cur_.frameSync);
     {
         const bool wasLoading = loading_;
         loading_ = true;
-        actionsEdit_->setState(steps ? cur_.runList(m) : cur_.actions, m, cur_.startDelayMs,
-                               cur_.intervalMs, game_.minIntervalMs);
+        actionsEdit_->setGroups(cur_.groups);
+        actionsEdit_->setState(cur_.chain(m), m, cur_.startDelayMs, cur_.intervalMs, game_.minIntervalMs);
         loading_ = wasLoading;
     }
 }
@@ -1664,6 +1631,7 @@ void MainWindow::updateActionsHint() {
         const QList<ActionStep> left = Steps::leftDown(list);
         if (!left.isEmpty())
             hint += ' ' + T("Не отпущено за круг: %1 — отпустится само в конце круга.").arg(actionsLabel(left, 0, int(left.size())));
+        if (cur_.groups.isEmpty() && cur_.chain(m).size() > 1) hint += ' ' + T("Ctrl + щелчок по карточкам — выделить и сделать группой.");
         actionsHint_->setText(hint);
     } else if (!multi) {
         actionsTitle_->setText(hold ? T("Одно действие — зажать") : T("Одно действие — повторять"));
@@ -1681,7 +1649,8 @@ void MainWindow::updateActionsHint() {
             break;
         default:
             actionsTitle_->setText(T("Действия по очереди"));
-            actionsHint_->setText(T("Каждый цикл: действия одно за другим, с паузами между ними · %1.").arg(every));
+            actionsHint_->setText(T("Каждый цикл: действия одно за другим, с паузами между ними · %1.").arg(every)
+                                  + (cur_.groups.isEmpty() ? ' ' + T("Ctrl + щелчок по карточкам — выделить и сделать группой.") : QString()));
             break;
     }
 }
@@ -1695,9 +1664,7 @@ void MainWindow::stateToUi() {
     jitterBox_->setEnabled(cur_.randomize);
     lockSwitch_->setChecked(cur_.lockWindow);
     frameSyncSwitch_->setChecked(cur_.frameSync);
-    soundOnBox_->setSound(cur_.soundOn);
-    soundOffBox_->setSound(cur_.soundOff);
-    soundsOffHint_->setVisible(!Sounds::enabled());
+    updateSoundBtn();
     loading_ = wasLoading;
     fillHzBox();
     syncSlider();
@@ -1816,6 +1783,7 @@ void MainWindow::fillHzBox() {
     for (int v : list) hzBox_->addItem(T("%1 Гц").arg(v), v);
     hzBox_->setCurrentIndex(qMax(0, hzBox_->findData(cur_.frameHz)));
     hzBox_->setEnabled(cur_.frameSync && game_.mode != GameMode::Hold);
+    hzRow_->setVisible(cur_.frameSync);
     loading_ = wasLoading;
 }
 
@@ -1929,8 +1897,9 @@ void MainWindow::applyPreset(int index) {
     cur_.frameHz = keep.frameHz;
     cur_.soundOn = keep.soundOn;
     cur_.soundOff = keep.soundOff;
-    // шаги и «старт через» в пресетах не хранятся — свои не теряем
+    // шаги, группы и «старт через» в пресетах не хранятся — свои не теряем
     cur_.steps = keep.steps;
+    cur_.groups = keep.groups;
     cur_.startDelayMs = keep.startDelayMs;
     if (l[index].mode >= 0 && gameModeFromInt(l[index].mode) != game_.mode) {
         game_.mode = gameModeFromInt(l[index].mode);
@@ -1977,6 +1946,10 @@ void MainWindow::updateProfileState() {
     const QString active = hasGame() ? Games::activeProfile(game_.id) : QString();
     const QStringList names = hasGame() ? Games::profiles(game_.id) : QStringList();
     const bool dirty = profileDirty();
+    // что было сохранено — чтобы, если файл профиля поправят снаружи, подхватить его
+    // (только когда своих несохранённых правок нет: их не теряем)
+    cleanProfile_ = active.isEmpty() || dirty ? QString() : game_.id + '/' + active;
+    if (!cleanProfile_.isEmpty()) cleanState_ = cur_;
     {
         QSignalBlocker b(profileBox_);
         profileBox_->clear();
@@ -1998,7 +1971,7 @@ void MainWindow::updateProfileState() {
     } else if (dirty) {
         state = "dirty";
         text = btnsHidden ? T("● Есть несохранённые изменения — «Сохранить» или «Сбросить» в меню ⋯.")
-                          : T("● Есть несохранённые изменения — «Сохранить» или «Сбросить».");
+                          : T("● Есть несохранённые изменения — «Сохранить» (или «Сбросить» в ⋯).");
     } else {
         state = "saved";
         text = T("✓ Профиль «%1» — всё сохранено.").arg(elide(active, 28));
@@ -2013,34 +1986,15 @@ void MainWindow::updateProfileState() {
     saveProfileBtn_->setIcon(AqIcons::ui("save", saveIconColor(dirty), 14));
     saveProfileBtn_->setToolTip(active.isEmpty() ? T("Сохранить текущие настройки как новый профиль")
                                                  : T("Сохранить изменения в «%1»").arg(active));
-    delProfileBtn_->setEnabled(!active.isEmpty());
-    renameProfileBtn_->setEnabled(!active.isEmpty());
-    profileKeyBtn_->setEnabled(!active.isEmpty());
     profileMoreBtn_->setEnabled(hasGame());
-    if (exportProfileAction_) exportProfileAction_->setEnabled(!active.isEmpty());
     {
-        const bool inOv = !hasGame() || Games::profileInOverlay(game_.id, active);
         const bool wasLoading = loading_;
         loading_ = true;
-        profileOverlayBtn_->setChecked(inOv);
+        profileOverlayAct_->setChecked(!hasGame() || Games::profileInOverlay(game_.id, active));
         loading_ = wasLoading;
-        profileOverlayBtn_->setEnabled(hasGame());
-        profileOverlayBtn_->setIcon(AqIcons::ui(inOv ? "gauge" : "gauge-off", inOv ? Theme::t().redHi : Theme::t().faint, 16, 1.9));
-        const QString who = active.isEmpty() ? T("Без профиля") : T("Профиль «%1»").arg(active);
-        profileOverlayBtn_->setToolTip(inOv ? T("%1 показывается в оверлее КПС — нажми, чтобы скрыть").arg(who)
-                                            : T("%1 не показывается в оверлее КПС — нажми, чтобы показывать").arg(who));
     }
-    const HotkeySpec pk = active.isEmpty() ? HotkeySpec{} : Games::profileKey(game_.id, active);
-    profileKeyBtn_->setText(pk.isValid() ? pk.display() : QString());
-    // без клавиши — только значок, ровно по центру рамки (с пустым текстом он уезжал влево)
-    profileKeyBtn_->setToolButtonStyle(pk.isValid() ? Qt::ToolButtonTextBesideIcon : Qt::ToolButtonIconOnly);
-    if (pk.isValid()) { profileKeyBtn_->setMinimumSize(30, 30); profileKeyBtn_->setMaximumSize(QWIDGETSIZE_MAX, 30); }
-    else profileKeyBtn_->setFixedSize(30, 30);
-    profileKeyBtn_->setToolTip(active.isEmpty() ? T("Клавиша профиля: сначала выбери или создай профиль")
-                               : pk.isValid() ? T("Клавиша профиля «%1»: %2 — включает его прямо в игре").arg(active, pk.display())
-                                              : T("Назначить клавишу профилю «%1» — включать его прямо в игре").arg(active));
     for (QWidget* w : {static_cast<QWidget*>(profileBox_), static_cast<QWidget*>(newProfileBtn_),
-                       static_cast<QWidget*>(saveProfileBtn_), static_cast<QWidget*>(resetProfileBtn_)})
+                       static_cast<QWidget*>(saveProfileBtn_)})
         w->setEnabled(hasGame());
     if (mini_) mini_->setProfiles(names, active, dirty);
     rebuildTrayProfiles();
@@ -2065,6 +2019,126 @@ bool MainWindow::confirmLeaveProfile() {
     return box.clickedButton() == discard;
 }
 
+void MainWindow::unwatchProfiles() {
+    if (configWatch_) {
+        const QStringList paths = configWatch_->directories() + configWatch_->files();
+        if (!paths.isEmpty()) configWatch_->removePaths(paths);
+    }
+    if (!profileWatch_) return;
+    const QStringList paths = profileWatch_->directories() + profileWatch_->files();
+    if (!paths.isEmpty()) profileWatch_->removePaths(paths);
+}
+
+void MainWindow::watchProfiles() {
+    if (!profileWatch_) {
+        profileWatch_ = new QFileSystemWatcher(this);
+        profileWatchTimer_ = new QTimer(this);
+        profileWatchTimer_->setSingleShot(true);
+        profileWatchTimer_->setInterval(400);
+        connect(profileWatchTimer_, &QTimer::timeout, this, [this]() { profilesChangedOnDisk(false); });
+        auto changed = [this]() { profileWatchTimer_->start(); };
+        connect(profileWatch_, &QFileSystemWatcher::directoryChanged, this, changed);
+        connect(profileWatch_, &QFileSystemWatcher::fileChanged, this, changed);
+    }
+    // папка профилей (в ней появляются папки игр), папка каждой игры и файлы в ней:
+    // папка сообщает о новых и убранных файлах, файл — о правке внутри
+    const QString root = AppSettings::profilesDir();
+    QDir().mkpath(root);
+    QStringList want{root};
+    for (const GameDef& g : Games::list()) {
+        const QString dir = Games::profilesFolder(g.id);
+        if (!QFileInfo(dir).isDir()) continue;
+        want << dir;
+        for (const QFileInfo& fi : QDir(dir).entryInfoList({"*.ini"}, QDir::Files)) want << fi.absoluteFilePath();
+    }
+    const QStringList have = profileWatch_->directories() + profileWatch_->files();
+    QStringList drop, add;
+    for (const QString& p : have) if (!want.contains(p)) drop << p;
+    for (const QString& p : want) if (!have.contains(p)) add << p;
+    if (!drop.isEmpty()) profileWatch_->removePaths(drop);
+    if (!add.isEmpty()) profileWatch_->addPaths(add);
+
+    // settings.ini: сам файл (правка на месте) и его папка (файл пишется заменой — после
+    // неё слежка за файлом теряется, папка сообщает о новом)
+    if (!configWatch_) {
+        configWatch_ = new QFileSystemWatcher(this);
+        configWatchTimer_ = new QTimer(this);
+        configWatchTimer_->setSingleShot(true);
+        configWatchTimer_->setInterval(400);
+        connect(configWatchTimer_, &QTimer::timeout, this, &MainWindow::configChangedOnDisk);
+        auto changed = [this]() { configWatchTimer_->start(); };
+        connect(configWatch_, &QFileSystemWatcher::directoryChanged, this, changed);
+        connect(configWatch_, &QFileSystemWatcher::fileChanged, this, changed);
+        AppSettings::markSeen();        // то, что уже прочитано при запуске, — принято
+    }
+    const QString file = AppSettings::settingsFile();
+    const QStringList cwant{AppSettings::dataDir(), file};
+    const QStringList chave = configWatch_->directories() + configWatch_->files();
+    for (const QString& p : chave) if (!cwant.contains(p)) configWatch_->removePath(p);
+    for (const QString& p : cwant) if (!chave.contains(p) && QFileInfo::exists(p)) configWatch_->addPath(p);
+}
+
+void MainWindow::configChangedOnDisk() {
+    if (!configWatch_) return;
+    watchProfiles();                // файл заменили — слушать новый
+    if (!AppSettings::changedOutside()) return;     // это наша же запись
+    // открыто окно (настройки, правка игры) — оно само пишет в файл; разберём, когда закроют
+    if (QApplication::activeModalWidget()) { configWatchTimer_->start(1000); return; }
+    AppSettings::markSeen();
+    QStringList what;
+    // оформление
+    const Theme::Appearance look = Theme::loadAppearance();
+    if (!Styles::sameLook(look, Theme::current())) {
+        Theme::apply(*qApp, look);
+        appearanceChanged();
+        what << T("оформление");
+    }
+    // игры: список, их настройки, текущее состояние, группы, клавиши (кликер получит их сразу)
+    reloadGames(Games::currentId());
+    if (hasGame()) {
+        const CardLayout::Layout l = CardLayout::load(game_.id);
+        if (l != board_->cardLayout()) board_->setCardLayout(l);
+    }
+    // общее: оверлей, мини-окно поверх, звуки, клавиши
+    if (overlay_) overlay_->setSettings(OverlaySettings::load());
+    syncOverlayUi();
+    if (mini_) mini_->applyOnTop();
+    updateSoundBtn();
+    rebuildBindings();
+    refreshLive();
+    // язык — только после перезапуска (надписи уже созданы)
+    {
+        auto st = AppSettings::open();
+        if (I18n::fromSetting(st->value("language", "auto").toString()) != I18n::language())
+            what << T("язык — после перезапуска");
+    }
+    AppSettings::markSeen();        // применение могло само что-то записать
+    notify(what.isEmpty() ? T("Настройки перечитаны из файла.")
+                          : T("Настройки перечитаны из файла: %1.").arg(what.join(", ")));
+}
+
+void MainWindow::profilesChangedOnDisk(bool byButton) {
+    Games::reloadProfiles();
+    watchProfiles();                // новые файлы — тоже слушать
+    if (!hasGame()) return;
+    const QString active = Games::activeProfile(game_.id);
+    QString note;
+    if (!active.isEmpty() && !Games::profileExists(game_.id, active)) {
+        // файл текущего профиля убрали: настройки остаются, профиль — нет
+        Games::setActiveProfile(game_.id, QString());
+        note = T("Профиля «%1» больше нет в папке — настройки остались как есть.").arg(active);
+    } else if (!active.isEmpty() && cleanProfile_ == game_.id + '/' + active && cleanState_ == cur_ &&
+               profileDirty()) {
+        // файл поправили снаружи, а своих правок не было — берём новый
+        loadProfile(active, true);
+        note = T("Профиль «%1» обновлён из файла.").arg(active);
+    }
+    updateProfileState();
+    rebuildBindings();              // клавиши профилей
+    if (!note.isEmpty()) notify(note);
+    else if (byButton) notify(T("Список профилей обновлён: %1").arg(Games::profiles(game_.id).size()));
+}
+
 void MainWindow::switchProfile(const QString& name) {
     if (!hasGame()) return;
     const QString active = Games::activeProfile(game_.id);
@@ -2079,7 +2153,7 @@ void MainWindow::switchProfile(const QString& name) {
     loadProfile(name);
 }
 
-void MainWindow::loadProfile(const QString& name) {
+void MainWindow::loadProfile(const QString& name, bool quiet) {
     if (name.isEmpty() || !Games::profileExists(game_.id, name)) return;
     int mode = -1;
     cur_ = Games::loadProfile(game_.id, name, &mode);
@@ -2091,7 +2165,7 @@ void MainWindow::loadProfile(const QString& name) {
     }
     stateToUi();
     commit();
-    notify(T("Профиль: %1").arg(name));
+    if (!quiet) notify(T("Профиль: %1").arg(name));
 }
 
 // Клавиша профиля нажата в игре: для открытой игры — как выбор в списке,
@@ -2228,6 +2302,7 @@ void MainWindow::newProfile(int base) {
         st.soundOn = cur_.soundOn;
         st.soundOff = cur_.soundOff;
         st.steps = cur_.steps;
+        st.groups = cur_.groups;
         st.startDelayMs = cur_.startDelayMs;
         if (p.mode >= 0) mode = gameModeFromInt(p.mode);
         st.intervalMs = qMax(st.intervalMs, st.repeatMin(mode, game_.minIntervalMs));
@@ -2253,6 +2328,89 @@ void MainWindow::saveProfile() {
     Games::saveProfile(game_.id, active, cur_, static_cast<int>(game_.mode));
     updateProfileState();
     notify(T("Профиль «%1» сохранён.").arg(active));
+}
+
+// Звук старт/стоп у игры (и профиля): сами звуки — в настройках, здесь — только «без звука».
+// Без звука — свой звук "none"; вернуть — «как в настройках» (свой звук из старых версий остаётся)
+namespace {
+int soundMuteOf(const GameState& st) { return (st.soundOn == "none" ? 1 : 0) | (st.soundOff == "none" ? 2 : 0); }
+bool hasOwnSound(const GameState& st) {
+    for (const QString& v : {st.soundOn, st.soundOff})
+        if (!v.isEmpty() && v != "none") return true;
+    return false;
+}
+}
+
+void MainWindow::updateSoundBtn() {
+    const auto& t = Theme::t();
+    const int mute = soundMuteOf(cur_);
+    const bool off = !Sounds::enabled() || mute == 3;
+    soundBtn_->setIcon(AqIcons::ui(off ? "sound-off" : "sound", off ? t.faint : t.muted, 15));
+    QString text, tip;
+    if (!Sounds::enabled()) {
+        text = T("Звук выключен");
+        tip = T("Звуки старт/стоп выключены в настройках — нажми, чтобы включить");
+    } else {
+        switch (mute) {
+            case 1: text = T("Звук только при выкл"); break;
+            case 2: text = T("Звук только при вкл"); break;
+            case 3: text = T("Без звука"); break;
+            default: text = T("Со звуком"); break;
+        }
+        tip = T("Звук, когда кликер этой игры включается и выключается. Сами звуки — в настройках.");
+    }
+    soundBtn_->setText(text);
+    soundBtn_->setToolTip(tip);
+    soundBtn_->setEnabled(hasGame());
+}
+
+void MainWindow::fillSoundMenu() {
+    QMenu* m = soundBtn_->menu();
+    for (QActionGroup* g : m->findChildren<QActionGroup*>(QString(), Qt::FindDirectChildrenOnly)) g->deleteLater();
+    m->clear();
+    if (!Sounds::enabled()) {
+        m->addAction(T("Включить звуки старт/стоп"), this, [this]() {
+            Sounds::setEnabled(true);
+            updateSoundBtn();
+            notify(T("Звуки старт/стоп включены."));
+        });
+        m->addAction(T("Выбрать звуки…"), this, &MainWindow::openSettings);
+        return;
+    }
+    const int cur = soundMuteOf(cur_);
+    auto* group = new QActionGroup(m);
+    const QList<QPair<int, QString>> items{{0, T("Со звуком: при включении и выключении")},
+                                           {2, T("Только при включении")},
+                                           {1, T("Только при выключении")},
+                                           {3, T("Без звука")}};
+    for (const auto& [mute, name] : items) {
+        QAction* a = m->addAction(name);
+        a->setCheckable(true);
+        a->setChecked(mute == cur);
+        group->addAction(a);
+        connect(a, &QAction::triggered, this, [this, mute = mute]() {
+            if (!hasGame()) return;
+            auto put = [](QString& v, bool silent) {
+                if (silent) v = QStringLiteral("none");
+                else if (v == "none") v.clear();
+            };
+            put(cur_.soundOn, mute & 1);
+            put(cur_.soundOff, mute & 2);
+            commit();
+            updateSoundBtn();
+        });
+    }
+    m->addSeparator();
+    // свой звук игры из прошлых версий (выбирался на карточке) — можно вернуть общий
+    if (hasOwnSound(cur_)) {
+        m->addAction(T("Свой звук игры → как в настройках"), this, [this]() {
+            for (QString* v : {&cur_.soundOn, &cur_.soundOff})
+                if (*v != "none") v->clear();
+            commit();
+            updateSoundBtn();
+        });
+    }
+    m->addAction(T("Выбрать звуки…"), this, &MainWindow::openSettings);
 }
 
 void MainWindow::showResetMenu(QWidget* anchor) {
@@ -2386,7 +2544,6 @@ void MainWindow::setStatusBox(const QString& state, const QString& text) {
 void MainWindow::setCaptureSeconds(int sec) {
     Prefs::setCaptureSeconds(sec);
     timeSeg_->setSeconds(Prefs::captureSeconds());
-    countdown_->setIdleText(T("Выбрать окно (%1 сек)").arg(Prefs::captureSeconds()));
     if (mini_) mini_->setCaptureSeconds(Prefs::captureSeconds());
 }
 
@@ -2665,7 +2822,7 @@ void MainWindow::startPressed() {
 }
 
 bool MainWindow::capturingAnyKey() const {
-    return captureBtn_->isCapturing() || (mini_ && mini_->capturingKey()) || (hotkey_ && hotkey_->suspended());
+    return captureBtn_->isCapturing() || (hotkey_ && hotkey_->suspended());
 }
 
 void MainWindow::suspendHotkeys(bool on) {
@@ -2701,12 +2858,26 @@ void MainWindow::onHotkeyEvent(const QString& specStr, bool down) {
                    fw->inherits("QAbstractItemView")))
             return;
     }
-    QStringList toggles, holds;
+    QStringList toggles, holds, arms;
     for (const HkTarget& t : targets) {
-        if (t.kind == 1) setArmed(t.game, !Games::armed(t.game), true);
+        if (t.kind == 1) arms << t.game;
         else if (t.kind == 2) applyProfileFor(t.game, t.profile);
         else if (Games::keyMode(t.game) == 1) holds << t.game;
         else toggles << t.game;
+    }
+    // одна клавиша «используется» на нескольких играх — как старт/стоп: хоть одна используется —
+    // выключить все, иначе включить все (раньше каждая переключалась сама по себе и при разных
+    // состояниях они так и шли вразнобой)
+    if (!arms.isEmpty()) {
+        bool any = false;
+        for (const QString& id : arms) any = any || Games::armed(id);
+        QStringList names;
+        for (const QString& id : arms) {
+            setArmed(id, !any, arms.size() == 1);
+            names << Games::get(id).name;
+        }
+        if (arms.size() > 1)
+            notify(any ? T("Не используются: %1.").arg(names.join(", ")) : T("Используются: %1.").arg(names.join(", ")));
     }
     // одна клавиша на нескольких играх: работает хоть одна — выключить все, иначе включить все
     if (!toggles.isEmpty()) {
@@ -2907,7 +3078,6 @@ void MainWindow::setHotkey(const HotkeySpec& sp, bool save) {
     }
     hotkeyStatus_->hide();
     updateHotkeyInfo();
-    if (mini_) mini_->setHotkey(sp.isChord() ? QString() : sp.key, sp.display());
     rebuildBindings();
     updateTrayState();
     updateGameItems();
@@ -3201,7 +3371,6 @@ void MainWindow::syncMini() {
                                       AqIcons::gameTile(g.icon, QColor(g.color), g.image, 22, 2.0, false, t.light)};
     mini_->setGames(items, game_.id);
     mini_->setState(cur_, game_.mode, repeatMin());
-    mini_->setHotkey(hotkeySpec_.isChord() ? QString() : hotkeySpec_.key, hotkeySpec_.display());
     updateMiniLive();
 }
 
@@ -3656,6 +3825,7 @@ void MainWindow::syncOverlayUi() {
 }
 
 void MainWindow::openSettingsPage(int page) {
+    unwatchProfiles();          // папку данных могут перенести — старую тогда удаляют
     SettingsDialog dlg(overlay_, static_cast<SettingsDialog::Page>(page), dialogParent());
     connect(&dlg, &SettingsDialog::overlayChanged, this, &MainWindow::syncOverlayUi);
     connect(&dlg, &SettingsDialog::restartRequested, this, [this, &dlg]() {
@@ -3688,10 +3858,8 @@ void MainWindow::openSettingsPage(int page) {
         QTimer::singleShot(0, this, &MainWindow::startOnboarding);
     });
     dlg.exec();
-    // общий звук мог смениться — «Как в настройках · …» у игры тоже
-    soundOnBox_->refill();
-    soundOffBox_->refill();
-    soundsOffHint_->setVisible(!Sounds::enabled());
+    watchProfiles();
+    updateSoundBtn();     // звуки могли выключить или включить
 }
 
 void MainWindow::onTrayActivated(QSystemTrayIcon::ActivationReason reason) {

@@ -149,16 +149,25 @@ private:
     bool profileDirty() const;
     bool confirmLeaveProfile();    // несохранённые изменения: сохранить / не сохранять / отмена
     void switchProfile(const QString& name);   // "" — без профиля
-    void loadProfile(const QString& name);
+    void loadProfile(const QString& name, bool quiet = false);
     void newProfile(int base = 0);             // 0 — текущие, 1 — стандартные, 2+ — пресет
     void saveProfile();
     void showResetMenu(QWidget* anchor);
+    void updateSoundBtn();
+    void fillSoundMenu();
     void deleteProfile();
     void renameProfile();
     void editProfileKey();
     void exportProfile();       // профиль в файл (поделиться)
     void importProfile();       // профиль из файла
     void applyProfileFor(const QString& gameId, const QString& profile);   // клавишей профиля
+    // Файлы профилей положили, поправили или убрали снаружи: система сообщает об этом сама
+    // (без проверок по таймеру), плюс «Обновить список» в меню ⋯
+    void watchProfiles();          // какие папки слушать (папка данных могла смениться)
+    void unwatchProfiles();        // Windows: слушаемую папку нельзя удалить — отпустить перед удалением
+    void profilesChangedOnDisk(bool byButton);
+    // settings.ini поправили снаружи — перечитать и применить сразу, без перезапуска
+    void configChangedOnDisk();
     GameState standardState() const;
     GameMode standardMode() const;
 
@@ -280,7 +289,6 @@ private:
     QLabel* headerIcon_;
     ElideLabel* nameLabel_;
     QToolButton* editGameBtn_;
-    QToolButton* delGameBtn_;
     QToolButton* switchGameBtn_;      // панель скрыта — список игр из шапки
     QToolButton* layoutBtn_;          // редактор интерфейса
     QToolButton* miniBtn_;
@@ -320,6 +328,7 @@ private:
     ToggleSwitch* frameSyncSwitch_;
     QComboBox* hzBox_;
     QLabel* hzCaption_;
+    QWidget* hzRow_;            // «Частота кадров» — только при «В такт с монитором»
     QLabel* perMinuteLabel_;
 
     // --- 03 окно игры ---
@@ -334,17 +343,22 @@ private:
     // --- 04 профиль и запуск ---
     Board* board_;
     QComboBox* profileBox_;
-    QToolButton* renameProfileBtn_;
-    QToolButton* profileOverlayBtn_;   // «показывать в оверлее КПС» у профиля
-    QToolButton* profileMoreBtn_;      // ⋯ — экспорт, импорт, папка профилей
+    QToolButton* profileMoreBtn_;      // ⋯ — переименовать, клавиша, оверлей, сбросить, удалить, файл, папка
+    QAction* renameProfileAct_;
+    QAction* profileKeyAct_;
+    QAction* profileOverlayAct_;       // «показывать в оверлее КПС» у профиля
+    QAction* delProfileAct_;
     QAction* exportProfileAction_ = nullptr;
-    QList<QAction*> profileMenuActs_;   // «Новый / Сохранить / Сбросить / Удалить» в ⋯ — когда кнопки спрятаны
-    QToolButton* profileKeyBtn_;
+    QList<QAction*> profileMenuActs_;   // «Новый / Сохранить» в ⋯ — когда кнопки спрятаны
+    class QFileSystemWatcher* profileWatch_ = nullptr;
+    QTimer* profileWatchTimer_ = nullptr;   // события идут пачкой — разбираем один раз, когда стихнут
+    class QFileSystemWatcher* configWatch_ = nullptr;   // settings.ini и папка данных (файл пишется заменой)
+    QTimer* configWatchTimer_ = nullptr;
+    QString cleanProfile_;                  // «игра/профиль» без несохранённых правок…
+    GameState cleanState_;                  // …и настройки тогда: файл поменяли снаружи — подхватить
     QLabel* profileState_;
     QPushButton* newProfileBtn_;
     QPushButton* saveProfileBtn_;
-    QPushButton* resetProfileBtn_;
-    QPushButton* delProfileBtn_;
     KeyPicker* hotkeyPick_;
     KeyCaptureButton* captureBtn_;
     Segmented* keyModeSeg_;
@@ -353,10 +367,7 @@ private:
     QLabel* hotkeyInfo_;
     QWidget* blockRow_;                // «Не пропускать нажатие в игру» (Mouse 4, буква…)
     ToggleSwitch* blockSwitch_;
-    class SoundBox* soundOnBox_;     // свой звук вкл/выкл игры и профиля
-    class SoundBox* soundOffBox_;
-    QLabel* soundsOffHint_;
-    QList<QToolButton*> soundPlayBtns_;
+    QToolButton* soundBtn_;          // звук старт/стоп у игры и профиля: со звуком / без звука вкл, выкл, совсем
 
     // --- строка состояния ---
     StatusDot* statusDot_;
