@@ -220,19 +220,17 @@ GameEditDialog::GameEditDialog(const GameDef& game, bool isNew, QWidget* parent)
     infoLabel_->setObjectName("muted");
     infoLabel_->setWordWrap(true);
     capLay->addWidget(infoLabel_);
-    auto* timeRow = new QHBoxLayout();
-    auto* timeLabel = new QLabel(T("Время на переключение"));
-    timeRow->addWidget(timeLabel, 1);
-    timeSeg_ = new TimeChoice();
-    timeRow->addWidget(timeSeg_);
-    capLay->addLayout(timeRow);
+    auto* capRow = new QHBoxLayout();
+    capRow->setSpacing(8);
     captureBtn_ = new QPushButton();
     captureBtn_->setObjectName("accent");
     captureBtn_->setMinimumHeight(40);
     countdown_ = new CaptureCountdown(captureBtn_, this);
-    auto idleText = []() { return T("Взять из окна игры (%1 сек)").arg(Prefs::captureSeconds()); };
-    countdown_->setIdleText(idleText());
-    capLay->addWidget(captureBtn_);
+    countdown_->setIdleText(T("Взять из окна игры"));
+    capRow->addWidget(captureBtn_, 1);
+    timeSeg_ = new TimeChoice();
+    capRow->addWidget(timeSeg_);
+    capLay->addLayout(capRow);
     lay->addWidget(cap);
 
     // --- кнопки ---
@@ -244,6 +242,17 @@ GameEditDialog::GameEditDialog(const GameDef& game, bool isNew, QWidget* parent)
         def->setToolTip(T("Вернуть встроенные правила окна, режим и значок"));
         connect(def, &QPushButton::clicked, this, &GameEditDialog::resetDefaults);
         foot->addWidget(def);
+    }
+    // убрать игру — здесь и по правому щелчку в списке (в шапке кнопки больше нет)
+    if (!isNew) {
+        auto* del = new QPushButton(T("Убрать игру…"));
+        del->setObjectName("ghost");
+        del->setToolTip(T("Убрать игру из списка вместе с её профилями (спросит ещё раз)"));
+        connect(del, &QPushButton::clicked, this, [this]() {
+            removeRequested_ = true;
+            reject();
+        });
+        foot->addWidget(del);
     }
     foot->addStretch(1);
     auto* cancel = new QPushButton(T("Отмена"));
@@ -278,10 +287,7 @@ GameEditDialog::GameEditDialog(const GameDef& game, bool isNew, QWidget* parent)
         updatePreview();
         syncPickers();
     });
-    connect(timeSeg_, &TimeChoice::changed, this, [this, idleText](int sec) {
-        Prefs::setCaptureSeconds(sec);
-        countdown_->setIdleText(idleText());
-    });
+    connect(timeSeg_, &TimeChoice::changed, this, [](int sec) { Prefs::setCaptureSeconds(sec); });
     connect(captureBtn_, &QPushButton::clicked, this, [this]() {
         countdown_->toggle(Prefs::captureSeconds());
     });

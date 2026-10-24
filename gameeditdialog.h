@@ -18,6 +18,7 @@ class GameEditDialog : public QDialog {
 public:
     GameEditDialog(const GameDef& game, bool isNew, QWidget* parent = nullptr);
     GameDef result() const { return game_; }
+    bool removeRequested() const { return removeRequested_; }   // нажали «Убрать игру…»
 
 private slots:
     void captureNow();
@@ -33,6 +34,7 @@ private:
     void chooseTemplate(const QString& id);   // "" — своя игра
     GameDef game_;
     bool isNew_;
+    bool removeRequested_ = false;
     QString customId_;                        // id своей игры, если шаблон не выбран
     QButtonGroup templateGroup_;
     QList<QToolButton*> templateButtons_;
