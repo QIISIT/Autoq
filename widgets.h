@@ -65,7 +65,6 @@ public:
 signals:
     void changed(int seconds);
 private:
-    Segmented* seg_;
     class QSpinBox* spin_;
 };
 

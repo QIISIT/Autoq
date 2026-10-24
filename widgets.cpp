@@ -110,38 +110,24 @@ void Segmented::setCurrent(int index) {
 TimeChoice::TimeChoice(QWidget* parent) : QWidget(parent) {
     auto* h = new QHBoxLayout(this);
     h->setContentsMargins(0, 0, 0, 0);
-    h->setSpacing(8);
-    QStringList labels;
-    for (int c : Prefs::captureChoices()) labels << QString::number(c);
-    seg_ = new Segmented(labels, true);
-    h->addWidget(seg_);
     spin_ = new QSpinBox();
     spin_->setObjectName("timeCustom");
     spin_->setRange(1, 120);
+    spin_->setPrefix(T("через "));
     spin_->setSuffix(T(" сек"));
     spin_->setAlignment(Qt::AlignCenter);
     spin_->setButtonSymbols(QAbstractSpinBox::NoButtons);
     spin_->setAccelerated(true);
-    spin_->setFixedWidth(74);
-    spin_->setToolTip(T("Своё время — любое от 1 до 120 секунд (колёсико мыши — быстро менять)"));
-    spin_->setAccessibleName(T("Своё время, секунд"));
+    spin_->setFixedWidth(108);
+    spin_->setToolTip(T("Сколько секунд дать себе, чтобы переключиться в игру: от 1 до 120 (колёсико мыши — быстро менять)"));
+    spin_->setAccessibleName(T("Время на переключение в игру, секунд"));
     h->addWidget(spin_);
-    h->addStretch(1);
     setSeconds(Prefs::captureSeconds());
-    connect(seg_, &Segmented::changed, this, [this](int i) {
-        const int v = Prefs::captureChoices().value(i, 3);
-        { QSignalBlocker b(spin_); spin_->setValue(v); }
-        emit changed(v);
-    });
-    connect(spin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
-        { QSignalBlocker b(seg_); seg_->setCurrent(Prefs::captureChoices().indexOf(v)); }
-        emit changed(v);
-    });
+    connect(spin_, QOverload<int>::of(&QSpinBox::valueChanged), this, &TimeChoice::changed);
 }
 
 void TimeChoice::setSeconds(int s) {
-    QSignalBlocker b1(seg_), b2(spin_);
-    seg_->setCurrent(Prefs::captureChoices().indexOf(s));
+    QSignalBlocker b(spin_);
     spin_->setValue(s);
 }
 int Segmented::current() const { return group_.checkedId(); }
@@ -168,6 +154,9 @@ QSize FlowLayout::minimumSize() const {
 int FlowLayout::doLayout(const QRect& r, bool testOnly) const {
     int x = r.x(), y = r.y(), lineH = 0;
     for (QLayoutItem* it : items_) {
+        // спрятанное нарочно (hide()) — места не занимает; ещё не показанное (Qt покажет
+        // его на следующем круге событий) — занимает
+        if (QWidget* w = it->widget(); w && w->isHidden() && w->testAttribute(Qt::WA_WState_ExplicitShowHide)) continue;
         const QSize sz = it->sizeHint();
         int nextX = x + sz.width() + h_;
         if (nextX - h_ > r.right() + 1 && lineH > 0) {
