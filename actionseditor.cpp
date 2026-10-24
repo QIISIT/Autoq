@@ -25,6 +25,8 @@
 #include <QGraphicsOpacityEffect>
 #include <QParallelAnimationGroup>
 #include "animations.h"
+#include "groupdialog.h"
+#include <QMessageBox>
 
 namespace {
 const char* kStepMime = "application/x-autoq-step";
@@ -113,7 +115,7 @@ void ActionsEditor::setState(const QList<ActionStep>& list, GameMode mode, int s
     startMs_ = qBound(0, startMs, kMaxStartDelayMs);
     minIntervalMs_ = qMax(1, minIntervalMs);
     intervalMs_ = qBound(repeatMin(), intervalMs, 60000);
-    if (builtCount_ != actions_.size() || builtMode_ != mode_) {
+    if (builtCount_ != actions_.size() || builtMode_ != mode_ || builtKey_ != buildKey()) {
         rebuild();
     } else {
         // ряд не пересобирается, а минимум интервала у другой игры (или после правки игры) другой
@@ -125,7 +127,20 @@ void ActionsEditor::setState(const QList<ActionStep>& list, GameMode mode, int s
     }
 }
 
-int ActionsEditor::repeatMin() const { return repeatMinMs(mode_, int(actions_.size()), minIntervalMs_); }
+int ActionsEditor::repeatMin() const { return repeatMinMs(mode_, int(run().size()), minIntervalMs_); }
+
+QList<ActionStep> ActionsEditor::run(QList<int>* owner) const {
+    return Groups::expand(actions_, groups_, steps(), mode_ == GameMode::Combo || mode_ == GameMode::Hold, owner);
+}
+
+QString ActionsEditor::buildKey() const {
+    QString k;
+    for (const ActionStep& a : actions_) k += a.isGroup() ? 'g' : 'a';
+    return k + (groups_.isEmpty() ? "/0" : "/1");
+}
+
+// группы — в рядах «По очереди» и «По шагам» (в «Вместе» и «Зажать» порядка нет)
+bool ActionsEditor::canGroup() const { return !groupMode_ && (mode_ == GameMode::Sequence || steps()); }
 
 void ActionsEditor::setTimes(int startMs, int intervalMs) {
     startMs_ = qBound(0, startMs, kMaxStartDelayMs);
@@ -157,33 +172,43 @@ void ActionsEditor::rebuild() {
     flow_->clear();
     slots_.clear();
     units_.clear();
-    add_ = nullptr;
+    add_ = groupAdd_ = selMake_ = nullptr;
+    selTile_ = nullptr;
+    sel_.clear();
+    selAnchor_ = -1;
     startUnit_ = nullptr;
     startSpin_ = repeatSpin_ = nullptr;
     dropMark_->hide();
     ++buildGen_;
     builtCount_ = actions_.size();
     builtMode_ = mode_;
+    builtKey_ = buildKey();
     active_ = -1;
     const int n = actions_.size();
     const bool hold = mode_ == GameMode::Hold;
     const bool paused = mode_ == GameMode::Sequence || steps();     // между карточками — пауза
+    const bool repeats = mode_ == GameMode::Sequence || steps();    // вызов группы — «×N»
     // у действия рядом с клавишей — «держать»; «Уже» / «Шире» — вид шагов в редакторе
     const int slotSize = Theme::element("slot").size;
     const int slotW = (steps() || hold ? 176 : 206) + (slotSize == 0 ? -20 : slotSize == 2 ? 36 : 0);
+    // вызов группы — не уже карточки действия: имени и «×N» нужно место и в ряду шагов
+    const int callW = qMax(slotW, 206 + (slotSize == 0 ? -20 : slotSize == 2 ? 36 : 0));
     builtLook_ = lookKey();
 
-    // старт через N мс
-    startSpin_ = smallSpin(0, kMaxStartDelayMs, T("Старт через столько мс после нажатия «Старт» или клавиши (0 — сразу)"));
-    startUnit_ = chip(T("старт через"), startSpin_, new ArrowLine());
-    flow_->addWidget(startUnit_);
-    connect(startSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
-        if (loading_) return;
-        startMs_ = v;
-        edited();
-    });
+    // старт через N мс (у группы — нет: она начинается там, где стоит в ряду)
+    if (!groupMode_) {
+        startSpin_ = smallSpin(0, kMaxStartDelayMs, T("Старт через столько мс после нажатия «Старт» или клавиши (0 — сразу)"));
+        startUnit_ = chip(T("старт через"), startSpin_, new ArrowLine());
+        flow_->addWidget(startUnit_);
+        connect(startSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+            if (loading_) return;
+            startMs_ = v;
+            edited();
+        });
+    }
 
     for (int i = 0; i < n; ++i) {
+        const bool call = actions_[i].isGroup();
         auto* unit = new QWidget();
         auto* uh = new QHBoxLayout(unit);
         uh->setContentsMargins(0, 0, 0, 0);
@@ -195,7 +220,8 @@ void ActionsEditor::rebuild() {
         f->setObjectName("slot");
         f->setProperty("aqEl", "slot");
         f->setProperty("slotIndex", i);
-        f->setFixedSize(slotW, slotH_);
+        f->setProperty("group", call);
+        f->setFixedSize(call ? callW : slotW, slotH_);
         f->setContextMenuPolicy(Qt::CustomContextMenu);
         f->installEventFilter(this);
         auto* g = new QGridLayout(f);
@@ -206,11 +232,18 @@ void ActionsEditor::rebuild() {
         ui.grip->setObjectName("slotGrip");
         ui.grip->setFixedSize(14, 20);
         ui.grip->setCursor(Qt::OpenHandCursor);
-        ui.grip->setToolTip(steps() ? T("Перетащи шаг на другое место") : T("Перетащи действие на другое место"));
+        ui.grip->setToolTip(call ? T("Перетащи группу на другое место")
+                                 : steps() ? T("Перетащи шаг на другое место") : T("Перетащи действие на другое место"));
         ui.grip->setProperty("slotIndex", i);
         ui.grip->installEventFilter(this);
         g->addWidget(ui.grip, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
-        if (hold) {
+        if (call) {
+            // состав группы — мелко над именем (полностью — в подсказке)
+            ui.caption = new QLabel();
+            ui.caption->setObjectName("small");
+            ui.caption->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+            g->addWidget(ui.caption, 0, 1, Qt::AlignVCenter);
+        } else if (hold) {
             ui.caption = new QLabel(T("зажать"));
             ui.caption->setObjectName("small");
             ui.caption->setToolTip(T("Пока кликер включён — зажата"));
@@ -224,7 +257,7 @@ void ActionsEditor::rebuild() {
                                         : T("Действие %1: клик или держать нажатым — щёлкни, чтобы выбрать").arg(i + 1));
             g->addWidget(ui.mode, 0, 1, Qt::AlignLeft | Qt::AlignVCenter);
         }
-        if (!hold && !steps()) {
+        if (!hold && !steps() && !call) {
             // подпись над полем «держать» — чтобы не спутать с паузой
             auto* hc = new QLabel(T("держать"));
             hc->setObjectName("small");
@@ -235,7 +268,8 @@ void ActionsEditor::rebuild() {
             ui.remove = new QToolButton();
             ui.remove->setObjectName("icon");
             ui.remove->setFixedSize(22, 22);
-            ui.remove->setToolTip(steps() ? T("Убрать шаг %1").arg(i + 1) : T("Убрать действие %1").arg(i + 1));
+            ui.remove->setToolTip(call ? T("Убрать группу из ряда (сама группа останется)")
+                                       : steps() ? T("Убрать шаг %1").arg(i + 1) : T("Убрать действие %1").arg(i + 1));
             ui.remove->setAccessibleName(ui.remove->toolTip());
             ui.remove->setCursor(Qt::PointingHandCursor);
             g->addWidget(ui.remove, 0, 3, Qt::AlignRight | Qt::AlignTop);
@@ -243,25 +277,44 @@ void ActionsEditor::rebuild() {
         g->setColumnStretch(1, 1);
         auto* vr = new QHBoxLayout();
         vr->setSpacing(6);
-        ui.value = new KeyPicker();
-        ui.value->setObjectName("keyPickBig");
-        ui.value->setProperty("aqEl", "key");
-        ui.value->setKeys(KeyPicker::actionItems(false), KeyPicker::actionCommon());
-        ui.value->setToolTip(T("Кнопка мыши или клавиша — список с поиском"));
-        ui.value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        vr->addWidget(ui.value, 1);
-        if (steps()) {
-            ui.dir = new QToolButton();
-            ui.dir->setObjectName("stepDir");
-            ui.dir->setProperty("aqEl", "key");
-            ui.dir->setFixedSize(36, 36);
-            ui.dir->setCursor(Qt::PointingHandCursor);
-            vr->addWidget(ui.dir);
-        } else if (!hold) {
-            // «держать N мс» — всегда рядом с клавишей: 0 — клик, больше — «держать»
-            ui.hold = smallSpin(0, 10000, T("Сколько держать нажатым (0 — клик: нажать и сразу отпустить)"));
-            ui.hold->setFixedWidth(64);
-            vr->addWidget(ui.hold);
+        if (call) {
+            ui.groupName = new QPushButton();
+            ui.groupName->setObjectName("groupName");
+            ui.groupName->setProperty("aqEl", "key");
+            ui.groupName->setCursor(Qt::PointingHandCursor);
+            ui.groupName->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+            ui.groupName->setToolTip(T("Изменить группу: имя и что в ней"));
+            vr->addWidget(ui.groupName, 1);
+            if (repeats) {
+                ui.repeat = new QSpinBox();
+                ui.repeat->setRange(1, kMaxRepeat);
+                ui.repeat->setPrefix(QStringLiteral("×"));
+                ui.repeat->setFixedWidth(64);
+                ui.repeat->setToolTip(T("Сколько раз подряд выполнить группу"));
+                ui.repeat->setAccessibleName(ui.repeat->toolTip());
+                vr->addWidget(ui.repeat);
+            }
+        } else {
+            ui.value = new KeyPicker();
+            ui.value->setObjectName("keyPickBig");
+            ui.value->setProperty("aqEl", "key");
+            ui.value->setKeys(KeyPicker::actionItems(false), KeyPicker::actionCommon());
+            ui.value->setToolTip(T("Кнопка мыши или клавиша — список с поиском"));
+            ui.value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            vr->addWidget(ui.value, 1);
+            if (steps()) {
+                ui.dir = new QToolButton();
+                ui.dir->setObjectName("stepDir");
+                ui.dir->setProperty("aqEl", "key");
+                ui.dir->setFixedSize(36, 36);
+                ui.dir->setCursor(Qt::PointingHandCursor);
+                vr->addWidget(ui.dir);
+            } else if (!hold) {
+                // «держать N мс» — всегда рядом с клавишей: 0 — клик, больше — «держать»
+                ui.hold = smallSpin(0, 10000, T("Сколько держать нажатым (0 — клик: нажать и сразу отпустить)"));
+                ui.hold->setFixedWidth(64);
+                vr->addWidget(ui.hold);
+            }
         }
         g->addLayout(vr, 1, 0, 1, 4);
         g->setRowStretch(2, 1);
@@ -286,7 +339,7 @@ void ActionsEditor::rebuild() {
                 conn->setFixedWidth(92);
             }
             uh->addWidget(conn, 0, Qt::AlignVCenter);
-        } else if (!hold) {
+        } else if (!hold && !groupMode_) {
             // после последнего — «повтор через»: тот же интервал, что в «Скорости»; между
             // клавишами («По шагам», несколько действий по очереди) — от 0
             intervalMs_ = qMax(intervalMs_, repeatMin());
@@ -310,15 +363,16 @@ void ActionsEditor::rebuild() {
         });
         if (ui.mode)
             connect(ui.mode, &QAbstractButton::clicked, this, [this, i]() { openModePlate(i); });
-        connect(ui.value, &KeyPicker::picked, this, [this, i](const QString& name) {
-            if (i >= actions_.size()) return;
-            ActionStep& a = actions_[i];
-            const ActionStep p = ActionStep::fromItem(name);
-            a.mouse = p.mouse;
-            if (p.mouse) a.button = p.button; else a.key = p.key;
-            updateValues();
-            edited();
-        });
+        if (ui.value)
+            connect(ui.value, &KeyPicker::picked, this, [this, i](const QString& name) {
+                if (i >= actions_.size()) return;
+                ActionStep& a = actions_[i];
+                const ActionStep p = ActionStep::fromItem(name);
+                a.mouse = p.mouse;
+                if (p.mouse) a.button = p.button; else a.key = p.key;
+                updateValues();
+                edited();
+            });
         if (ui.dir)
             connect(ui.dir, &QToolButton::clicked, this, [this, i]() {
                 if (loading_ || i >= actions_.size()) return;
@@ -341,6 +395,18 @@ void ActionsEditor::rebuild() {
                 actions_[i].afterMs = v;
                 edited();
             });
+        if (ui.groupName)
+            connect(ui.groupName, &QPushButton::clicked, this, [this, i]() { later([this, i]() { editGroup(i); }); });
+        if (ui.repeat)
+            connect(ui.repeat, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, i](int v) {
+                if (loading_ || i >= actions_.size()) return;
+                actions_[i].repeat = v;
+                if (repeatSpin_ && repeatSpin_->minimum() != repeatMin()) {
+                    QSignalBlocker b(repeatSpin_);
+                    repeatSpin_->setMinimum(repeatMin());
+                }
+                edited();
+            });
         if (ui.remove)
             connect(ui.remove, &QToolButton::clicked, this, [this, i]() { later([this, i]() { removeAt(i); }); });
     }
@@ -358,11 +424,50 @@ void ActionsEditor::rebuild() {
             later([this]() { insertAt(actions_.size(), newItem()); });
         });
         flow_->addWidget(add_);
+        // группы игры — рядом с «добавить», только когда они есть
+        if (canGroup() && !groups_.isEmpty()) {
+            groupAdd_ = new SizedButton(QSize(96, slotH_));
+            groupAdd_->setObjectName("addSecond");
+            groupAdd_->setProperty("aqEl", "add");
+            groupAdd_->setCursor(Qt::PointingHandCursor);
+            groupAdd_->setText(T("Группа"));
+            groupAdd_->setToolTip(T("Поставить в конец ряда одну из групп этой игры"));
+            groupAdd_->setAccessibleName(T("Вставить группу"));
+            connect(groupAdd_, &QPushButton::clicked, this, [this]() {
+                QMenu m(this);
+                fillGroupMenu(&m, int(actions_.size()));
+                m.exec(groupAdd_->mapToGlobal(QPoint(0, groupAdd_->height())));
+            });
+            flow_->addWidget(groupAdd_);
+        }
+    }
+    if (canGroup()) {
+        // выделили карточки — вместо «добавить»: сделать из них группу
+        selTile_ = new QWidget();
+        selTile_->setFixedSize(96, slotH_);      // как «добавить»: ряд не переносится
+        auto* sv = new QVBoxLayout(selTile_);
+        sv->setContentsMargins(0, 0, 0, 0);
+        sv->setSpacing(4);
+        selMake_ = new QPushButton();
+        selMake_->setObjectName("accent");
+        selMake_->setCursor(Qt::PointingHandCursor);
+        auto* unsel = new QPushButton(T("Отмена"));
+        unsel->setToolTip(T("Снять выделение"));
+        unsel->setObjectName("ghost");
+        unsel->setCursor(Qt::PointingHandCursor);
+        sv->addStretch(1);
+        sv->addWidget(selMake_);
+        sv->addWidget(unsel);
+        sv->addStretch(1);
+        connect(selMake_, &QPushButton::clicked, this, [this]() { later([this]() { makeGroup(); }); });
+        connect(unsel, &QPushButton::clicked, this, [this]() { setSelection({}); });
+        flow_->addWidget(selTile_);
     }
     // сразу видны: addWidget показывает их только на следующем круге событий,
     // и переход при смене игры снял бы пустой ряд
     for (int i = 0; i < flow_->count(); ++i)
         if (QWidget* w = flow_->itemAt(i)->widget()) w->show();
+    if (selTile_) selTile_->hide();     // пока ничего не выделено
     refreshIcons();
     updateValues();
     // высота карточек — по содержимому (крупный шрифт или масштаб — ничего не наезжает),
@@ -376,6 +481,8 @@ void ActionsEditor::rebuild() {
         slotH_ = h;
         for (const SlotUi& ui : slots_) ui.frame->setFixedHeight(h);
         if (add_) static_cast<SizedButton*>(add_)->setSize(QSize(add_->width(), h));
+        if (groupAdd_) static_cast<SizedButton*>(groupAdd_)->setSize(QSize(groupAdd_->width(), h));
+        if (selTile_) selTile_->setFixedHeight(h);
     }
     updateGeometry();
 }
@@ -384,14 +491,14 @@ ActionStep ActionsEditor::newItem() const {
     ActionStep a;
     if (steps()) {
         // что-то осталось нажатым — следующий шаг его отпускает
-        const QList<ActionStep> left = Steps::leftDown(actions_);
+        const QList<ActionStep> left = Steps::leftDown(run());
         if (!left.isEmpty()) {
             a = left.last();
             a.press = ActionStep::Up;
             a.holdMs = a.afterMs = 0;
             return a;
         }
-        const QList<ActionStep> used = Steps::pressedInputs(actions_);
+        const QList<ActionStep> used = Steps::pressedInputs(run());
         const QStringList pool = {"mouse:1", "mouse:3", "f", "e", "space", "q", "r"};
         a = ActionStep::fromItem(pool.first());
         for (const QString& k : pool) {
@@ -408,7 +515,7 @@ ActionStep ActionsEditor::newItem() const {
     const QStringList pool = {"f", "e", "space", "q", "r", "1", "2", "3"};
     for (const QString& k : pool) {
         bool used = false;
-        for (const ActionStep& x : actions_) used = used || (!x.mouse && x.key == k);
+        for (const ActionStep& x : run()) used = used || (!x.mouse && x.key == k);
         if (!used) { a.key = k; break; }
     }
     return a;
@@ -463,21 +570,50 @@ void ActionsEditor::showMenu(int i, const QPoint& global) {
     if (i < 0 || i >= actions_.size()) return;
     const int n = actions_.size();
     const bool canAdd = n < maxItems();
+    const bool call = actions_[i].isGroup();
     QMenu m(this);
+    QAction* edit = nullptr;
+    QAction* split = nullptr;
+    if (call) {
+        const ActionGroup* g = Groups::find(groups_, actions_[i].group);
+        edit = m.addAction(T("Изменить группу…"));
+        split = m.addAction(T("Разгруппировать"));
+        split->setToolTip(T("Вместо группы — её действия, здесь же"));
+        edit->setEnabled(g);
+        split->setEnabled(g);
+        m.addSeparator();
+    }
     QAction* before = m.addAction(steps() ? T("Добавить шаг перед") : T("Добавить действие перед"));
     QAction* after = m.addAction(steps() ? T("Добавить шаг после") : T("Добавить действие после"));
     QAction* dup = m.addAction(T("Дублировать"));
     for (QAction* a : {before, after, dup}) a->setEnabled(canAdd);
+    if (canGroup() && !groups_.isEmpty()) {
+        QMenu* sub = m.addMenu(T("Вставить группу после"));
+        fillGroupMenu(sub, i + 1);
+        sub->setEnabled(canAdd);
+    }
     QAction* flip = nullptr;
-    if (steps())
+    if (steps() && !call)
         flip = m.addAction(actions_[i].press == ActionStep::Down ? T("Сделать «отпустить» ↑") : T("Сделать «нажать» ↓"));
+    QAction* select = nullptr;
+    QAction* group = nullptr;
+    if (canGroup() && !call) {
+        m.addSeparator();
+        select = m.addAction(sel_.contains(i) ? T("Снять выделение") : T("Выделить (Ctrl + щелчок)"));
+        const bool inSel = sel_.contains(i) && sel_.size() > 1;
+        group = m.addAction(inSel ? T("Сделать группой (%1)").arg(sel_.size()) : T("Сделать группой"));
+        if (inSel && !selectionSolid()) {
+            group->setEnabled(false);
+            group->setText(T("Сделать группой — выдели карточки подряд"));
+        }
+    }
     m.addSeparator();
     QAction* left = m.addAction(T("Переместить влево"));
     QAction* right = m.addAction(T("Переместить вправо"));
     left->setEnabled(i > 0);
     right->setEnabled(i + 1 < n);
     m.addSeparator();
-    QAction* del = m.addAction(steps() ? T("Убрать шаг") : T("Убрать действие"));
+    QAction* del = m.addAction(call ? T("Убрать из ряда") : steps() ? T("Убрать шаг") : T("Убрать действие"));
     del->setEnabled(n > 1);
     QAction* got = m.exec(global);
     if (!got) return;
@@ -488,8 +624,12 @@ void ActionsEditor::showMenu(int i, const QPoint& global) {
         edited();
         return;
     }
+    if (got == select) { toggleSelect(i, false); return; }
     // меню удалится вместе с пунктами — запоминаем, что выбрали, числом
-    const int what = got == before ? 1 : got == after ? 2 : got == dup ? 3 : got == left ? 4 : got == right ? 5 : got == del ? 6 : 0;
+    // (вставка группы из подменю — уже сделана: её пункты сами вызывают insertGroup)
+    const int what = got == before ? 1 : got == after ? 2 : got == dup ? 3 : got == left ? 4 : got == right ? 5
+                   : got == del ? 6 : got == edit ? 7 : got == split ? 8 : got == group ? 9 : 0;
+    if (!what) return;
     later([this, i, what]() {
         if (i >= actions_.size()) return;
         switch (what) {
@@ -499,9 +639,162 @@ void ActionsEditor::showMenu(int i, const QPoint& global) {
             case 4: moveTo(i, i - 1); break;
             case 5: moveTo(i, i + 2); break;
             case 6: removeAt(i); break;
+            case 7: editGroup(i); break;
+            case 8: ungroup(i); break;
+            case 9:
+                if (!sel_.contains(i)) setSelection({i});
+                makeGroup();
+                break;
             default: break;
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Группы
+// ---------------------------------------------------------------------------
+void ActionsEditor::fillGroupMenu(QMenu* m, int at) {
+    for (const ActionGroup& g : groups_) {
+        const QString pv = Groups::preview(g, 3);
+        QAction* a = m->addAction(AqIcons::ui("layers", Theme::t().muted, 14),
+                                  pv.isEmpty() ? g.name : QStringLiteral("%1   %2").arg(g.name, pv));
+        const QString id = g.id;
+        connect(a, &QAction::triggered, this, [this, at, id]() { later([this, at, id]() { insertGroup(at, id); }); });
+    }
+}
+
+void ActionsEditor::insertGroup(int at, const QString& id) {
+    if (!Groups::find(groups_, id)) return;
+    ActionStep c;
+    c.group = id;
+    c.mouse = false;
+    c.key.clear();
+    c.press = ActionStep::Click;
+    insertAt(at, c);
+}
+
+void ActionsEditor::toggleSelect(int i, bool range) {
+    if (!canGroup() || i < 0 || i >= actions_.size() || actions_[i].isGroup()) return;
+    QList<int> next = sel_;
+    if (range && selAnchor_ >= 0 && selAnchor_ < actions_.size()) {
+        next.clear();
+        for (int k = qMin(selAnchor_, i); k <= qMax(selAnchor_, i); ++k)
+            if (!actions_[k].isGroup()) next << k;
+    } else {
+        if (next.contains(i)) next.removeAll(i); else next << i;
+        selAnchor_ = i;
+    }
+    setSelection(next);
+}
+
+void ActionsEditor::setSelection(const QList<int>& sel) {
+    sel_ = sel;
+    std::sort(sel_.begin(), sel_.end());
+    if (sel_.isEmpty()) selAnchor_ = -1;
+    updateSelection();
+}
+
+bool ActionsEditor::selectionSolid() const {
+    return !sel_.isEmpty() && sel_.last() - sel_.first() + 1 == sel_.size();
+}
+
+void ActionsEditor::updateSelection() {
+    for (int k = 0; k < slots_.size(); ++k) {
+        const bool on = sel_.contains(k);
+        if (slots_[k].frame->property("selected").toBool() == on) continue;
+        slots_[k].frame->setProperty("selected", on);
+        Theme::repolish(slots_[k].frame);
+    }
+    const bool any = !sel_.isEmpty();
+    if (selTile_) selTile_->setVisible(any);
+    if (add_) add_->setVisible(!any);
+    if (groupAdd_) groupAdd_->setVisible(!any);
+    if (selMake_) {
+        selMake_->setText(T("Сделать\nгруппой"));
+        selMake_->setEnabled(selectionSolid());
+        selMake_->setToolTip(selectionSolid() ? T("Выделено: %1. Станет одной карточкой-группой — её можно поставить ещё раз и повторить ×N").arg(sel_.size())
+                                              : T("Группа — из карточек подряд: выдели их Shift + щелчком"));
+    }
+    flow_->invalidate();
+    updateGeometry();
+}
+
+void ActionsEditor::makeGroup() {
+    if (!canGroup() || !selectionSolid() || sel_.last() >= actions_.size()) return;
+    if (groups_.size() >= kMaxGroups) {
+        QMessageBox::information(this, T("Группы"), T("У игры уже %1 групп — больше нельзя. Удалить лишнюю можно в окне группы.").arg(kMaxGroups));
+        return;
+    }
+    const int first = sel_.first(), count = int(sel_.size()), last = sel_.last();
+    ActionGroup g;
+    g.id = Groups::newId(groups_);
+    g.name = Groups::freeName(groups_);
+    g.steps = steps();
+    g.items = actions_.mid(first, count);
+    g.items.last().afterMs = 0;             // пауза после группы — у вызова
+    ActionStep c;
+    c.group = g.id;
+    c.mouse = false;
+    c.key.clear();
+    c.press = ActionStep::Click;
+    c.afterMs = actions_[last].afterMs;
+    groups_ << g;
+    QList<ActionStep> next = actions_;
+    next.erase(next.begin() + first, next.begin() + first + count);
+    next.insert(first, c);
+    QList<int> oldOf;
+    for (int j = 0; j < next.size(); ++j) oldOf << (j < first ? j : j == first ? -1 : j + count - 1);
+    applyEdit(next, oldOf, -1);
+}
+
+void ActionsEditor::ungroup(int i) {
+    if (i < 0 || i >= actions_.size() || !actions_[i].isGroup()) return;
+    const ActionGroup* g = Groups::find(groups_, actions_[i].group);
+    if (!g) return;
+    QList<ActionStep> part = Groups::inlineCall(actions_[i], *g, steps());
+    if (actions_.size() - 1 + part.size() > maxItems()) {
+        QMessageBox::information(this, T("Группа"),
+            T("Не поместится: в ряду можно до %1, а у группы с повтором — %2.").arg(maxItems()).arg(part.size()));
+        return;
+    }
+    if (part.isEmpty() && actions_.size() == 1) part << newItem();
+    QList<ActionStep> next = actions_;
+    next.removeAt(i);
+    for (int k = 0; k < part.size(); ++k) next.insert(i + k, part[k]);
+    QList<int> oldOf;
+    for (int j = 0; j < next.size(); ++j)
+        oldOf << (j < i ? j : j < i + part.size() ? -1 : j - int(part.size()) + 1);
+    applyEdit(next, oldOf, i);
+}
+
+void ActionsEditor::editGroup(int i) {
+    if (i < 0 || i >= actions_.size() || !actions_[i].isGroup()) return;
+    const QString id = actions_[i].group;
+    const ActionGroup* found = Groups::find(groups_, id);
+    if (!found) return;
+    ActionGroup g = *found;
+    const auto res = GroupDialog::edit(this, g, Groups::uses(actions_, id));
+    if (res == GroupDialog::Cancelled) return;
+    for (int k = 0; k < groups_.size(); ++k) {
+        if (groups_[k].id != id) continue;
+        if (res == GroupDialog::Deleted) groups_.removeAt(k); else groups_[k] = g;
+        break;
+    }
+    if (res == GroupDialog::Deleted) {
+        // её вызовы в ряду — обычными карточками, на тех же местах
+        actions_ = Groups::inlineAll(actions_, g, steps(), maxItems());
+        if (actions_.isEmpty()) actions_ << newItem();
+        setUpdatesEnabled(false);
+        rebuild();
+        setUpdatesEnabled(true);
+    } else {
+        if (repeatSpin_ && repeatSpin_->minimum() != repeatMin()) {
+            QSignalBlocker b(repeatSpin_);
+            repeatSpin_->setMinimum(repeatMin());
+        }
+        if (builtKey_ != buildKey()) rebuild(); else updateValues();
+    }
+    edited();
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +806,12 @@ bool ActionsEditor::eventFilter(QObject* o, QEvent* e) {
     if (e->type() == QEvent::MouseButtonPress) {
         auto* me = static_cast<QMouseEvent*>(e);
         if (me->button() != Qt::LeftButton) return QWidget::eventFilter(o, e);
+        // Ctrl / Shift + щелчок — выделить для группы (не перетаскивание)
+        if (canGroup() && (me->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
+            pressSlot_ = -1;
+            toggleSelect(w->property("slotIndex").toInt(), me->modifiers() & Qt::ShiftModifier);
+            return true;
+        }
         pressSlot_ = w->property("slotIndex").toInt();
         pressPos_ = me->globalPosition().toPoint();
         if (w->objectName() == "slotGrip") w->setCursor(Qt::ClosedHandCursor);
@@ -550,6 +849,8 @@ bool ActionsEditor::eventFilter(QObject* o, QEvent* e) {
         return true;
     }
     if (e->type() == QEvent::MouseButtonRelease) {
+        // простой щелчок по карточке (не перетащили) — выделение снимается
+        if (pressSlot_ >= 0 && !sel_.isEmpty()) setSelection({});
         pressSlot_ = -1;
         if (w->objectName() == "slotGrip") w->setCursor(Qt::OpenHandCursor);
     }
@@ -611,7 +912,8 @@ void ActionsEditor::dropEvent(QDropEvent* e) {
 ActionsEditor::Snapshot ActionsEditor::snapshot() const {
     Snapshot sn;
     for (QWidget* u : units_) sn.units << u->geometry();
-    if (add_) sn.add = add_->geometry();
+    if (add_ && add_->isVisible()) sn.add = add_->geometry();
+    if (groupAdd_ && groupAdd_->isVisible()) sn.groupAdd = groupAdd_->geometry();
     sn.height = height();
     return sn;
 }
@@ -635,6 +937,7 @@ void ActionsEditor::animateFrom(const Snapshot& before, const QList<int>& oldOf,
     // раскладка их учла (кадр «в куче» не виден: обновление окна выключено)
     for (QWidget* u : units_) if (u->isHidden()) u->show();
     if (add_ && add_->isHidden()) add_->show();
+    if (groupAdd_ && groupAdd_->isHidden()) groupAdd_->show();
     if (startUnit_ && startUnit_->isHidden()) startUnit_->show();
     // новые места считаем сразу, не дожидаясь раскладки
     const int newH = heightForWidth(width());
@@ -674,6 +977,7 @@ void ActionsEditor::animateFrom(const Snapshot& before, const QList<int>& oldOf,
         if (old < before.units.size()) move(u, before.units[old].topLeft());
     }
     if (add_ && before.add.isValid()) move(add_, before.add.topLeft());
+    if (groupAdd_ && before.groupAdd.isValid()) move(groupAdd_, before.groupAdd.topLeft());
     // убранное тает на своём месте
     if (removedOld >= 0 && removedOld < before.units.size() && !removedPm.isNull()) {
         auto* ghost = new QLabel(this);
@@ -786,10 +1090,39 @@ void ActionsEditor::openModePlate(int i) {
 
 void ActionsEditor::updateValues() {
     loading_ = true;
-    const QList<int> stray = steps() ? Steps::strayUps(actions_) : QList<int>{};
+    // «отпустить» без «нажать» — по тому, что жмёт кликер (внутри групп тоже), на карточке-хозяине
+    QList<int> stray;
+    if (steps()) {
+        QList<int> owner;
+        const QList<ActionStep> r = run(&owner);
+        for (int k : Steps::strayUps(r))
+            if (!stray.contains(owner.value(k, -1))) stray << owner.value(k, -1);
+    }
     for (int i = 0; i < slots_.size() && i < actions_.size(); ++i) {
         const ActionStep& a = actions_[i];
         SlotUi& ui = slots_[i];
+        if (ui.groupName) {
+            const ActionGroup* g = Groups::find(groups_, a.group);
+            const QString name = g ? g->name : T("Группы нет");
+            const QString pv = g ? Groups::preview(*g, 6) : QString();
+            // кнопка и подпись сами не сокращают текст — по ширине карточки
+            const int cardW = ui.frame->width();
+            const int nameW = cardW - 16 - (ui.repeat ? 70 : 0) - 40;
+            ui.groupName->setText(ui.groupName->fontMetrics().elidedText(name, Qt::ElideRight, qMax(30, nameW)));
+            ui.caption->setText(ui.caption->fontMetrics().elidedText(pv.isEmpty() ? T("пусто") : pv, Qt::ElideRight,
+                                                                     qMax(30, cardW - 16 - 14 - 22 - 12)));
+            if (ui.repeat && ui.repeat->value() != a.repeat) { QSignalBlocker b(ui.repeat); ui.repeat->setValue(a.repeat); }
+            if (ui.after && ui.after->value() != a.afterMs) { QSignalBlocker b(ui.after); ui.after->setValue(a.afterMs); }
+            const bool warn = stray.contains(i);
+            if (ui.frame->property("warn").toBool() != warn) {
+                ui.frame->setProperty("warn", warn);
+                Theme::repolish(ui.frame);
+            }
+            ui.frame->setToolTip(!g ? T("Этой группы у игры нет — карточка ничего не жмёт, её можно убрать из ряда.")
+                                 : T("Группа «%1»: %2").arg(name.toHtmlEscaped(), Groups::preview(*g, 16).toHtmlEscaped())
+                                   + (warn ? "<br>" + T("Внутри — «отпустить» без «нажать» раньше: этот шаг пропускается") : QString()));
+            continue;
+        }
         QString item = a.itemName();
         // клавиша не из списка действий (F13–F24 из старых настроек или профиля) — показываем
         // как есть: кликер жмёт именно её, и подпись не должна врать
@@ -839,7 +1172,12 @@ void ActionsEditor::refreshIcons() {
         if (ui.mode) ui.mode->update();
     }
     if (add_) add_->setIcon(AqIcons::ui("plus", t.muted, 18));
+    if (groupAdd_) groupAdd_->setIcon(AqIcons::ui("layers", t.muted, 18));
     for (int i = 0; i < slots_.size() && i < actions_.size(); ++i) {
+        if (slots_[i].groupName) {
+            slots_[i].groupName->setIcon(AqIcons::ui("layers", t.redHi, 18));
+            continue;
+        }
         slots_[i].value->setCurrent(slots_[i].value->currentKey(), slots_[i].value->text());
         updateDir(slots_[i], actions_[i]);
     }
