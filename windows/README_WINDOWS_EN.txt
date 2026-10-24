@@ -1,5 +1,5 @@
 ﻿================================================================
-  AUTOQ 1.16.2 beta for Windows 10/11 (64-bit) — guide
+  AUTOQ 1.17.0 beta for Windows 10/11 (64-bit) — guide
   created by Qisit
 ================================================================
 
@@ -57,9 +57,14 @@ HOW TO USE
    still no faster than the game's minimum. The mouse wheel changes
    a number, list or slider only after you click it — otherwise it
    scrolls the page.
+   Groups: Ctrl + click action cards to select them (Shift selects a
+   run), then "Make group": they become one group card with its own
+   name and "×N" repeats. Click the name to edit the group,
+   right-click to ungroup or insert the group again.
 3. Press the game's start/stop key (F6 by default; each game has
-   its own, a mouse button works too; "On / off" or "While held")
-   right in the game: AutoQ picks that window and clicks only there.
+   its own, a mouse button works too; "On / off" or "While held" —
+   all on the Launch card right under Start) right in the game:
+   AutoQ picks that window and clicks only there.
    A letter or mouse button also reaches the game, unless you turn
    on "Don't pass the press to the game" under the key.
    The circle next to a game: filled — the game is in use, its key
@@ -71,10 +76,14 @@ HOW TO USE
 4. CPS overlay: the gauge button → Off / Only while running /
    Always. Several running games share one panel, a row per game.
    Its look is in Settings → CPS overlay.
-5. Profiles keep sets of settings per game: New / Save / Reset;
-   a profile key switches to it right in the game. ⋯ → Export /
-   Import a profile file. Start/stop sounds can differ per game and
-   profile; "Add your sound…" takes any WAV ("My sounds").
+5. Profiles keep sets of settings per game: New / Save; the ⋯ menu
+   has rename, a profile key (switches to it right in the game),
+   overlay, Reset, delete, Export / Import a profile file.
+   The sound button on the Launch card: with sound, on start only,
+   on stop only or no sound (per game and profile). The sounds
+   themselves, incl. your own WAVs, are in Settings → General.
+   Process and window title rules are in "Edit game" (the pencil),
+   where you can also remove the game.
 6. Cards: the arrow at the top right collapses a card into a small
    tile. Edit mode (right-click a card → "Arrange cards…", or
    Settings → Appearance → Cards): drag cards by the title, blocks
@@ -96,6 +105,8 @@ Settings, games, profiles and styles are plain files in %APPDATA%\AutoQ
 (portable: AutoQ-data next to the exe) — change the folder in
 Settings → General → Data; copy it to move AutoQ to another PC.
 Settings from older versions (registry) are moved over by itself.
+You can edit settings.ini while AutoQ is open: it rereads the file
+about half a second later (the language changes after a restart).
 
 Autostart is the "AutoQ" entry in Task Manager → Startup apps (you
 can turn it off there too); a Task Scheduler task starts AutoQ with
