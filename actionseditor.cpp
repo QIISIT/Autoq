@@ -137,11 +137,16 @@ QList<ActionStep> ActionsEditor::run(QList<int>* owner) const {
 QString ActionsEditor::buildKey() const {
     QString k;
     for (const ActionStep& a : actions_) k += a.isGroup() ? 'g' : 'a';
-    return k + (groups_.isEmpty() ? "/0" : "/1");
+    return k;
 }
 
-// группы — в рядах «По очереди» и «По шагам» (в «Вместе» и «Зажать» порядка нет)
-bool ActionsEditor::canGroup() const { return !groupMode_ && (mode_ == GameMode::Sequence || steps()); }
+// группы — в рядах «По очереди» и «По шагам» (в «Вместе» и «Зажать» порядка нет). Одно
+// действие в «Вместе» — это «Повторять»: группа и там, а ряд станет «По очереди» (главное окно)
+bool ActionsEditor::canGroup() const {
+    if (groupMode_) return false;
+    if (mode_ == GameMode::Combo) return actions_.size() == 1 && !actions_[0].isGroup();
+    return mode_ == GameMode::Sequence || steps();
+}
 
 void ActionsEditor::setTimes(int startMs, int intervalMs) {
     startMs_ = qBound(0, startMs, kMaxStartDelayMs);
@@ -438,14 +443,14 @@ void ActionsEditor::rebuild() {
             later([this]() { insertAt(actions_.size(), newItem()); });
         });
         flow_->addWidget(add_);
-        // группы игры — рядом с «добавить», только когда они есть
-        if (canGroup() && !groups_.isEmpty()) {
+        // группы — рядом с «добавить», всегда: создать новую или поставить готовую (из любой игры)
+        if (canGroup()) {
             groupAdd_ = new SizedButton(QSize(96, slotH_));
             groupAdd_->setObjectName("addSecond");
             groupAdd_->setProperty("aqEl", "add");
             groupAdd_->setCursor(Qt::PointingHandCursor);
             groupAdd_->setText(T("Группа"));
-            groupAdd_->setToolTip(T("Поставить в конец ряда одну из групп этой игры"));
+            groupAdd_->setToolTip(T("Создать группу или поставить в конец ряда готовую — группы общие для всех игр"));
             groupAdd_->setAccessibleName(T("Вставить группу"));
             connect(groupAdd_, &QPushButton::clicked, this, [this]() {
                 QMenu m(this);
@@ -607,7 +612,7 @@ void ActionsEditor::showMenu(int i, const QPoint& global) {
     QAction* after = m.addAction(steps() ? T("Добавить шаг после") : T("Добавить действие после"));
     QAction* dup = m.addAction(T("Дублировать"));
     for (QAction* a : {before, after, dup}) a->setEnabled(canAdd);
-    if (canGroup() && !groups_.isEmpty()) {
+    if (canGroup()) {
         QMenu* sub = m.addMenu(T("Вставить группу после"));
         fillGroupMenu(sub, i + 1);
         sub->setEnabled(canAdd);
@@ -678,13 +683,29 @@ void ActionsEditor::showMenu(int i, const QPoint& global) {
 // Группы
 // ---------------------------------------------------------------------------
 void ActionsEditor::fillGroupMenu(QMenu* m, int at) {
+    QAction* make = m->addAction(AqIcons::ui("plus", Theme::t().muted, 14), T("Создать группу…"));
+    make->setToolTip(T("Новая группа: имя и что в ней — встанет сюда"));
+    connect(make, &QAction::triggered, this, [this, at]() { later([this, at]() { createGroup(at); }); });
+    if (!groups_.isEmpty()) m->addSeparator();
     for (const ActionGroup& g : groups_) {
-        const QString pv = Groups::preview(g, 3);
+        const QString pv = Groups::preview(Groups::inRow(g, steps()), 3);
         QAction* a = m->addAction(AqIcons::ui("layers", Theme::t().muted, 14),
                                   pv.isEmpty() ? g.name : QStringLiteral("%1   %2").arg(g.name, pv));
         const QString id = g.id;
         connect(a, &QAction::triggered, this, [this, at, id]() { later([this, at, id]() { insertGroup(at, id); }); });
     }
+}
+
+void ActionsEditor::createGroup(int at) {
+    if (!canGroup() || actions_.size() >= maxItems()) return;
+    if (groups_.size() >= kMaxGroups) {
+        QMessageBox::information(this, T("Группы"), T("Групп уже %1 — больше нельзя. Удалить лишнюю можно в окне группы.").arg(kMaxGroups));
+        return;
+    }
+    ActionGroup g = Groups::blank(groups_, steps());
+    if (GroupDialog::edit(this, g, 0, true, steps()) != GroupDialog::Saved) return;
+    groups_ << g;
+    insertGroup(at, g.id);
 }
 
 void ActionsEditor::insertGroup(int at, const QString& id) {
@@ -746,7 +767,7 @@ void ActionsEditor::updateSelection() {
 void ActionsEditor::makeGroup() {
     if (!canGroup() || !selectionSolid() || sel_.last() >= actions_.size()) return;
     if (groups_.size() >= kMaxGroups) {
-        QMessageBox::information(this, T("Группы"), T("У игры уже %1 групп — больше нельзя. Удалить лишнюю можно в окне группы.").arg(kMaxGroups));
+        QMessageBox::information(this, T("Группы"), T("Групп уже %1 — больше нельзя. Удалить лишнюю можно в окне группы.").arg(kMaxGroups));
         return;
     }
     const int first = sel_.first(), count = int(sel_.size()), last = sel_.last();
@@ -799,7 +820,7 @@ void ActionsEditor::editGroup(int i) {
     if (!found) return;
     ActionGroup g = *found;
     g.betweenMs = Groups::betweenMs(g, actions_[i]);    // группа из 1.17.0 — как жмётся сейчас
-    const auto res = GroupDialog::edit(this, g, Groups::uses(actions_, id));
+    const auto res = GroupDialog::edit(this, g, Groups::uses(actions_, id), false, steps());
     if (res == GroupDialog::Cancelled) return;
     if (res != GroupDialog::Saved) { removeGroup(id, res == GroupDialog::DeletedWithCards); return; }
     for (ActionGroup& x : groups_)
@@ -1152,7 +1173,9 @@ void ActionsEditor::updateValues() {
         if (ui.groupName) {
             const ActionGroup* g = Groups::find(groups_, a.group);
             const QString name = g ? g->name : T("Группы нет");
-            const QString pv = g ? Groups::preview(*g, 6) : QString();
+            // состав — как его жмут в этом ряду: в «По шагам» действия группы — «нажать» и «отпустить»
+            const ActionGroup view = g ? Groups::inRow(*g, steps()) : ActionGroup{};
+            const QString pv = g ? Groups::preview(view, 6) : QString();
             // кнопка и подпись сами не сокращают текст — по ширине карточки
             const int cardW = ui.frame->width();
             const int nameW = cardW - 16 - (ui.repeat ? 70 : 0) - 40;
@@ -1172,8 +1195,8 @@ void ActionsEditor::updateValues() {
                 ui.frame->setProperty("warn", warn);
                 Theme::repolish(ui.frame);
             }
-            ui.frame->setToolTip(!g ? T("Этой группы у игры нет — карточка ничего не жмёт, её можно убрать из ряда.")
-                                 : T("Группа «%1»: %2").arg(name.toHtmlEscaped(), Groups::preview(*g, 16).toHtmlEscaped())
+            ui.frame->setToolTip(!g ? T("Такой группы нет — карточка ничего не жмёт, её можно убрать из ряда.")
+                                 : T("Группа «%1»: %2").arg(name.toHtmlEscaped(), Groups::preview(view, 16).toHtmlEscaped())
                                    + (warn ? "<br>" + T("Внутри — «отпустить» без «нажать» раньше: этот шаг пропускается") : QString()));
             continue;
         }

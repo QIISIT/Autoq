@@ -8,6 +8,7 @@
 #include <QFile>
 #include <QtEndian>
 #include "i18n.h"
+#include "tips.h"
 #include "sounds.h"
 #include "framesync.h"
 #include "cardlayout.h"
@@ -1543,7 +1544,8 @@ static void testGroups() {
     CHECK(srun[0].press == D && srun[0].mouse && srun[0].afterMs == 40);
     CHECK(srun[1].press == U && srun[1].afterMs == 15);
     CHECK(srun[3].press == U && srun[3].key == "f" && srun[3].afterMs == 30);
-    // группа из шагов (кикфлип) в ряду действий (файл правили руками) — «нажать» кликом, «отпустить» — нет
+    // группа из шагов (кикфлип) в ряду действий: «нажать» без «отпустить» сразу после — кликом,
+    // лишнее «отпустить» пропадает
     ActionGroup kick; kick.id = "deadbeef"; kick.name = "Кикфлип"; kick.steps = true;
     kick.items = {stp("mouse:1", D, 30), stp("mouse:3", C, 50), stp("mouse:1", U, 0)};
     const QList<ActionStep> kr = Groups::expand({call(kick.id, 1, 0)}, {kick}, false);
@@ -1584,11 +1586,36 @@ static void testGroups() {
     GameState st2 = st; st2.groups.clear();
     CHECK(st2 == st);
 
-    // хранение у игры: группы и вызовы переживают запись
-    Games::saveGroups("genshin", {combo, kick});
-    const QList<ActionGroup> back = Games::groups("genshin");
+    // И3: шаги <-> действия. «Нажать ↓, пауза, отпустить ↑» той же клавиши — одно действие с «держать»
+    {
+        const QList<ActionStep> acts{act("mouse:1", 40, 15), act("f", 0, 0), act("space", 250, 70)};
+        bool exact = false;
+        CHECK(Steps::toActions(Steps::fromActions(acts), &exact) == acts && exact);
+        // кикфлип не собирается без потерь: ЛКМ ↓ (без пары) — клик, лишнее ЛКМ ↑ — пропало, его пауза — у ПКМ
+        const QList<ActionStep> k = Steps::toActions({stp("mouse:1", D, 30), stp("mouse:3", C, 50), stp("mouse:1", U, 20)}, &exact);
+        CHECK(!exact && k.size() == 2 && k[0].holdMs == 0 && k[0].afterMs == 30 && k[1].button == 3 && k[1].afterMs == 70);
+        // «держать» больше 10 с не бывает — не точно
+        Steps::toActions({stp("f", D, 20000), stp("f", U, 0)}, &exact);
+        CHECK(!exact);
+        // вызов группы остаётся вызовом
+        CHECK(Steps::toActions({call(combo.id, 2, 5)}, &exact).value(0).isGroup() && exact);
+        // группа шагов в ряду «По очереди» (группы общие — так бывает): ↓F 100 ↑F — F «держать 100»
+        ActionGroup hold; hold.id = "0f0f0f0f"; hold.name = "Держать F"; hold.steps = true;
+        hold.items = {stp("f", D, 100), stp("f", U, 0)};
+        const QList<ActionStep> hr = Groups::expand({call(hold.id, 2, 60)}, {hold}, false);
+        CHECK(hr.size() == 2 && hr[0].key == "f" && hr[0].holdMs == 100 && hr[0].afterMs == 0 && hr[1].afterMs == 60 && hr[0].press == C);
+        // «Создать группу…»: новое имя и id; в шагах — клавиша «нажать» и «отпустить»
+        const ActionGroup b1 = Groups::blank({combo}, true), b2 = Groups::blank({combo}, false);
+        CHECK(Groups::validId(b1.id) && b1.id != combo.id && b1.name == "Группа 1" && b1.steps);
+        CHECK(b1.items.size() == 2 && b1.items[0].press == D && b1.items[1].press == U && b1.items[0].sameInput(b1.items[1]));
+        CHECK(!b2.steps && b2.items.size() == 1 && b2.items[0].press == C);
+    }
+
+    // И1: группы общие для всех игр — сделал в одной, видна во всех
+    Games::saveGroups({combo, kick});
+    const QList<ActionGroup> back = Games::groups();
     CHECK(back.size() == 2 && back[0] == combo && back[1].items == kick.items && back[1].steps);
-    CHECK(Games::groups("minecraft").isEmpty());
+    CHECK(Games::loadState(Games::get("minecraft")).groups == back);
     GameState gs1 = Games::loadState(Games::get("genshin"));
     CHECK(gs1.groups.size() == 2);
     gs1.actions = chain;
@@ -1608,28 +1635,96 @@ static void testGroups() {
     }
     const QString file = QDir::temp().filePath("aq_grp_" + pid + ".ini");
     CHECK(Games::exportProfile("genshin", "С группой", file));
-    Games::saveGroups("genshin", {});                         // «другой ПК»: групп нет
-    CHECK(Games::groups("genshin").isEmpty());
+    Games::saveGroups({});                                    // «другой ПК»: групп нет
+    CHECK(Games::groups().isEmpty());
     int mode = -1;
     const GameState lp = Games::loadProfile("genshin", "С группой", &mode);
     CHECK(mode == 3 && lp.groups.size() == 2);                // профиль принёс группы
-    CHECK(Games::groups("genshin").size() == 2);              // и они теперь у игры
-    // своя (поправленная) группа важнее копии в профиле
+    CHECK(Games::groups().size() == 2);                       // и они теперь общие
+    // общая (поправленная) группа важнее копии в профиле
     ActionGroup edited = combo; edited.items = {act("r", 0, 0)};
-    Games::saveGroups("genshin", {edited, kick});
+    Games::saveGroups({edited, kick});
     CHECK(Games::loadProfile("genshin", "С группой").groups[0].items == edited.items);
-    // импорт в другую игру: группы — к ней
+    // импорт в другую игру: те же общие группы, новых не прибавилось
     QString from;
     const QString name = Games::importProfile("minecraft", file, nullptr, &from);
-    CHECK(!name.isEmpty() && Games::groups("minecraft").size() == 2);
+    CHECK(!name.isEmpty() && Games::groups().size() == 2);
     CHECK(Games::loadProfile("minecraft", name).actions == chain);
     QFile::remove(file);
 
-    // группа из 1.17.0 (без паузы между повторами): становится паузой после её вызова в ряду —
-    // круг жмётся как раньше; запись — уже с паузой
+    // удалили группу в одной игре — в сохранённом ряду другой её вызовы стали действиями
+    {
+        GameState mc = Games::loadState(Games::get("minecraft"));
+        mc.actions = {act("q", 0, 0), call(edited.id, 2, 30)};
+        Games::saveState("minecraft", mc);
+        Games::saveGroups({kick});
+        Games::inlineGroupEverywhere(edited, "genshin");
+        const GameState mc2 = Games::loadState(Games::get("minecraft"));
+        CHECK(mc2.actions.size() == 3 && !mc2.actions[1].isGroup() && mc2.actions[1].key == "r" && mc2.actions[2].afterMs == 30);
+        CHECK(Games::loadState(Games::get("genshin")).actions == chain);   // открытую игру не трогает
+    }
+
+    // перенос 1.17 -> 1.18: группы были у каждой игры — сливаются в общие
+    {
+        ActionGroup other = combo; other.items = {act("t", 0, 0)};        // та же группа, поправленная в другой игре
+        ActionGroup solo; solo.id = "11223344"; solo.name = "Своя"; solo.items = {act("1", 0, 0)};
+        {
+            auto s = AppSettings::open();
+            s->remove("actionGroups");
+            for (const char* id : {"genshin", "minecraft"}) {
+                const QString k = QString("games/%1/").arg(id);
+                s->remove(k + "group");
+                s->remove(k + "groupRemap");
+            }
+            auto put = [&](const QString& gid, const QList<ActionGroup>& list) {
+                QStringList order;
+                for (const ActionGroup& g : list) {
+                    order << g.id;
+                    const QString k = QString("games/%1/group/%2/").arg(gid, g.id);
+                    s->setValue(k + "name", g.name);
+                    s->setValue(k + "steps", g.steps);
+                    QStringList items;
+                    for (const ActionStep& a : g.items)
+                        items << QString("%1:%2:%3:%4%5").arg(a.mouse ? "m" : "k", a.mouse ? QString::number(a.button) : a.key)
+                                     .arg(a.holdMs).arg(a.afterMs).arg(g.steps ? (a.press == D ? ":d" : a.press == U ? ":u" : ":c") : "");
+                    s->setValue(k + "items", items);
+                }
+                s->setValue(QString("games/%1/groups").arg(gid), order);
+            };
+            put("genshin", {combo, kick});
+            put("minecraft", {kick, other, solo});            // kick — та же копия, other — поправленная
+            s->setValue("games/minecraft/state/actions", QStringList{QString("g:%1:1:0").arg(combo.id), "k:e:0:0"});
+            s->sync();
+        }
+        const QList<ActionGroup> all = Games::groups();
+        CHECK(all.size() == 4);                                // combo, kick, other (новый id), solo
+        CHECK(all[0].id == combo.id && all[0].items == combo.items && all[1].id == kick.id && all[3].id == solo.id);
+        // пауз у групп 1.17.0 не было — взяты из рядов; копия kick в Minecraft не в ряду — та же группа
+        CHECK(all[0].betweenMs == 70 && all[1].betweenMs == 40 && all[2].betweenMs == 0 && all[3].betweenMs == -1);
+        CHECK(all[2].id != combo.id && Groups::validId(all[2].id) && all[2].items == other.items && all[2].name == combo.name);
+        // ряд Minecraft вызывает свою (поправленную) копию — уже под новым id
+        const GameState mc = Games::loadState(Games::get("minecraft"));
+        CHECK(mc.actions.size() == 2 && mc.actions[0].group == all[2].id);
+        CHECK(mc.runList(GameMode::Sequence)[0].key == "t");
+        CHECK(Games::loadState(Games::get("genshin")).runList(GameMode::Sequence)[1].mouse);   // у Genshin — своя
+        // второй раз не сливается: правки общих групп не пропадают
+        Games::saveGroups({solo});
+        CHECK(Games::groups().size() == 1);
+        // старые ключи 1.17 на месте (вернулся на 1.17 — группы есть)
+        CHECK(AppSettings::open()->value("games/minecraft/groups").toStringList().size() == 3);
+    }
+
+    // группа из 1.17.0 (без паузы между повторами): при переносе в общие пауза после её вызова
+    // в ряду становится паузой группы — круг жмётся как раньше; запись — уже с паузой
     {
         auto s = AppSettings::open();
-        s->remove("games/genshin/group");
+        s->remove("actionGroups");
+        for (const char* id : {"genshin", "minecraft"}) {
+            const QString k = QString("games/%1/").arg(id);
+            s->remove(k + "group");
+            s->remove(k + "groups");
+            s->remove(k + "groupRemap");
+        }
         s->setValue("games/genshin/groups", QStringList{"0a0b0c0d", "deadbeef"});
         s->setValue("games/genshin/group/0a0b0c0d/name", "Комбо");
         s->setValue("games/genshin/group/0a0b0c0d/items", QStringList{"m:1:40:15", "k:f:0:0"});
@@ -1637,13 +1732,18 @@ static void testGroups() {
         s->setValue("games/genshin/group/deadbeef/items", QStringList{"k:r:0:0"});
         s->setValue("games/genshin/state/actions", QStringList{"k:e:0:10", "g:0a0b0c0d:3:70", "k:q:0:5"});
         s->setValue("games/genshin/state/steps", QStringList{});
+        // та же группа в Minecraft, но не в ряду — паузы не знает, это не другая группа
+        s->setValue("games/minecraft/groups", QStringList{"0a0b0c0d"});
+        s->setValue("games/minecraft/group/0a0b0c0d/name", "Комбо");
+        s->setValue("games/minecraft/group/0a0b0c0d/items", QStringList{"m:1:40:15", "k:f:0:0"});
+        s->setValue("games/minecraft/state/actions", QStringList{"k:e:0:0"});
         s->sync();
     }
-    CHECK(Games::groups("genshin").value(0).betweenMs == -1);
     const GameState legacy = Games::loadState(Games::get("genshin"));
     CHECK(legacy.groups.size() == 2 && legacy.groups[0].betweenMs == 70);
     CHECK(legacy.groups[1].betweenMs == -1);                  // не стоит в ряду — пока как было
-    CHECK(Games::groups("genshin")[0].betweenMs == 70);       // записано
+    CHECK(Games::groups().size() == 2 && Games::groups()[0].betweenMs == 70);    // записано
+    CHECK(!AppSettings::open()->contains("games/minecraft/groupRemap"));
     {
         const QList<ActionStep> lr = legacy.runList(GameMode::Sequence);
         CHECK(lr.size() == 8 && lr[2].afterMs == 70 && lr[4].afterMs == 70 && lr[6].afterMs == 70);
@@ -1659,7 +1759,68 @@ static void testGroups() {
     const GameState gs3 = Games::loadState(Games::get("genshin"));
     CHECK(gs3.actions.size() == 2 && !gs3.actions[0].isGroup());
     CHECK(gs3.actions[1].repeat == kMaxRepeat && gs3.actions[1].afterMs == 0);
-    CHECK(gs3.groups.size() == 1);
+    {
+        auto s = AppSettings::open();
+        s->setValue("actionGroups/groups", QStringList{"0a0b0c0d", "bad", "0a0b0c0d"});
+        s->setValue("actionGroups/group/0a0b0c0d/items", QStringList{"k:f:0:0"});
+        s->sync();
+    }
+    CHECK(Games::groups().size() == 1);
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+}
+
+// И2: подсказки — у каждой есть раздел, название и текст; первое знакомство — один раз
+static void testTips() {
+    const QString pid = QString::number(QCoreApplication::applicationPid());
+    AppSettings::setScope("AutoQTest", "tips_" + pid);
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+    const QList<Tips::Tip> all = Tips::all();
+    CHECK(all.size() >= 25);
+    QSet<QString> ids;
+    for (const Tips::Tip& t : all) {
+        CHECK(!t.id.isEmpty() && !t.section.isEmpty() && !t.title.isEmpty() && t.text.size() > 30);
+        CHECK(!ids.contains(t.id));
+        ids.insert(t.id);
+    }
+    CHECK(Tips::sections().size() == 8 && Tips::sections().first() == "Действия");
+    CHECK(Tips::get("groups.make").section == "Группы" && Tips::get("нет такой").isNull());
+    // поиск: без регистра, все слова
+    const QList<Tips::Tip> f = Tips::find("ГРУППА шаг");
+    CHECK(!f.isEmpty());
+    for (const Tips::Tip& t : f) CHECK((t.title + t.text + t.section).contains("групп", Qt::CaseInsensitive));
+    CHECK(Tips::find("").size() == all.size() && Tips::find("zzzqqq").isEmpty());
+    // значки и первое знакомство — по умолчанию включены
+    CHECK(Tips::badges() && Tips::firstTime());
+    Tips::setBadges(false);
+    CHECK(!Tips::badges());
+    CHECK(Tips::takeFirstTime("actions.steps") && !Tips::takeFirstTime("actions.steps"));
+    CHECK(!Tips::takeFirstTime("нет такой") && Tips::seenCount() == 1);
+    Tips::setFirstTime(false);                       // выключены: не показывается, но считается увиденной
+    CHECK(!Tips::takeFirstTime("ui.editor") && Tips::seen("ui.editor"));
+    Tips::setFirstTime(true);
+    CHECK(!Tips::takeFirstTime("ui.editor"));
+    Tips::resetSeen();
+    CHECK(Tips::seenCount() == 0 && Tips::takeFirstTime("ui.editor"));
+    // английский — свои тексты
+    I18n::setLanguage(I18n::En);
+    CHECK(Tips::get("groups.make").title == "Make a group from cards" && Tips::sections().first() == "Actions");
+    I18n::setLanguage(I18n::Ru);
+    // подсказки, на которые ссылается главное окно («?» и первое знакомство), — существуют
+    QFile mw(QDir(QStringLiteral(AQ_SOURCE_DIR)).filePath("mainwindow.cpp"));
+    if (mw.open(QIODevice::ReadOnly)) {
+        const QString src = QString::fromUtf8(mw.readAll());
+        int refs = 0;
+        const QRegularExpression call(QStringLiteral("(?:tipBadge\\(\\{|firstTimeTip\\()([^)]*)"));
+        const QRegularExpression id(QStringLiteral("\"([a-z]+\\.[a-z]+)\""));
+        for (auto it = call.globalMatch(src); it.hasNext();)
+            for (auto j = id.globalMatch(it.next().captured(1)); j.hasNext();) {
+                const QString tid = j.next().captured(1);
+                ++refs;
+                if (Tips::get(tid).isNull()) std::printf("  нет подсказки: %s\n", qPrintable(tid));
+                CHECK(!Tips::get(tid).isNull());
+            }
+        CHECK(refs >= 20);
+    }
     { auto s = AppSettings::open(); s->clear(); s->sync(); }
 }
 
@@ -1759,6 +1920,7 @@ int main(int argc, char** argv) {
     testV113();
     testV114();
     testGroups();
+    testTips();
     testDataDir();
     testCardLayout();
     testUpdates();

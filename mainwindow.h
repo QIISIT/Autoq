@@ -1,6 +1,7 @@
 #pragma once
 #include <QMainWindow>
 #include <QSystemTrayIcon>
+#include <QPointer>
 #include <memory>
 #include <map>
 #include "clicker.h"
@@ -229,6 +230,11 @@ private:
     QString actionsLabel(const QList<ActionStep>& list, int from, int to) const;
     QWidget* dialogParent();
     void notify(const QString& text);
+    // подсказки (И2): «?» с подсказками по теме (прячутся в Настройки → Подсказки) и
+    // подсказка при первом знакомстве с функцией — один раз, внизу окна
+    class InfoBadge* tipBadge(const QStringList& ids);
+    void applyTipBadges();
+    bool firstTimeTip(const QString& id);
     void openSettingsPage(int page);
     void setOverlayMode(int mode);   // 0 — выкл, 1 — пока кликер работает, 2 — всегда
     void showOverlayMenu(QWidget* anchor);
@@ -254,6 +260,7 @@ private:
     bool loading_ = false;
     bool quitting_ = false;
     bool hintShown_ = false;
+    QList<QPointer<class InfoBadge>> tipBadges_;
     qint64 resultUntil_ = 0;       // до этого момента в статусе окна держится результат выбора
     int miniResultState_ = 0;
     QString miniResultText_;

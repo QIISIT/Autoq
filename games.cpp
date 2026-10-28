@@ -172,17 +172,17 @@ static QList<ActionStep> groupItems(const ActionGroup& g, bool steps) {
     for (const ActionStep& a : g.items)
         if (!a.isGroup()) items << a;                  // группа в группе — нельзя
     if (steps && !g.steps) return Steps::fromActions(items);
-    if (!steps && g.steps) {
-        // шаги в ряду действий (бывает, только если файл правили руками): «нажать» — клик
-        QList<ActionStep> out;
-        for (ActionStep a : items) {
-            if (a.press == ActionStep::Up) continue;
-            a.press = ActionStep::Click;
-            out << a;
-        }
-        return out;
-    }
+    // шаги в ряду действий (группы общие — шаги из «По шагам» встают и в «По очереди»):
+    // «нажать» и «отпустить» подряд — одно действие с «держать», остальное — клики
+    if (!steps && g.steps) return Steps::toActions(items);
     return items;
+}
+
+ActionGroup Groups::inRow(const ActionGroup& g, bool steps) {
+    ActionGroup r = g;
+    r.items = groupItems(g, steps);
+    r.steps = steps;
+    return r;
 }
 
 QList<ActionStep> Groups::expand(const QList<ActionStep>& chain, const QList<ActionGroup>& groups,
@@ -277,6 +277,18 @@ QString Groups::freeName(const QList<ActionGroup>& groups) {
     }
 }
 
+ActionGroup Groups::blank(const QList<ActionGroup>& groups, bool steps) {
+    ActionGroup g;
+    g.id = newId(groups);
+    g.name = freeName(groups);
+    g.steps = steps;
+    ActionStep a;
+    a.mouse = false;
+    a.key = "f";
+    g.items = steps ? Steps::fromActions({a}) : QList<ActionStep>{a};
+    return g;
+}
+
 // ---------------------------------------------------------------------------
 // «По шагам»
 // ---------------------------------------------------------------------------
@@ -341,6 +353,36 @@ QList<int> Steps::strayUps(const QList<ActionStep>& steps) {
             down << s;
         }
     }
+    return out;
+}
+
+QList<ActionStep> Steps::toActions(const QList<ActionStep>& steps, bool* exact) {
+    QList<ActionStep> out;
+    bool ok = true;
+    for (int i = 0; i < steps.size(); ++i) {
+        const ActionStep& s = steps[i];
+        if (out.size() >= kMaxActions) { ok = false; break; }
+        if (s.isGroup()) { out << s; continue; }        // вызов группы остаётся вызовом
+        ActionStep a = s;
+        a.press = ActionStep::Click;
+        a.holdMs = 0;
+        if (s.press == ActionStep::Down && i + 1 < steps.size() && !steps[i + 1].isGroup() &&
+            steps[i + 1].press == ActionStep::Up && steps[i + 1].sameInput(s)) {
+            // ↓ пауза ↑ — «держать» столько, сколько пауза между ними
+            if (s.afterMs > 10000) ok = false;
+            a.holdMs = qMin(s.afterMs, 10000);
+            a.afterMs = steps[i + 1].afterMs;
+            out << a;
+            ++i;
+            continue;
+        }
+        if (s.press == ActionStep::Click) { out << a; continue; }
+        ok = false;
+        if (s.press == ActionStep::Down) out << a;      // нажать без пары — клик
+        else if (!out.isEmpty())                         // лишнее «отпустить»: его пауза не теряется
+            out.last().afterMs = qMin(60000, out.last().afterMs + s.afterMs);
+    }
+    if (exact) *exact = ok;
     return out;
 }
 
@@ -454,7 +496,7 @@ QList<GamePreset> Games::presets(const GameDef& g) {
 GameState Games::defaultState(const GameDef& g) {
     GameState s = presets(g).value(0).state;
     s.intervalMs = qMax(s.intervalMs, g.minIntervalMs);
-    s.groups = groups(g.id);
+    s.groups = groups();
     return s;
 }
 
@@ -823,36 +865,121 @@ static QList<ActionGroup> readGroups(QSettings& s, const QString& prefix) {
     return out;
 }
 
-QList<ActionGroup> Games::groups(const QString& gameId) {
-    auto s = AppSettings::open();
-    return readGroups(*s, gkey(gameId, ""));
-}
-
-void Games::saveGroups(const QString& gameId, const QList<ActionGroup>& groups) {
-    if (gameId.isEmpty()) return;
-    auto s = AppSettings::open();
-    writeGroups(*s, gkey(gameId, ""), groups);
-    s->sync();
-}
-
-// Группы игры — в состояние. embedded — копии из файла профиля: каких у игры нет,
-// те добавляются к игре (профиль принёс их с собой). Свои группы игры важнее копий:
-// группу могли поправить после того, как профиль сохранили.
 // У групп из 1.17.0 нет паузы между повторами (между повторами шла пауза после вызова) —
 // ставим ту же паузу паузой группы: круг жмётся как раньше, а пауза после вызова дальше
 // меняет только ожидание перед следующим, а не скорость самой группы
-static void attachGroups(GameState& st, const QString& gameId, const QList<ActionGroup>& embedded = {}) {
-    QList<ActionGroup> mine = Games::groups(gameId);
+static bool fillBetween(QList<ActionGroup>& groups, const GameState& st) {
     bool changed = false;
-    for (const ActionGroup& g : embedded)
-        if (!Groups::find(mine, g.id) && mine.size() < kMaxGroups) { mine << g; changed = true; }
-    for (ActionGroup& g : mine) {
+    for (ActionGroup& g : groups) {
         if (g.betweenMs >= 0) continue;
         for (const ActionStep& a : st.actions + st.steps)
             if (a.group == g.id) { g.betweenMs = a.afterMs; changed = true; break; }
     }
-    if (changed) Games::saveGroups(gameId, mine);
-    st.groups = mine;
+    return changed;
+}
+
+// Общие группы (1.18) — в settings.ini: actionGroups/groups, actionGroups/group/<id>/…
+static const QString kGroupsPrefix = QStringLiteral("actionGroups/");
+
+// До 1.18 группы были у каждой игры (games/<id>/groups). Один раз сливаются в общие:
+// копии одной группы (тот же id — профиль перенесли в другую игру) становятся одной.
+// Если копии успели поправить по-разному, вторая получает новый id, а ряды и профили
+// той игры читают её через games/<id>/groupRemap («старый:новый»). Старые ключи не
+// удаляются — вернулся на 1.17, а группы на месте
+static void migrateGroups(QSettings& s) {
+    if (s.value(kGroupsPrefix + "shared").toBool()) return;
+    QList<ActionGroup> all = readGroups(s, kGroupsPrefix);
+    for (const QString& gid : s.value("games/order").toStringList()) {
+        QStringList remap;
+        QList<ActionGroup> mine = readGroups(s, gkey(gid, ""));
+        fillBetween(mine, readState(s, gkey(gid, "state/"), GameState{}));    // пауза по рядам этой игры
+        for (ActionGroup g : mine) {
+            ActionGroup* same = nullptr;
+            for (ActionGroup& a : all)
+                if (a.id == g.id) { same = &a; break; }
+            if (same) {
+                // копия из 1.17.0, которая в этой игре не стоит в ряду, паузы не знает — та же группа
+                ActionGroup x = g;
+                if (same->betweenMs < 0 || g.betweenMs < 0) x.betweenMs = same->betweenMs;
+                if (*same == x) {
+                    if (same->betweenMs < 0) same->betweenMs = g.betweenMs;
+                    continue;
+                }
+            }
+            if (same) {
+                const QString old = g.id;
+                g.id = Groups::newId(all);
+                remap << old + ':' + g.id;
+            }
+            all << g;
+        }
+        if (!remap.isEmpty()) s.setValue(gkey(gid, "groupRemap"), remap);
+    }
+    writeGroups(s, kGroupsPrefix, all);
+    s.setValue(kGroupsPrefix + "shared", true);
+}
+
+QList<ActionGroup> Games::groups() {
+    auto s = AppSettings::open();
+    migrateGroups(*s);
+    return readGroups(*s, kGroupsPrefix);
+}
+
+void Games::saveGroups(const QList<ActionGroup>& groups) {
+    auto s = AppSettings::open();
+    migrateGroups(*s);              // иначе слияние старых групп потом затёрло бы эти
+    writeGroups(*s, kGroupsPrefix, groups);
+    s->sync();
+}
+
+// Ряды игры (и копии групп из её профилей) — с новыми id групп после слияния (см. migrateGroups)
+static void remapGroups(const QString& gameId, GameState& st, QList<ActionGroup>* embedded = nullptr) {
+    QHash<QString, QString> to;
+    {
+        auto s = AppSettings::open();
+        for (const QString& p : s->value(gkey(gameId, "groupRemap")).toStringList()) {
+            const QStringList ab = p.split(':');
+            if (ab.size() == 2 && Groups::validId(ab[0]) && Groups::validId(ab[1])) to.insert(ab[0], ab[1]);
+        }
+    }
+    if (to.isEmpty()) return;
+    for (QList<ActionStep>* chain : {&st.actions, &st.steps})
+        for (ActionStep& a : *chain)
+            if (a.isGroup() && to.contains(a.group)) a.group = to.value(a.group);
+    if (embedded)
+        for (ActionGroup& g : *embedded)
+            if (to.contains(g.id)) g.id = to.value(g.id);
+}
+
+// Общие группы — в состояние. embedded — копии из файла профиля: каких нет, те
+// добавляются ко всем (профиль принёс их с собой). Общие группы важнее копий:
+// группу могли поправить после того, как профиль сохранили. Пауза между повторами у групп
+// из 1.17.0 — см. fillBetween
+static void attachGroups(GameState& st, const QString& gameId, QList<ActionGroup> embedded = {}) {
+    QList<ActionGroup> all = Games::groups();
+    remapGroups(gameId, st, &embedded);
+    bool changed = false;
+    for (const ActionGroup& g : embedded)
+        if (!Groups::find(all, g.id) && all.size() < kMaxGroups) { all << g; changed = true; }
+    changed = fillBetween(all, st) || changed;
+    if (changed) Games::saveGroups(all);
+    st.groups = all;
+}
+
+void Games::inlineGroupEverywhere(const ActionGroup& g, const QString& exceptGameId) {
+    for (const GameDef& d : list()) {
+        if (d.id == exceptGameId) continue;
+        auto s = AppSettings::open();
+        if (!s->contains(gkey(d.id, "state/actions"))) continue;      // ряд не сохраняли — групп в нём нет
+        GameState st = readState(*s, gkey(d.id, "state/"), defaultState(d));
+        remapGroups(d.id, st);
+        if (!Groups::uses(st.actions + st.steps, g.id)) continue;
+        st.actions = Groups::inlineAll(st.actions, g, false, kMaxActions);
+        if (st.actions.isEmpty()) st.actions << ActionStep{};
+        if (!st.steps.isEmpty()) st.steps = Groups::inlineAll(st.steps, g, true, kMaxSteps);
+        writeState(*s, gkey(d.id, "state/"), st);
+        s->sync();
+    }
 }
 
 GameState Games::loadState(const GameDef& g) {

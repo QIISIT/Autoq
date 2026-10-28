@@ -8,7 +8,8 @@
 // (пауза после последнего — тот же интервал, что в карточке «Скорость»).
 // Шаги и действия можно таскать за ручку и менять местами, правый клик — меню.
 // Группы: Ctrl / Shift + щелчок выделяет карточки подряд, «Сделать группой» ставит вместо них
-// вызов группы (карточка с именем и «×N»); группы игры вставляются кнопкой «Группа».
+// вызов группы (карточка с именем и «×N»); кнопка «Группа» — создать новую или вставить
+// готовую (группы общие для всех игр).
 #include <QWidget>
 #include <QList>
 #include <QPointer>
@@ -33,7 +34,7 @@ public:
     void setState(const QList<ActionStep>& list, GameMode mode, int startMs, int intervalMs, int minIntervalMs);
     void setTimes(int startMs, int intervalMs);     // только числа (интервал меняли в «Скорости»)
     QList<ActionStep> actions() const { return actions_; }
-    // группы игры: вызов в ряду показывает их имя и состав (задать до setState)
+    // группы (общие для всех игр): вызов в ряду показывает их имя и состав (задать до setState)
     void setGroups(const QList<ActionGroup>& groups) { groups_ = groups; }
     QList<ActionGroup> groups() const { return groups_; }
     // окно группы: ряд — её содержимое, без «старт через» / «повтор через» и без групп внутри
@@ -92,7 +93,7 @@ private:
     int repeatMin() const;                   // «повтор через» от (0 — паузы между клавишами)
     // что жмёт кликер: вызовы групп развёрнуты; owner — чья карточка каждый пункт
     QList<ActionStep> run(QList<int>* owner = nullptr) const;
-    QString buildKey() const;                // что меняет состав ряда: вид карточек, есть ли группы
+    QString buildKey() const;                // что меняет состав ряда: где действия, а где вызовы групп
     bool canGroup() const;                   // здесь можно собирать и вставлять группы
     void toggleSelect(int i, bool range);
     void setSelection(const QList<int>& sel);
@@ -104,6 +105,7 @@ private:
     void deleteGroup(int i);                 // ПКМ → «Удалить группу…» (спросит, что с карточками)
     void removeGroup(const QString& id, bool withCards);
     void insertGroup(int at, const QString& id);
+    void createGroup(int at);                // «Создать группу…»: окно новой группы, встанет на место at
     void fillGroupMenu(class QMenu* m, int at);
     void edited();
     int dropIndex(const QPoint& p) const;
@@ -115,7 +117,7 @@ private:
     bool groupMode_ = false;
     QList<int> sel_;                        // выделенные карточки (по возрастанию)
     int selAnchor_ = -1;                    // от неё — Shift + щелчок
-    QPushButton* groupAdd_ = nullptr;       // «Группа» — вставить группу в конец
+    QPushButton* groupAdd_ = nullptr;       // «Группа» — создать или вставить группу в конец
     QWidget* selTile_ = nullptr;            // вместо «добавить», пока что-то выделено
     QPushButton* selMake_ = nullptr;
     GameMode mode_ = GameMode::Sequence;

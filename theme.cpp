@@ -312,6 +312,7 @@ QFrame#pill QLabel { background: transparent; }
 QLabel#gameName { font-size: 13px; font-weight: 600; }
 QFrame#summary { background: @card@; border: 1px solid @cardBorder@; border-radius: 12px; }
 QFrame#summary QLabel { background: transparent; }
+QLabel#tipTitle { font-size: 13px; font-weight: 600; }
 
 QFrame#popup { background: @card@; border: 1px solid @fieldBorder2@; }
 QFrame#popup QLabel { background: transparent; }

@@ -5,6 +5,8 @@
 #include "games.h"
 #include "theme.h"
 #include "icons.h"
+#include "tips.h"
+#include <QPushButton>
 #include <QPainter>
 #include <QPainterPath>
 #include <QHBoxLayout>
@@ -298,6 +300,16 @@ void InfoBadge::paintEvent(QPaintEvent*) {
     AqIcons::paint(p, "help", QRectF(rect()).adjusted(1, 1, -1, -1), hot ? t.redHi : t.muted, 1.9);
 }
 
+static std::function<void()>& allTipsHandler() { static std::function<void()> f; return f; }
+void InfoBadge::setAllTipsHandler(const std::function<void()>& f) { allTipsHandler() = f; }
+
+InfoBadge::InfoBadge(const QStringList& tipIds, QWidget* parent)
+    : InfoBadge(T("Подсказки"), QString(), parent) {
+    tips_ = tipIds;
+    setToolTip(T("Подсказки: как и что делать"));
+    setProperty("aqTips", true);        // главное окно прячет такие, если подсказки выключены
+}
+
 void InfoBadge::showInfo() {
     auto* pop = new QFrame(this, Qt::Popup);
     pop->setObjectName("popup");
@@ -305,27 +317,52 @@ void InfoBadge::showInfo() {
     auto* lay = new QVBoxLayout(pop);
     lay->setContentsMargins(16, 14, 16, 14);
     lay->setSpacing(8);
-    auto* head = new QLabel(title_);
-    head->setObjectName("cardTitle");
-    head->setWordWrap(true);
-    lay->addWidget(head);
-    auto* body = new QLabel(text_);
-    body->setObjectName("muted");
-    body->setWordWrap(true);
-    body->setTextFormat(Qt::PlainText);
-    lay->addWidget(body);
+    // заголовок и текст (у подсказок — по паре на каждую)
+    QList<QPair<QString, QString>> parts;
+    if (tips_.isEmpty()) parts << qMakePair(title_, text_);
+    for (const QString& id : tips_) {
+        const Tips::Tip t = Tips::get(id);
+        if (!t.isNull()) parts << qMakePair(t.title, t.text);
+    }
+    const int w = tips_.isEmpty() ? 328 : 360;
+    QList<QLabel*> labels;
+    for (int i = 0; i < parts.size(); ++i) {
+        if (i > 0) lay->addSpacing(4);
+        auto* head = new QLabel(parts[i].first);
+        head->setObjectName(tips_.isEmpty() ? "cardTitle" : "fieldLabel");
+        head->setWordWrap(true);
+        lay->addWidget(head);
+        auto* body = new QLabel(parts[i].second);
+        body->setObjectName("muted");
+        body->setWordWrap(true);
+        body->setTextFormat(Qt::PlainText);
+        lay->addWidget(body);
+        labels << head << body;
+    }
+    if (!tips_.isEmpty() && allTipsHandler()) {
+        auto* more = new QPushButton(T("Все подсказки…"));
+        more->setObjectName("ghost");
+        more->setCursor(Qt::PointingHandCursor);
+        lay->addWidget(more, 0, Qt::AlignLeft);
+        connect(more, &QPushButton::clicked, pop, [pop]() {
+            pop->close();
+            const std::function<void()> f = allTipsHandler();
+            QTimer::singleShot(0, f);
+        });
+    }
     // ширина задана — высоту считаем по переносам строк (иначе текст обрезался бы)
     pop->ensurePolished();
-    for (QLabel* l : {head, body}) {
+    for (QLabel* l : labels) {
         l->ensurePolished();
-        l->setFixedWidth(328);
-        l->setFixedHeight(l->heightForWidth(328));
+        l->setFixedWidth(w);
+        l->setFixedHeight(l->heightForWidth(w));
     }
     pop->adjustSize();
     QPoint pos = mapToGlobal(QPoint(width() / 2 - 24, height() + 6));
     if (QScreen* scr = screen()) {
         const QRect g = scr->availableGeometry();
         if (pos.y() + pop->height() > g.bottom()) pos.setY(mapToGlobal(QPoint(0, 0)).y() - pop->height() - 6);
+        pos.setY(qMax(g.top() + 4, pos.y()));       // длинный список подсказок — не выше экрана
         pos.setX(qBound(g.left() + 4, pos.x(), g.right() - pop->width() - 4));
     }
     pop->move(pos);
