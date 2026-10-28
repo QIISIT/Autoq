@@ -39,6 +39,9 @@ public:
     QList<ActionGroup> groups() const { return groups_; }
     // окно группы: ряд — её содержимое, без «старт через» / «повтор через» и без групп внутри
     void setGroupMode(bool on) { groupMode_ = on; }
+    // «По кадрам»: числа ряда — кадры игры (в полях «мс», см. FrameUnits; задать до setState)
+    void setFrames(bool on) { frames_ = on; }
+    bool frames() const { return frames_; }
     int startDelay() const { return startMs_; }
     int interval() const { return intervalMs_; }
     void setActiveStep(int i);                      // подсветить то, что кликер жмёт сейчас (-1 — ничего)
@@ -95,6 +98,7 @@ private:
     QList<ActionStep> run(QList<int>* owner = nullptr) const;
     QString buildKey() const;                // что меняет состав ряда: где действия, а где вызовы групп
     bool canGroup() const;                   // здесь можно собирать и вставлять группы
+    void applyFrameUnits();                  // «По кадрам»: подписи полей — кадры
     void toggleSelect(int i, bool range);
     void setSelection(const QList<int>& sel);
     bool selectionSolid() const;             // выделено подряд — можно сделать группой
@@ -115,6 +119,7 @@ private:
     QList<ActionStep> actions_;
     QList<ActionGroup> groups_;
     bool groupMode_ = false;
+    bool frames_ = false;
     QList<int> sel_;                        // выделенные карточки (по возрастанию)
     int selAnchor_ = -1;                    // от неё — Shift + щелчок
     QPushButton* groupAdd_ = nullptr;       // «Группа» — создать или вставить группу в конец

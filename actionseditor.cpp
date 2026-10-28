@@ -137,7 +137,22 @@ QList<ActionStep> ActionsEditor::run(QList<int>* owner) const {
 QString ActionsEditor::buildKey() const {
     QString k;
     for (const ActionStep& a : actions_) k += a.isGroup() ? 'g' : 'a';
-    return k;
+    return k + (frames_ ? "/f" : "");
+}
+
+// «По кадрам»: числа ряда — в кадрах игры (сам ряд тот же, меняются подписи)
+void ActionsEditor::applyFrameUnits() {
+    for (QSpinBox* s : findChildren<QSpinBox*>())
+        if (s->suffix() == T(" мс")) s->setSuffix(T(" кадр."));
+    for (SlotUi& ui : slots_)                // «держать» узкое: «10 кадр.» длиннее «100 мс»
+        if (ui.hold) ui.hold->setFixedWidth(qMax(ui.hold->width(), 76));
+    const QString start = T("Старт через столько кадров игры после нажатия «Старт» или клавиши (0 — со следующего кадра)");
+    if (startSpin_) { startSpin_->setToolTip(start); startSpin_->setAccessibleName(start); }
+    if (repeatSpin_ && !groupMode_) {
+        const QString rep = T("Пауза после последнего, в кадрах игры, — и всё сначала. Круг целиком — не меньше одного кадра");
+        repeatSpin_->setToolTip(rep);
+        repeatSpin_->setAccessibleName(rep);
+    }
 }
 
 // группы — в рядах «По очереди» и «По шагам» (в «Вместе» и «Зажать» порядка нет). Одно
@@ -487,6 +502,7 @@ void ActionsEditor::rebuild() {
     for (int i = 0; i < flow_->count(); ++i)
         if (QWidget* w = flow_->itemAt(i)->widget()) w->show();
     if (selTile_) selTile_->hide();     // пока ничего не выделено
+    if (frames_) applyFrameUnits();
     refreshIcons();
     updateValues();
     // высота карточек — по содержимому (крупный шрифт или масштаб — ничего не наезжает),
@@ -776,14 +792,16 @@ void ActionsEditor::makeGroup() {
     g.name = Groups::freeName(groups_);
     g.steps = steps();
     g.items = actions_.mid(first, count);
-    g.items.last().afterMs = 0;             // пауза после группы — у вызова
+    g.items.last().afterMs = g.items.last().afterFr = 0;    // пауза после группы — у вызова
     ActionStep c;
     c.group = g.id;
     c.mouse = false;
     c.key.clear();
     c.press = ActionStep::Click;
     c.afterMs = actions_[last].afterMs;
+    c.afterFr = actions_[last].afterFr;     // «По кадрам» — и та пауза, что сейчас не на виду
     g.betweenMs = c.afterMs;                // между повторами — та же пауза: ритм ряда не меняется
+    g.betweenFr = c.afterFr;
     groups_ << g;
     QList<ActionStep> next = actions_;
     next.erase(next.begin() + first, next.begin() + first + count);
@@ -1143,7 +1161,7 @@ void ActionsEditor::openModePlate(int i) {
         if (steps()) {
             a.press = k == 1 ? ActionStep::Up : k == 2 ? ActionStep::Click : ActionStep::Down;
         } else if ((k == 1) != (a.holdMs > 0)) {
-            a.holdMs = k == 1 ? 100 : 0;
+            a.holdMs = k == 1 ? (frames_ ? 2 : 100) : 0;     // «По кадрам» — 2 кадра
         } else {
             return;
         }
