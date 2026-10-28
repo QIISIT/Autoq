@@ -23,6 +23,7 @@
 #include "sounds.h"
 #include "framesync.h"
 #include "updater.h"
+#include "macsupport.h"
 #include <QWidget>
 #include <QFrame>
 #include <QVBoxLayout>
@@ -39,6 +40,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QMessageBox>
+#include <QCheckBox>
 #include <QDialog>
 #include <QLineEdit>
 #include <QCloseEvent>
@@ -120,6 +122,31 @@ static bool titleMatches(const QStringList& titles, const QString& title) {
     return false;
 }
 
+// «Убрать игру?» Профили остаются в папке данных (галочка — удалить и их): добавил
+// игру снова — они на месте. withProfiles — что выбрали; false — передумали убирать
+static bool askRemoveGame(QWidget* parent, const GameDef& g, bool* withProfiles) {
+    const int n = int(Games::profiles(g.id).size());
+    QString text = T("Убрать «%1» из списка?").arg(g.name);
+    if (n > 0)
+        text += "\n\n" + (g.builtin ? T("Профили игры (%1) останутся в папке данных: добавишь игру снова — они вернутся.").arg(n)
+                                      : T("Профили игры (%1) останутся в папке данных: добавишь свою игру с тем же названием — они вернутся.").arg(n));
+    if (g.builtin) text += "\n\n" + T("Встроенную игру можно вернуть кнопкой «Добавить игру».");
+    QMessageBox box(QMessageBox::Question, T("Убрать игру"), text, QMessageBox::NoButton, parent);
+    QCheckBox* del = nullptr;
+    if (n > 0) {
+        del = new QCheckBox(T("Удалить и профили"));
+        box.setCheckBox(del);
+    }
+    QPushButton* yes = box.addButton(T("Убрать"), QMessageBox::YesRole);
+    QPushButton* no = box.addButton(T("Отмена"), QMessageBox::NoRole);
+    box.setDefaultButton(no);
+    box.setEscapeButton(no);
+    box.exec();
+    if (box.clickedButton() != yes) return false;
+    *withProfiles = del && del->isChecked();
+    return true;
+}
+
 // короткая подпись клавиши — для плашки на значке игры
 static QString chipText(const HotkeySpec& sp) {
     if (sp.isMouse()) {
@@ -142,6 +169,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     buildUi();
     buildTray();
     mini_ = new MiniWindow();
+#ifdef __APPLE__
+    // значок в Dock или повторный запуск из Finder, когда AutoQ в трее, — показать окно.
+    // Ставим, когда цикл событий уже идёт: при запуске AppKit ставит свой обработчик
+    QTimer::singleShot(500, this, [this]() { AqMac::onReopen([this]() { if (!quitting_) restoreFromTray(); }); });
+#endif
 
     loading_ = true;
     timeSeg_->setSeconds(Prefs::captureSeconds());
@@ -1327,7 +1359,13 @@ void MainWindow::rebuildWelcome() {
 void MainWindow::addTemplate(const QString& id) {
     if (!Games::addBuiltin(id)) return;
     Anim::transition(pageArea(), [this, id]() { reloadGames(id); }, board_->visibleCards());
-    notify(T("Игра «%1» добавлена.").arg(Games::get(id).name));
+    notifyAdded(Games::get(id), int(Games::profiles(id).size()));
+}
+
+// игру убирали раньше — её профили остались и вернулись вместе с ней
+void MainWindow::notifyAdded(const GameDef& g, int profiles) {
+    notify(profiles > 0 ? T("Игра «%1» добавлена. Её профили на месте: %2.").arg(g.name).arg(profiles)
+                        : T("Игра «%1» добавлена.").arg(g.name));
 }
 
 void MainWindow::selectGame(const QString& id) {
@@ -1414,8 +1452,9 @@ void MainWindow::addGame() {
     GameDef res = dlg.result();
     if (res.builtin) Games::addBuiltin(res.id);   // шаблон: чистая запись, затем правки из окна
     Games::save(res);
+    const int profiles = res.builtin ? int(Games::profiles(res.id).size()) : Games::adoptProfiles(res.id, res.name);
     Anim::transition(pageArea(), [this, res]() { reloadGames(res.id); }, board_->visibleCards());
-    notify(T("Игра «%1» добавлена.").arg(res.name));
+    notifyAdded(res, profiles);
 }
 
 void MainWindow::editGame() {
@@ -1433,16 +1472,14 @@ void MainWindow::editGame() {
 
 void MainWindow::removeGame() {
     if (!hasGame()) return;
-    if (!askYesNo(this, T("Убрать игру"),
-            T("Убрать «%1» из списка вместе с её профилями?\n\nВстроенную игру можно вернуть кнопкой «Добавить игру».").arg(game_.name),
-            T("Убрать"), T("Отмена"), false))
-        return;
+    bool withProfiles = false;
+    if (!askRemoveGame(this, game_, &withProfiles)) return;
     stopGame(game_.id);
     cancelPending();
     const QString id = game_.id;
     const int idx = gameList_->currentRow();
     unwatchProfiles();
-    Games::remove(id);
+    Games::remove(id, withProfiles);
     runners_.erase(id);
     game_ = GameDef{};
     const QList<GameDef> games = Games::list();
@@ -1454,14 +1491,12 @@ void MainWindow::removeGameById(const QString& id) {
     bool ok = false;
     const GameDef g = Games::get(id, &ok);
     if (!ok) return;
-    if (!askYesNo(this, T("Убрать игру"),
-            T("Убрать «%1» из списка вместе с её профилями?\n\nВстроенную игру можно вернуть кнопкой «Добавить игру».").arg(g.name),
-            T("Убрать"), T("Отмена"), false))
-        return;
+    bool withProfiles = false;
+    if (!askRemoveGame(this, g, &withProfiles)) return;
     stopGame(id);
     runners_.erase(id);
     unwatchProfiles();
-    Games::remove(id);
+    Games::remove(id, withProfiles);
     reloadGames(game_.id);
 }
 
@@ -3405,6 +3440,12 @@ void MainWindow::updateMiniLive() {
 void MainWindow::buildTray() {
     tray_ = new QSystemTrayIcon(this);
     trayMenu_ = new QMenu(this);
+#ifdef __APPLE__
+    // macOS: щелчок по значку открывает это меню — показать окно первым пунктом
+    QAction* showFirst = trayMenu_->addAction(T("Показать окно"));
+    connect(showFirst, &QAction::triggered, this, &MainWindow::restoreFromTray);
+    trayMenu_->addSeparator();
+#endif
     trayStatusAction_ = trayMenu_->addAction(AqIcons::appIcon(), AQ_NAME);
     trayStatusAction_->setEnabled(false);
     trayMenu_->addSeparator();
@@ -3422,8 +3463,10 @@ void MainWindow::buildTray() {
     trayCheckAction_ = trayMenu_->addAction(T("Выбрать окно игры"));
     connect(trayCheckAction_, &QAction::triggered, this, &MainWindow::startWindowCheck);
     trayMenu_->addSeparator();
+#ifndef __APPLE__
     QAction* showAction = trayMenu_->addAction(T("Показать окно"));
     connect(showAction, &QAction::triggered, this, &MainWindow::showMain);
+#endif
     trayMiniAction_ = trayMenu_->addAction(T("Мини-окно"));
     connect(trayMiniAction_, &QAction::triggered, this, &MainWindow::showMini);
     trayOverlayMenu_ = trayMenu_->addMenu(T("Оверлей КПС"));
@@ -3570,6 +3613,26 @@ void MainWindow::showMain() {
     showNormal();
     raise();
     activateWindow();
+#ifdef __APPLE__
+    // после меню значка: окно — на этот рабочий стол и вперёд, AutoQ — активным
+    QTimer::singleShot(0, this, [this]() { if (isVisible()) AqMac::bringToFront(static_cast<unsigned long long>(winId())); });
+#endif
+}
+
+// Окно из трея (значок, Dock на macOS): в мини-режиме — мини-окно, иначе главное
+void MainWindow::restoreFromTray() {
+    if (miniMode_ && hasGame()) {
+        mini_->showNormal();
+        mini_->raise();
+        mini_->activateWindow();
+#ifdef __APPLE__
+        QTimer::singleShot(0, this, [this]() {
+            if (mini_->isVisible()) AqMac::bringToFront(static_cast<unsigned long long>(mini_->winId()));
+        });
+#endif
+    } else {
+        showMain();
+    }
 }
 
 void MainWindow::showMini() {
@@ -3869,11 +3932,15 @@ void MainWindow::openSettingsPage(int page) {
 }
 
 void MainWindow::onTrayActivated(QSystemTrayIcon::ActivationReason reason) {
+#ifdef __APPLE__
+    // macOS: щелчок по значку в строке меню открывает меню, и Qt в тот же миг шлёт Trigger.
+    // Показ окна посреди открытия меню срабатывал через раз — окно открывает пункт
+    // «Показать окно» (он в меню первым)
+    (void)reason;
+#else
     // клик по значку — показать окно (в мини-режиме — мини-окно)
-    if (reason == QSystemTrayIcon::DoubleClick || reason == QSystemTrayIcon::Trigger) {
-        if (miniMode_ && hasGame()) { mini_->showNormal(); mini_->raise(); mini_->activateWindow(); }
-        else showMain();
-    }
+    if (reason == QSystemTrayIcon::DoubleClick || reason == QSystemTrayIcon::Trigger) restoreFromTray();
+#endif
 }
 
 void MainWindow::restartApp() {
