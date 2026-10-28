@@ -148,12 +148,17 @@ protected:
 class InfoBadge : public QAbstractButton {
 public:
     InfoBadge(const QString& title, const QString& text, QWidget* parent = nullptr);
+    // «?» с подсказками по теме функции (Tips) — как и что делать; внизу окошка — «Все подсказки»
+    explicit InfoBadge(const QStringList& tipIds, QWidget* parent = nullptr);
+    // «Все подсказки…» в окошке — открыть Настройки → Подсказки (задаёт главное окно)
+    static void setAllTipsHandler(const std::function<void()>& f);
     QSize sizeHint() const override { return QSize(18, 18); }
     void showInfo();
 protected:
     void paintEvent(QPaintEvent*) override;
 private:
     QString title_, text_;
+    QStringList tips_;
 };
 
 // Точка статуса: кольцо (стоит) или красная мигающая (работает)
