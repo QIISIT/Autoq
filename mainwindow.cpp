@@ -22,6 +22,7 @@
 #include "theme.h"
 #include "sounds.h"
 #include "framesync.h"
+#include "framewatch.h"
 #include "updater.h"
 #include "macsupport.h"
 #include "tips.h"
@@ -115,6 +116,16 @@ static QString everyFrames(int n) {
     if (b == 1) return T("каждый %1 кадр").arg(n);
     if (b >= 2 && b <= 4) return T("каждые %1 кадра").arg(n);
     return T("каждые %1 кадров").arg(n);
+}
+
+// «1 кадр», «3 кадра», «5 кадров»
+static QString framesCount(int n) {
+    if (I18n::english()) return n == 1 ? QString("1 frame") : QString("%1 frames").arg(n);
+    const int a = n % 100, b = n % 10;
+    if (a >= 11 && a <= 14) return T("%1 кадров").arg(n);
+    if (b == 1) return T("%1 кадр").arg(n);
+    if (b >= 2 && b <= 4) return T("%1 кадра").arg(n);
+    return T("%1 кадров").arg(n);
 }
 
 static bool titleMatches(const QStringList& titles, const QString& title) {
@@ -562,7 +573,12 @@ void MainWindow::buildSpeedCard() {
     BoardBlock* blk = board_->addBlock("speed", T("Скорость"));
     unitSeg_ = new Segmented({T("мс"), T("КПС"), T("КПМ")}, false);
     unitSeg_->setToolTip(T("В чём задавать скорость: интервал в миллисекундах, клики в секунду (КПС) или в минуту (КПМ)"));
-    blk->setHead(unitSeg_);
+    // шапку блока доска показывает сама — «По кадрам» прячет мс / КПС / КПМ внутри неё
+    auto* unitBox = new QWidget();
+    auto* unitLay = new QHBoxLayout(unitBox);
+    unitLay->setContentsMargins(0, 0, 0, 0);
+    unitLay->addWidget(unitSeg_);
+    blk->setHead(unitBox);
     QVBoxLayout* lay = blk->body();
     auto* rate = new QHBoxLayout();
     rate->setSpacing(6);
@@ -646,6 +662,39 @@ void MainWindow::buildSpeedCard() {
     r4->addWidget(hzBox_);
     hzRow_->hide();
     lay->addWidget(hzRow_);
+    // «По кадрам»: «держать», паузы и «повтор через» — в кадрах окна игры, а не в мс
+    framesRow_ = new QWidget();
+    auto* r5 = new QHBoxLayout(framesRow_);
+    r5->setContentsMargins(0, 0, 0, 0);
+    r5->setSpacing(8);
+    framesSwitch_ = new ToggleSwitch();
+    framesSwitch_->setToolTip(T("Паузы, «держать» и «повтор через» в действиях — в кадрах игры, а не в мс. Нужно выбранное окно игры"));
+    framesSwitch_->setAccessibleName(T("По кадрам игры"));
+    r5->addWidget(framesSwitch_);
+    r5->addWidget(mkLabel(T("По кадрам игры"), "muted"));
+    r5->addWidget(new InfoBadge(T("Как работает «По кадрам»"),
+        T("Игра показывает кадры — 60, 144, 240 в секунду, сколько выдаёт. «По кадрам» AutoQ видит каждый кадр "
+          "выбранного окна игры и жмёт сразу после него. Паузы, «держать», «старт через» и «повтор через» в действиях "
+          "считаются в кадрах: «повтор через 1 кадр» — нажатие в каждом кадре, «держать 2 кадра» — нажато ровно два кадра.\n\n"
+          "Так каждое нажатие попадает в свой кадр, даже когда FPS скачет. Игра свёрнута или на паузе и кадров нет — "
+          "кликер ждёт, а не жмёт наугад.\n\n"
+          "Нужно выбранное окно игры («Выбрать окно»). Linux — игры в окнах X11 и XWayland (Proton, Wine, Minecraft), "
+          "Windows — AutoQ с правами администратора.\n\n"
+          "Числа в кадрах хранятся отдельно: выключил «По кадрам» — паузы снова в мс, как были.")),
+        0, Qt::AlignVCenter);
+    r5->addStretch(1);
+    lay->addWidget(framesRow_);
+    framesStatus_ = mkLabel(QString(), "faint");
+    framesStatus_->setProperty("aqEl", "hint");
+    framesStatus_->setWordWrap(true);
+    lay->addWidget(framesStatus_);
+    framesAdminBtn_ = new QPushButton(T("Перезапустить от имени администратора"));
+    framesAdminBtn_->setObjectName("outline");
+    framesAdminBtn_->setCursor(Qt::PointingHandCursor);
+    framesAdminBtn_->hide();
+    lay->addWidget(framesAdminBtn_, 0, Qt::AlignLeft);
+    framesRow_->setVisible(FrameWatch::supported());      // macOS — кадров игры не видно
+    framesStatus_->setVisible(FrameWatch::supported());
     perMinuteLabel_ = mkLabel(QString(), "faint");
     perMinuteLabel_->setProperty("aqEl", "hint");
     perMinuteLabel_->setWordWrap(true);
@@ -981,7 +1030,14 @@ void MainWindow::connectSignals() {
         // группы (общие для всех игр): сделали, поправили или удалили. У удалённой вызовы
         // в другом ряду этой игры («По шагам» или действия) и в рядах других игр тоже
         // становятся обычными карточками
-        const QList<ActionGroup> groups = actionsEdit_->groups();
+        // «По кадрам»: в редакторе кадры стоят в полях «мс» — обратно (см. FrameUnits)
+        const bool fr = framesOn();
+        QList<ActionGroup> groups = actionsEdit_->groups();
+        QList<ActionStep> row = actionsEdit_->actions();
+        if (fr) {
+            FrameUnits::swap(groups);
+            FrameUnits::swap(row);
+        }
         if (groups != cur_.groups) {
             const bool steps = game_.mode == GameMode::Steps;
             for (const ActionGroup& g : cur_.groups) {
@@ -999,10 +1055,10 @@ void MainWindow::connectSignals() {
             firstTimeTip("groups.make");                    // карточек уже несколько — их можно собрать в группу
         }
         if (game_.mode == GameMode::Steps) {
-            cur_.steps = actionsEdit_->actions();
+            cur_.steps = row;
         } else {
             const bool wasMulti = cur_.multi();
-            cur_.actions = actionsEdit_->actions();
+            cur_.actions = row;
             // стало одно действие: «вместе» — то же, что «повторять»; в ряд встала группа —
             // дальше по очереди (у группы есть порядок, «вместе» её не бывает)
             if (game_.mode == GameMode::Combo &&
@@ -1011,16 +1067,27 @@ void MainWindow::connectSignals() {
                 Games::save(game_);
             }
         }
-        cur_.startDelayMs = actionsEdit_->startDelay();
         // «повтор через» — тот же интервал, что в карточке «Скорость»
-        cur_.intervalMs = qBound(repeatMin(), actionsEdit_->interval(), 60000);
+        if (fr) {
+            cur_.startFr = actionsEdit_->startDelay();
+            cur_.intervalFr = qBound(repeatMinFr(), actionsEdit_->interval(), 60000);
+        } else {
+            cur_.startDelayMs = actionsEdit_->startDelay();
+            cur_.intervalMs = qBound(repeatMin(), actionsEdit_->interval(), 60000);
+        }
         syncSlider();           // от числа действий зависит, можно ли интервал меньше минимума
         syncSpeedBox();
         applyModeLayout();
         commit();
     });
     connect(speedBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
-        if (loading_ || v <= 0) return;
+        if (loading_) return;
+        if (framesOn()) {                       // «По кадрам»: в поле — «повтор через N кадров»
+            cur_.intervalFr = qBound(repeatMinFr(), qRound(v), 60000);
+            commit();
+            return;
+        }
+        if (v <= 0) return;
         const int unit = unitSeg_->current();
         const int iv = unit == 1 ? qRound(1000.0 / v) : unit == 2 ? qRound(60000.0 / v) : qRound(v);
         cur_.intervalMs = qBound(repeatMin(), iv, 60000);
@@ -1047,11 +1114,17 @@ void MainWindow::connectSignals() {
     });
     connect(jitterBox_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
         if (loading_) return;
-        cur_.jitterMs = v; commit();
+        if (framesOn()) cur_.jitterFr = v;
+        else cur_.jitterMs = v;
+        commit();
     });
     connect(lockSwitch_, &ToggleSwitch::toggled, this, [this](bool on) {
         if (loading_) return;
-        cur_.lockWindow = on; commit(); refreshLive();
+        const bool fr = framesOn();
+        cur_.lockWindow = on;
+        if (framesOn() != fr) stateToUi();     // «По кадрам» — только с привязкой: числа в действиях сменились
+        commit();
+        refreshLive();
     });
     connect(frameSyncSwitch_, &ToggleSwitch::toggled, this, [this](bool on) {
         if (loading_) return;
@@ -1064,6 +1137,30 @@ void MainWindow::connectSignals() {
         cur_.frameHz = hzBox_->itemData(i).toInt();
         commit();
     });
+    connect(framesSwitch_, &ToggleSwitch::toggled, this, [this](bool on) {
+        if (loading_) return;
+        cur_.byFrames = on;
+        // впервые — кадры из нынешних мс (по кадрам игры, а не видно — по монитору)
+        bool seed = on && !cur_.framesSet;
+        for (const ActionGroup& g : cur_.groups) seed = seed || (on && g.betweenFr < 0);
+        if (seed) {
+            double fps = 0;
+            if (bound() && cur_.lockWindow) {   // кадры игры: подождать чуть-чуть, сколько их в секунду
+                const auto feed = FrameWatch::watch(bnd().handle, bnd().pid);
+                feed->waitUntil(feed->count() + 10, std::chrono::milliseconds(500));
+                fps = feed->fps();
+            }
+            if (fps <= 0) fps = monitorHz(bound() ? bnd().handle : 0);
+            const QList<ActionGroup> before = cur_.groups;
+            FrameUnits::seed(cur_, fps);
+            if (cur_.groups != before) Games::saveGroups(cur_.groups);
+        }
+        cur_.intervalFr = qMax(cur_.intervalFr, repeatMinFr());
+        stateToUi();                    // числа в действиях — кадры или снова мс
+        commit();
+        updateFramesUi();
+    });
+    connect(framesAdminBtn_, &QPushButton::clicked, this, &MainWindow::restartAsAdmin);
     // «Авто» показывает частоту монитора — открыли список: обновить (могли сменить монитор)
     hzBox_->installEventFilter(this);
     connect(procEdit_, &ChipEditor::itemsChanged, this, [this](const QStringList& l) { setRules(l, game_.titles); });
@@ -1157,6 +1254,13 @@ void MainWindow::connectMini() {
     });
     connect(mini_, &MiniWindow::modeChosen, this, [this](int m) { setGameMode(gameModeFromInt(m)); });
     connect(mini_, &MiniWindow::intervalChosen, this, [this](int ms) {
+        if (framesOn()) {                   // «По кадрам»: в поле — кадры
+            if (ms == cur_.intervalFr) return;
+            cur_.intervalFr = qMax(ms, repeatMinFr());
+            stateToUi();
+            commit();
+            return;
+        }
         if (ms == cur_.intervalMs) return;
         cur_.intervalMs = qMax(ms, repeatMin());
         stateToUi();
@@ -1660,13 +1764,20 @@ void MainWindow::applyModeLayout() {
                        static_cast<QWidget*>(unitSeg_), static_cast<QWidget*>(frameSyncSwitch_)})
         w->setEnabled(!hold);
     if (!hold) jitterBox_->setEnabled(cur_.randomize);
-    hzBox_->setEnabled(!hold && cur_.frameSync);
-    hzRow_->setVisible(cur_.frameSync);
+    // «По кадрам»: скорость — кадрами («повтор через»), ползунок, мс/КПС/КПМ и такт монитора не нужны
+    const bool fr = framesOn();
+    slider_->setVisible(!fr);
+    unitSeg_->setVisible(!fr);
+    frameSyncSwitch_->setEnabled(!hold && !fr);
+    hzBox_->setEnabled(!hold && cur_.frameSync && !fr);
+    hzRow_->setVisible(cur_.frameSync && !fr);
     {
         const bool wasLoading = loading_;
         loading_ = true;
-        actionsEdit_->setGroups(cur_.groups);
-        actionsEdit_->setState(cur_.chain(m), m, cur_.startDelayMs, cur_.intervalMs, game_.minIntervalMs);
+        const GameState v = frameView(cur_);
+        actionsEdit_->setFrames(fr);
+        actionsEdit_->setGroups(v.groups);
+        actionsEdit_->setState(v.chain(m), m, v.startDelayMs, v.intervalMs, fr ? 1 : game_.minIntervalMs);
         loading_ = wasLoading;
     }
 }
@@ -1676,7 +1787,8 @@ void MainWindow::updateActionsHint() {
     const GameMode m = game_.mode;
     const bool multi = cur_.multi();
     const bool hold = (m == GameMode::Hold);
-    const QString every = T("повтор каждые %1 мс").arg(num(cur_.intervalMs));
+    const QString every = framesOn() ? T("повтор через %1").arg(framesCount(cur_.intervalFr))
+                                     : T("повтор каждые %1 мс").arg(num(cur_.intervalMs));
     if (m == GameMode::Steps) {
         const QList<ActionStep> list = cur_.runList(m);
         actionsTitle_->setText(T("По шагам ↓ ↑"));
@@ -1714,17 +1826,23 @@ void MainWindow::stateToUi() {
     const bool wasLoading = loading_;
     loading_ = true;
     cur_.intervalMs = qMax(cur_.intervalMs, repeatMin());
+    cur_.intervalFr = qMax(cur_.intervalFr, repeatMinFr());
     randomizeSwitch_->setChecked(cur_.randomize);
-    jitterBox_->setValue(cur_.jitterMs);
+    // «По кадрам» — разброс тоже в кадрах
+    jitterBox_->setRange(0, framesOn() ? 60 : 1000);
+    jitterBox_->setSuffix(framesOn() ? T(" кадр.") : T(" мс"));
+    jitterBox_->setValue(framesOn() ? cur_.jitterFr : cur_.jitterMs);
     jitterBox_->setEnabled(cur_.randomize);
     lockSwitch_->setChecked(cur_.lockWindow);
     frameSyncSwitch_->setChecked(cur_.frameSync);
+    framesSwitch_->setChecked(cur_.byFrames);
     updateSoundBtn();
     loading_ = wasLoading;
     fillHzBox();
     syncSlider();
     syncSpeedBox();
     applyModeLayout();
+    updateFramesUi();
 }
 
 void MainWindow::syncSlider() {
@@ -1743,7 +1861,14 @@ void MainWindow::syncSpeedBox() {
     const int unit = qMax(0, unitSeg_->current());
     const int minMs = qMax(1, repeatMin());
     const bool multi = (cur_.multi() && game_.mode != GameMode::Hold) || game_.mode == GameMode::Steps;
-    if (unit == 1) {
+    if (framesOn()) {                   // «По кадрам»: «повтор через N кадров»
+        speedBox_->setDecimals(0);
+        speedBox_->setRange(repeatMinFr(), 600);
+        speedBox_->setSingleStep(1);
+        speedBox_->setSuffix(T(" кадр."));
+        speedBox_->setValue(cur_.intervalFr);
+        speedCaption_->setText(T("Повтор через"));
+    } else if (unit == 1) {
         speedBox_->setDecimals(cur_.intervalMs > 2000 ? 2 : 1);
         speedBox_->setRange(0.02, 1000.0 / minMs);
         speedBox_->setSingleStep(0.5);
@@ -1768,7 +1893,11 @@ void MainWindow::syncSpeedBox() {
     loading_ = wasLoading;
 }
 
-ClickerConfig MainWindow::buildConfig(const GameDef& g, const GameState& st, const WindowInfo& w) {
+ClickerConfig MainWindow::buildConfig(const GameDef& g, const GameState& own, const WindowInfo& w) {
+    // «По кадрам»: кликеру — кадры в полях «мс» (FrameUnits) и кадры окна игры; минимум — кадр
+    const bool fr = framesOn(own) && g.mode != GameMode::Hold;
+    const GameState st = fr ? frameView(own) : own;
+    const int gameMin = fr ? 1 : g.minIntervalMs;
     ClickerConfig c;
     c.actions = st.runList(g.mode);
     c.steps = g.mode == GameMode::Steps && !c.actions.isEmpty();
@@ -1778,12 +1907,14 @@ ClickerConfig MainWindow::buildConfig(const GameDef& g, const GameState& st, con
     if (g.mode != GameMode::Sequence && g.mode != GameMode::Steps)
         for (ActionStep& a : c.actions) a.afterMs = 0;
     c.startDelayMs = st.startDelayMs;
-    c.intervalMs = qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs));
-    c.minCycleMs = st.minCycle(g.mode, g.minIntervalMs);
+    c.intervalMs = qMax(st.intervalMs, st.repeatMin(g.mode, gameMin));
+    c.minCycleMs = st.minCycle(g.mode, gameMin);
     c.randomize = st.randomize;
     c.jitterMs = st.jitterMs;
     c.lockToWindow = st.lockWindow;
-    c.frameMs = (st.frameSync && g.mode != GameMode::Hold) ? FrameSync::frameMs(syncHz(st, w.handle)) : 0;
+    c.frameMs = (st.frameSync && !fr && g.mode != GameMode::Hold) ? FrameSync::frameMs(syncHz(st, w.handle)) : 0;
+    c.byFrames = fr;
+    if (fr) c.frames = FrameWatch::watch(w.handle, w.pid);
     c.rule = g.rule();
     c.boundHandle = w.handle;
     c.boundPid = w.pid;
@@ -1837,8 +1968,8 @@ void MainWindow::fillHzBox() {
     std::sort(list.begin(), list.end());
     for (int v : list) hzBox_->addItem(T("%1 Гц").arg(v), v);
     hzBox_->setCurrentIndex(qMax(0, hzBox_->findData(cur_.frameHz)));
-    hzBox_->setEnabled(cur_.frameSync && game_.mode != GameMode::Hold);
-    hzRow_->setVisible(cur_.frameSync);
+    hzBox_->setEnabled(cur_.frameSync && game_.mode != GameMode::Hold && !framesOn());
+    hzRow_->setVisible(cur_.frameSync && !framesOn());
     loading_ = wasLoading;
 }
 
@@ -1855,7 +1986,9 @@ void MainWindow::commit() {
     Games::saveState(game_.id, cur_);   // сразу на диск — переживёт выключение ПК
     pushConfig();
     if (game_.mode != GameMode::Hold) jitterBox_->setEnabled(cur_.randomize);
-    actionsEdit_->setTimes(cur_.startDelayMs, cur_.intervalMs);   // интервал могли поменять в «Скорости»
+    // интервал могли поменять в «Скорости»
+    if (framesOn()) actionsEdit_->setTimes(cur_.startFr, cur_.intervalFr);
+    else actionsEdit_->setTimes(cur_.startDelayMs, cur_.intervalMs);
     updateActionsHint();
     updateRate();
     updatePresetLabel();
@@ -1878,6 +2011,15 @@ double MainWindow::perSecond(const GameDef& g, const GameState& st) const {
         for (const ActionStep& a : list) n += a.press != ActionStep::Up;
     }
     const bool combo = g.mode == GameMode::Combo && n > 1;
+    if (framesOn(st)) {                 // «По кадрам»: круг — целое число кадров игры
+        const GameState v = frameView(st);
+        double fps = g.id == game_.id ? framesFps() : 0;
+        if (fps <= 0) fps = monitorHz(boundHandle(g.id));     // кадров не видно — оценка по монитору
+        const double cycle = FrameSync::meanCycleFrames(v.runList(g.mode), qMax(v.intervalMs, v.repeatMin(g.mode, 1)),
+                                                        g.mode == GameMode::Combo, v.randomize ? v.jitterMs : 0,
+                                                        v.minCycle(g.mode, 1));
+        return combo ? fps / cycle : fps / cycle * n;
+    }
     // круг целиком — не быстрее minCycle (минимум игры, а где паузы свои — 1 мс)
     const int interval = qMax(st.intervalMs, st.repeatMin(g.mode, g.minIntervalMs));
     double cycle;
@@ -1910,7 +2052,16 @@ void MainWindow::updateRate() {
         perMinuteLabel_->setText(T("Сейчас: %1 в секунду · %2 в минуту").arg(dec(real), num(qRound64(real * 60))));
     } else {
         QString t;
-        if (cur_.frameSync) {
+        if (framesOn()) {
+            const GameState v = frameView(cur_);
+            const int fr = qRound(FrameSync::meanCycleFrames(v.runList(game_.mode), qMax(v.intervalMs, repeatMinFr()),
+                                                             game_.mode == GameMode::Combo, 0, v.minCycle(game_.mode, 1)));
+            QString every = everyFrames(qMax(1, fr));
+            if (cur_.randomize && cur_.jitterFr > 0) every = T("в среднем ") + every;
+            const double fps = framesFps();
+            t = fps > 0 ? T("По кадрам: %1 · игра %2 кадров/с · %3 в минуту").arg(every, dec(fps), num(qRound64(ps * 60)))
+                        : T("По кадрам: %1 · кадров игры пока не видно").arg(every);
+        } else if (cur_.frameSync) {
             const double hz = syncHz(cur_, boundHandle(game_.id)), f = FrameSync::frameMs(hz);
             const int fr = qMax(FrameSync::frames(FrameSync::cycleMs(cur_.runList(game_.mode), qMax(cur_.intervalMs, repeatMin()),
                                                                      game_.mode == GameMode::Combo), f),
@@ -1926,6 +2077,75 @@ void MainWindow::updateRate() {
         }
         perMinuteLabel_->setText(t);
     }
+}
+
+bool MainWindow::framesOn(const GameState& st) {
+    return st.byFrames && st.lockWindow && FrameWatch::supported();
+}
+
+GameState MainWindow::frameView(const GameState& st) {
+    return framesOn(st) ? FrameUnits::view(st) : st;
+}
+
+double MainWindow::framesFps() const {
+    return framesFeed_ && framesFeed_->status() == FrameWatch::Status::Live ? framesFeed_->fps() : 0;
+}
+
+// «По кадрам» в «Скорости»: включить можно, когда выбрано окно игры; подпись — что с кадрами
+void MainWindow::updateFramesUi() {
+    if (!FrameWatch::supported()) return;
+    const bool hold = game_.mode == GameMode::Hold;
+    framesRow_->setVisible(hasGame() && !hold);
+    const bool win = hasGame() && cur_.lockWindow && bound();
+    framesSwitch_->setEnabled(cur_.byFrames || win);
+    // кадры окна — для подписи и скорости, пока «По кадрам» включено
+    if (framesOn() && win) framesFeed_ = FrameWatch::watch(bnd().handle, bnd().pid);
+    else framesFeed_.reset();
+    QString text;
+    bool admin = false;
+    if (!hasGame() || hold) {
+    } else if (!cur_.lockWindow) {
+        text = cur_.byFrames ? T("«По кадрам» не работает: выключена привязка в карточке «Окно игры».")
+                             : T("Нужна привязка в карточке «Окно игры» и выбранное окно.");
+    } else if (!win) {
+        text = cur_.byFrames ? T("Окно игры не выбрано — кадров не видно. Нажми «Выбрать окно» или старт прямо в игре.")
+                             : T("Выбери окно игры — тогда «По кадрам» можно включить.");
+    } else if (framesFeed_) {
+        switch (framesFeed_->status()) {
+            case FrameWatch::Status::Live:
+                text = T("Игра показывает %1 кадров/с.").arg(qRound(framesFeed_->fps()));
+                break;
+            case FrameWatch::Status::Waiting:
+                text = FrameWatch::needsAdmin()
+                           ? T("Windows показывает кадры игры только AutoQ с правами администратора.")
+                           : T("Кадров игры пока нет: игра свёрнута, на паузе или грузится. Кликер ждёт кадров.");
+                admin = FrameWatch::needsAdmin();
+                break;
+            case FrameWatch::Status::NeedAdmin:
+                text = T("Windows показывает кадры игры только AutoQ с правами администратора.");
+                admin = true;
+                break;
+            case FrameWatch::Status::NoWindow:
+                text = T("Окно игры закрылось — кадров нет.");
+                break;
+            case FrameWatch::Status::Failed:
+#ifdef _WIN32
+                text = T("Не вышло читать кадры игры (ETW). Перезапусти AutoQ или выключи «По кадрам».");
+#else
+                text = T("Кадры этого окна не видны: нужен X11 или XWayland с расширением Present.");
+#endif
+                break;
+            case FrameWatch::Status::Unsupported:
+                break;
+        }
+    } else if (FrameWatch::needsAdmin()) {
+        text = T("«По кадрам» в Windows работает только у AutoQ с правами администратора.");
+        admin = true;
+    }
+    framesStatus_->setText(text);
+    framesStatus_->setVisible(!text.isEmpty());
+    framesAdminBtn_->setVisible(admin);
+    if (framesOn()) updateRate();       // кадров/с у игры меняются и без кликера
 }
 
 // ===========================================================================
@@ -1956,6 +2176,10 @@ void MainWindow::applyPreset(int index) {
     cur_.steps = keep.steps;
     cur_.groups = keep.groups;
     cur_.startDelayMs = keep.startDelayMs;
+    // пресет — в мс: «По кадрам» выключается, числа в кадрах остаются до следующего включения
+    cur_.startFr = keep.startFr;
+    cur_.intervalFr = keep.intervalFr;
+    cur_.jitterFr = keep.jitterFr;
     if (l[index].mode >= 0 && gameModeFromInt(l[index].mode) != game_.mode) {
         game_.mode = gameModeFromInt(l[index].mode);
         Games::save(game_);
@@ -1964,6 +2188,22 @@ void MainWindow::applyPreset(int index) {
     stateToUi();
     commit();
     notify(T("Пресет: %1").arg(l[index].name));
+}
+
+// без чисел «По кадрам» — сравнить с пресетом (в нём только мс)
+static GameState withoutFrames(GameState s) {
+    s.byFrames = false;
+    s.framesSet = false;
+    s.startFr = 0;
+    s.intervalFr = 1;
+    s.jitterFr = 0;
+    for (QList<ActionStep>* l : {&s.actions, &s.steps})
+        for (ActionStep& a : *l) a.holdFr = a.afterFr = 0;
+    for (ActionGroup& g : s.groups) {
+        g.betweenFr = -1;
+        for (ActionStep& a : g.items) a.holdFr = a.afterFr = 0;
+    }
+    return s;
 }
 
 void MainWindow::updatePresetLabel() {
@@ -1977,6 +2217,10 @@ void MainWindow::updatePresetLabel() {
         a.soundOff = b.soundOff;
         if (game_.mode != GameMode::Steps) a.steps = b.steps;   // не в «По шагам» шаги не жмутся
         a.startDelayMs = b.startDelayMs;
+        // кадры («По кадрам») — не часть пресета; включено «По кадрам» — значит, не пресет
+        a = withoutFrames(a);
+        b = withoutFrames(b);
+        b.byFrames = framesOn();
         a.intervalMs = qMax(a.intervalMs, a.repeatMin(game_.mode, game_.minIntervalMs));
         const bool modeOk = p.mode < 0 || gameModeFromInt(p.mode) == game_.mode;
         if (a == b && modeOk) { name = p.name; break; }
@@ -2610,11 +2854,13 @@ bool MainWindow::bound() const {
 void MainWindow::bindWindow(const WindowInfo& w) {
     bnd() = w;
     pushConfig();
+    updateFramesUi();
 }
 
 void MainWindow::unbindWindow() {
     bnd() = WindowInfo{};
     pushConfig();
+    updateFramesUi();
 }
 
 void MainWindow::rememberWindow(const WindowInfo& w) {
@@ -2836,6 +3082,8 @@ QString MainWindow::startProblemFor(const GameDef& g, const GameState& st) const
 #else
         return T("нет доступа к X11 — нажатия отправлять некуда.");
 #endif
+    if (framesOn(st) && g.mode != GameMode::Hold && FrameWatch::needsAdmin())
+        return T("«По кадрам» в Windows видит кадры игры только с правами администратора — перезапусти AutoQ от имени администратора или выключи «По кадрам».");
     // действие = клавиша, которая что-то включает: кликер нажимал бы её сам
 #if !defined(_WIN32) && !defined(__APPLE__)
     // Wayland (KDE Plasma 6.1+ и др.): нажатия кликера через XTEST идут через композитор (libei)
@@ -3260,7 +3508,8 @@ void MainWindow::updateMonitor(bool full) {
         if (!run) st = ms > 0 ? T("Остановлен") : T("Ещё не запускали");
         else if (r->clicker.waitingStart()) { st = T("Ждёт старта"); kind = "wait"; }
         else if (!r->clicker.allowedNow()) {
-            st = r->clicker.pauseReason() == 2 ? T("Пауза: курсор вне игры") : T("Пауза: не окно игры");
+            const int why = r->clicker.pauseReason();
+            st = why == 2 ? T("Пауза: курсор вне игры") : why == 3 ? T("Пауза: игра не показывает кадры") : T("Пауза: не окно игры");
             kind = "warn";
         } else { st = T("Работает"); kind = "run"; }
         monState_->setText(st);
@@ -3363,6 +3612,7 @@ void MainWindow::refreshLive() {
             updateTrayState();
         }
     }
+    updateFramesUi();
     // «работает» в списке игр
     for (int i = 0; i < gameList_->count(); ++i) {
         QListWidgetItem* it = gameList_->item(i);
@@ -3425,7 +3675,8 @@ void MainWindow::syncMini() {
         items << MiniWindow::GameItem{g.id, g.name,
                                       AqIcons::gameTile(g.icon, QColor(g.color), g.image, 22, 2.0, false, t.light)};
     mini_->setGames(items, game_.id);
-    mini_->setState(cur_, game_.mode, repeatMin());
+    if (framesOn()) mini_->setState(frameView(cur_), game_.mode, repeatMinFr(), true);
+    else mini_->setState(cur_, game_.mode, repeatMin());
     updateMiniLive();
 }
 

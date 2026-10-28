@@ -304,7 +304,7 @@ void MiniWindow::setGames(const QList<GameItem>& games, const QString& currentId
     gameBox_->setCurrentIndex(i >= 0 ? i : 0);
 }
 
-void MiniWindow::setState(const GameState& st, GameMode mode, int minInterval) {
+void MiniWindow::setState(const GameState& st, GameMode mode, int minInterval, bool frames) {
     mode_ = mode;
     const bool steps = mode == GameMode::Steps;
     // шаги и группы здесь не правятся — коротко, что жмётся (править — в большом окне)
@@ -333,6 +333,7 @@ void MiniWindow::setState(const GameState& st, GameMode mode, int minInterval) {
     {
         QSignalBlocker b(interval_);
         interval_->setMinimum(minInterval);
+        interval_->setSuffix(frames ? T(" кадр.") : T(" мс"));
         interval_->setValue(st.intervalMs);
     }
     interval_->setEnabled(mode != GameMode::Hold);

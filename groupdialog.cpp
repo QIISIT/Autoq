@@ -69,6 +69,7 @@ GroupDialog::Result GroupDialog::edit(QWidget* parent, ActionGroup& g, int uses,
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     auto* ed = new ActionsEditor();
     ed->setGroupMode(true);
+    if (auto* row = qobject_cast<ActionsEditor*>(parent)) ed->setFrames(row->frames());   // «По кадрам»
     scroll->setWidget(ed);
     lay->addWidget(scroll, 1);
     auto* splitNote = mkLabel(T("Группа разложена на шаги: каждая клавиша — отдельно «нажать ↓» и «отпустить ↑», "
@@ -158,7 +159,7 @@ GroupDialog::Result GroupDialog::edit(QWidget* parent, ActionGroup& g, int uses,
         g.name = nameEdit->text().trimmed();
         g.steps = asSteps;
         g.items = ed->actions();
-        if (!g.items.isEmpty()) g.items.last().afterMs = 0;     // пауза после группы — у вызова
+        if (!g.items.isEmpty()) g.items.last().afterMs = g.items.last().afterFr = 0;   // пауза после группы — у вызова
         g.betweenMs = ed->interval();                            // между повторами ×N
     }
     return res;

@@ -52,7 +52,8 @@ struct OverlayView {
     QString a1, a2;               // подписи действий: «ЛКМ», «F» (a2 пусто — нет второго)
     long long total = 0;
     int status = 0;               // 0 — остановлен, 1 — работает, 2 — пауза (не окно игры), 3 — ждёт окно,
-                                  // 4 — пауза (курсор не над игрой), 5 — ждёт «старт через»
+                                  // 4 — пауза (курсор не над игрой), 5 — ждёт «старт через»,
+                                  // 6 — пауза (нет кадров игры, «По кадрам»)
     bool hold = false;            // режим «Зажать»
     QString game;                 // «Genshin Impact»
     QString profile;              // имя профиля (пусто — без профиля)
@@ -65,7 +66,7 @@ struct OverlayEntry {
     QString key;                  // id игры: у каждой своя история кликов и график
     bool running = false, pending = false, allowed = false, hold = false;
     bool starting = false;        // идёт «старт через N мс»
-    int pauseReason = 0;          // 1 — не окно игры, 2 — курсор не над игрой
+    int pauseReason = 0;          // 1 — не окно игры, 2 — курсор не над игрой, 3 — нет кадров игры
     unsigned long long c1 = 0, c2 = 0, total = 0;
     QString a1, a2, game, profile;
 };

@@ -104,6 +104,8 @@ struct ActionStep {
     int press = Click;        // «По шагам»: Down — нажать, Up — отпустить, Click — нажать и отпустить
     QString group;            // не пусто — вызов группы (её id): кнопка и «держать» не нужны
     int repeat = 1;           // вызов группы: сколько раз подряд (1…kMaxRepeat)
+    int holdFr = 0;           // «По кадрам»: держать, кадров игры (свои числа — см. FrameUnits)
+    int afterFr = 0;          // «По кадрам»: пауза после, кадров
     bool isGroup() const { return !group.isEmpty(); }
     bool sameInput(const ActionStep& o) const;   // та же кнопка / клавиша
     bool operator==(const ActionStep& o) const;
@@ -127,8 +129,10 @@ struct ActionGroup {
     // пауза между повторами (×N у вызова), мс. Пауза после вызова — только после последнего
     // повтора. -1 — группа из 1.17.0 (между повторами — пауза после вызова, как тогда)
     int betweenMs = 0;
+    int betweenFr = -1;       // «По кадрам»: то же в кадрах (-1 — как пауза после вызова)
     bool operator==(const ActionGroup& o) const {
-        return id == o.id && name == o.name && steps == o.steps && items == o.items && betweenMs == o.betweenMs;
+        return id == o.id && name == o.name && steps == o.steps && items == o.items && betweenMs == o.betweenMs &&
+               betweenFr == o.betweenFr;
     }
     bool operator!=(const ActionGroup& o) const { return !(*this == o); }
 };
@@ -175,6 +179,14 @@ struct GameState {
     bool lockWindow = true;
     bool frameSync = false;      // «В такт с монитором»: клики на сетке кадров
     int frameHz = 0;             // частота такта: 0 — как у монитора, иначе своя (FPS игры)
+    // «По кадрам»: «держать», паузы, «старт через», «повтор через» и разброс — в кадрах окна
+    // игры, а не в мс. Кадры хранятся отдельно (…Fr, у действий и групп тоже): переключил
+    // туда и обратно — и мс, и кадры на месте
+    bool byFrames = false;
+    bool framesSet = false;      // кадры уже задавали: первое включение не берёт их из мс (FrameUnits::seed)
+    int startFr = 0;
+    int intervalFr = 1;
+    int jitterFr = 0;
     QString soundOn, soundOff;   // свой звук включения / выключения ("" — как в настройках)
     // группы игры — копия: хранятся у игры (Games::groups), не в состоянии и не в профиле;
     // в сравнении не участвуют (поправил группу — профиль не стал «несохранённым»)
@@ -204,6 +216,22 @@ int repeatMinMs(GameMode m, int count, int gameMinMs);
 int minCycleMs(GameMode m, int count, int gameMinMs);
 constexpr int kMaxActions = 64;
 constexpr int kMaxSteps = 128;
+
+// «По кадрам»: редактор действий и кликер работают с полями «мс» (holdMs, afterMs, intervalMs…),
+// поэтому в режиме кадров им дают вид, где в этих полях — кадры: мс и кадры меняются местами.
+// Обмен — сам себе обратный: swap дважды — как было
+namespace FrameUnits {
+    void swap(ActionStep& a);
+    void swap(QList<ActionStep>& list);
+    void swap(QList<ActionGroup>& groups);
+    void swap(GameState& st);                // действия, шаги, группы, старт, повтор, разброс
+    GameState view(const GameState& st);     // byFrames — кадры в полях «мс», иначе как есть
+    // «По кадрам» включили впервые: кадры — из мс при fps кадрах в секунду, чтобы ритм остался
+    // тем же («держать 100 мс» при 60 кадрах/с — 6 кадров, а не клик). Дальше кадры и мс — отдельно.
+    // Состояние — один раз (framesSet), группа — пока её пауза в кадрах не задана (betweenFr < 0).
+    // true — что-то поменялось
+    bool seed(GameState& st, double fps);
+}
 constexpr int kMaxStartDelayMs = 60000;
 
 namespace Steps {

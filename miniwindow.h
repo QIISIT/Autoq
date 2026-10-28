@@ -27,7 +27,8 @@ public:
 
     explicit MiniWindow(QWidget* parent = nullptr);
     void setGames(const QList<GameItem>& games, const QString& currentId);
-    void setState(const GameState& st, GameMode mode, int minInterval);
+    // frames — «По кадрам»: интервал в кадрах игры (в st — вид FrameUnits::view)
+    void setState(const GameState& st, GameMode mode, int minInterval, bool frames = false);
     void setProfiles(const QStringList& names, const QString& active, bool dirty);
     void setRunning(bool running, const QString& hotkey, bool pending = false, bool unused = false);
     void setCount(const QString& count, const QString& caption);
