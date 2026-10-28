@@ -146,6 +146,14 @@ private:
     double perSecond(const GameDef& g, const GameState& st) const;
     int repeatMin() const { return cur_.repeatMin(game_.mode, game_.minIntervalMs); }   // «повтор через» от
     int minCycle() const { return cur_.minCycle(game_.mode, game_.minIntervalMs); }     // круг целиком — не быстрее
+    // «По кадрам»: включено, привязка к окну включена и эта ОС видит кадры игры (в «Зажать» — нет).
+    // frameView — как его видят редактор и кликер
+    bool framesOn() const { return framesOn(cur_) && game_.mode != GameMode::Hold; }
+    static bool framesOn(const GameState& st);
+    static GameState frameView(const GameState& st);
+    int repeatMinFr() const { return cur_.repeatMin(game_.mode, 1); }   // «повтор через» в кадрах — от
+    void updateFramesUi();             // переключатель, подпись (кадров/с, нет окна, нет прав)
+    double framesFps() const;          // кадров в секунду у окна игры (0 — не знаем)
     double sliderLo() const { return qMax(1, repeatMin()); }   // левый край шкалы скорости (самый быстрый)
 
     // --- профили ---
@@ -340,6 +348,12 @@ private:
     QLabel* hzCaption_;
     QWidget* hzRow_;            // «Частота кадров» — только при «В такт с монитором»
     QLabel* perMinuteLabel_;
+    // «По кадрам»: включается, когда окно игры выбрано (Linux X11 / XWayland, Windows)
+    QWidget* framesRow_;
+    ToggleSwitch* framesSwitch_;
+    QLabel* framesStatus_;
+    QPushButton* framesAdminBtn_;              // Windows: без прав администратора кадров не видно
+    std::shared_ptr<FrameWatch::Feed> framesFeed_;   // кадры окна открытой игры (для подписи и скорости)
 
     // --- 03 окно игры ---
     ToggleSwitch* lockSwitch_;
