@@ -17,6 +17,7 @@
 #include "winmatch.h"
 #include "games.h"
 #include "clicker.h"
+#include "updates.h"
 
 static int g_fail = 0, g_pass = 0;
 #define CHECK(cond) do { if (cond) ++g_pass; else { ++g_fail; \
@@ -1595,6 +1596,88 @@ static void testGroups() {
     { auto s = AppSettings::open(); s->clear(); s->sync(); }
 }
 
+// --- автообновление: ответ GitHub, версии, файл под систему, контрольные суммы ---
+static void testUpdates() {
+    using namespace Updates;
+    CHECK(versionNumbers("1.17.0 beta") == QList<int>({1, 17, 0}));
+    CHECK(versionNumbers("v1.17.1") == QList<int>({1, 17, 1}));
+    CHECK(versionNumbers("Version 2.0 beta") == QList<int>({2, 0}));
+    CHECK(versionNumbers("beta").isEmpty());
+    CHECK(compareVersions("v1.17.1", "1.17.0 beta") > 0);
+    CHECK(compareVersions("1.17", "1.17.0") == 0);
+    CHECK(compareVersions("1.9.0", "1.10.0") < 0);                 // числами, а не строкой
+    CHECK(compareVersions("v1.16.2", "1.17.0 beta") < 0);
+    CHECK(isNewer("v1.17.1", "1.17.0 beta"));
+    CHECK(!isNewer("v1.17.0", "1.17.0 beta"));
+    CHECK(!isNewer("v1.16.2", "1.17.0 beta"));
+    CHECK(!isNewer("", "1.17.0 beta"));
+    CHECK(latestApiUrl() == "https://api.github.com/repos/QIISIT/Autoq/releases/latest");
+
+    // как отвечает GitHub (сокращённо, по релизу v1.17.0)
+    const QByteArray json = R"({
+        "tag_name": "v1.17.1", "name": "Version 1.17.1 beta", "draft": false, "prerelease": false,
+        "html_url": "https://github.com/QIISIT/Autoq/releases/tag/v1.17.1",
+        "assets": [
+          {"name": "AutoQ-1.17.1-beta-macOS.dmg", "size": 25453647,
+           "browser_download_url": "https://github.com/QIISIT/Autoq/releases/download/v1.17.1/AutoQ-1.17.1-beta-macOS.dmg",
+           "digest": "sha256:262E56CF7241A9DA13789076AE9525F8306F50533492936D9C13F53C6572D492"},
+          {"name": "AutoQ-1.17.1-beta-Windows-Portable.zip", "size": 10098726,
+           "browser_download_url": "https://github.com/QIISIT/Autoq/releases/download/v1.17.1/AutoQ-1.17.1-beta-Windows-Portable.zip",
+           "digest": "sha256:eb0983244fd2bc5154e6c3218d9f48671aebda592309f65ce2ec67db2d245c06"},
+          {"name": "AutoQ-1.17.1-beta-Windows-Setup.exe", "size": 7998920,
+           "browser_download_url": "https://github.com/QIISIT/Autoq/releases/download/v1.17.1/AutoQ-1.17.1-beta-Windows-Setup.exe"},
+          {"name": "autoq-v1171.tar.gz", "size": 750002,
+           "browser_download_url": "https://github.com/QIISIT/Autoq/releases/download/v1.17.1/autoq-v1171.tar.gz",
+           "digest": "sha256:a7fd033f27e2acc12f4c3529d45c066b45022768b7a9a28e5b886bbb1662a5b8"},
+          {"name": "autoq-v1171.tar.gz.sig", "size": 10,
+           "browser_download_url": "https://github.com/QIISIT/Autoq/releases/download/v1.17.1/autoq-v1171.tar.gz.sig"},
+          {"name": "evil.exe", "size": 1, "browser_download_url": "http://example.com/evil.exe"}
+        ]})";
+    QString err;
+    const Release r = parseRelease(json, &err);
+    CHECK(r.valid());
+    CHECK(r.tag == "v1.17.1");
+    CHECK(r.version == "1.17.1 beta");
+    CHECK(r.page.endsWith("/releases/tag/v1.17.1"));
+    CHECK(r.assets.size() == 5);                                    // без https — не берём
+    const Asset* setup = pickAsset(r, Package::Setup);
+    const Asset* portable = pickAsset(r, Package::Portable);
+    const Asset* source = pickAsset(r, Package::Source);
+    const Asset* dmg = pickAsset(r, Package::Dmg);
+    CHECK(setup && setup->name == "AutoQ-1.17.1-beta-Windows-Setup.exe" && setup->sha256.isEmpty());
+    CHECK(portable && portable->size == 10098726 &&
+          portable->sha256 == "eb0983244fd2bc5154e6c3218d9f48671aebda592309f65ce2ec67db2d245c06");
+    CHECK(source && source->name == "autoq-v1171.tar.gz");          // не .sig
+    CHECK(dmg && dmg->sha256 == "262e56cf7241a9da13789076ae9525f8306f50533492936d9c13f53c6572d492");   // строчными
+    CHECK(pickAsset(r, Package::None) == nullptr);
+    for (Package p : {Package::Setup, Package::Portable, Package::Source, Package::Dmg})
+        CHECK(packageFromKey(packageKey(p)) == p);
+    CHECK(packageFromKey("") == Package::None && packageKey(Package::None).isEmpty());
+
+    // название без номера — версия из тега; пререлиз, черновик и мусор — не релиз
+    QByteArray noName = json;
+    noName.replace("\"Version 1.17.1 beta\"", "\"Big update\"");
+    CHECK(parseRelease(noName).version == "1.17.1");
+    QByteArray pre = json;
+    pre.replace("\"prerelease\": false", "\"prerelease\": true");
+    CHECK(!parseRelease(pre).valid());
+    CHECK(!parseRelease("{\"message\": \"API rate limit exceeded\"}").valid());
+    CHECK(!parseRelease("<html>").valid());
+
+    const QByteArray sums = "64cc08bf42b5e744e544ae2894000dd65402d54eec5c238e52de55875880ad05  AutoQ-1.17.1-beta-Windows-Setup.exe\n"
+                            "A7FD033F27E2ACC12F4C3529D45C066B45022768B7A9A28E5B886BBB1662A5B8 *autoq-v1171.tar.gz\r\n";
+    CHECK(sumFor(sums, "AutoQ-1.17.1-beta-Windows-Setup.exe") == "64cc08bf42b5e744e544ae2894000dd65402d54eec5c238e52de55875880ad05");
+    CHECK(sumFor(sums, "autoq-v1171.tar.gz") == "a7fd033f27e2acc12f4c3529d45c066b45022768b7a9a28e5b886bbb1662a5b8");
+    CHECK(sumFor(sums, "AutoQ-Setup.exe").isEmpty());
+
+    QTemporaryDir tmp;
+    QFile f(tmp.filePath("abc.bin"));
+    CHECK(f.open(QIODevice::WriteOnly) && f.write("abc") == 3);
+    f.close();
+    CHECK(sha256OfFile(f.fileName()) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    CHECK(sha256OfFile(tmp.filePath("none.bin")).isEmpty());
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     testKeys();
@@ -1611,6 +1694,7 @@ int main(int argc, char** argv) {
     testGroups();
     testDataDir();
     testCardLayout();
+    testUpdates();
     testI18n();
     {
         const QString pid = QString::number(QCoreApplication::applicationPid());
