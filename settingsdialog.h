@@ -1,6 +1,7 @@
 #pragma once
-// «Настройки»: вкладка «Оформление» (тема, акцент, фон) и вкладка
-// «Оверлей КПС» (что показывать, где, как выглядит — с живым образцом).
+// «Настройки»: вкладка «Оформление» (тема, акцент, фон), вкладка «Оверлей КПС»
+// (что показывать, где, как выглядит — с живым образцом) и «Подсказки» (все
+// подсказки с поиском, значки «?» и подсказки при первом знакомстве).
 // Всё меняется и сохраняется сразу.
 #include <QDialog>
 #include <QButtonGroup>
@@ -25,7 +26,7 @@ class ToggleSwitch;
 class SettingsDialog : public QDialog {
     Q_OBJECT
 public:
-    enum Page { General = 0, Appearance = 1, Overlay = 2 };
+    enum Page { General = 0, Appearance = 1, Overlay = 2, TipsPage = 3 };
     SettingsDialog(OverlayWindow* overlay, Page page = Appearance, QWidget* parent = nullptr);
     ~SettingsDialog() override;
     // раскладка открытой игры (для «Сохранить текущий вид» — по желанию со стилем)
@@ -41,11 +42,13 @@ signals:
     void onboardingRequested();     // «Пройти первый запуск заново»
     void editLayoutRequested();   // «Режим редактирования» карточек — в главном окне
     void styleApplyRequested(const QString& name);   // «Мои стили»: поставить стиль (с раскладкой — главное окно)
+    void tipsChanged();             // значки «?» включили или выключили
 
 private:
     QWidget* buildGeneralPage();
     QWidget* buildAppearancePage();
     QWidget* buildOverlayPage();
+    QWidget* buildTipsPage();
     void apply(const Theme::Appearance& a);
     void refresh();                         // отметить выбранные цвета, перекрасить образцы
     void rebuildBgRow();

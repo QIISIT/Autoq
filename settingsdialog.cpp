@@ -13,6 +13,7 @@
 #include "styles.h"
 #include "styleui.h"
 #include "updater.h"
+#include "tips.h"
 #include <QMenu>
 #include <QApplication>
 #include <QGuiApplication>
@@ -37,6 +38,8 @@
 #include <QTimer>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QSet>
+#include <QHash>
 
 static QString autoText_() {
 #ifdef _WIN32
@@ -84,7 +87,7 @@ SettingsDialog::SettingsDialog(OverlayWindow* overlay, Page page, QWidget* paren
     top->addWidget(headIcon_);
     top->addWidget(mkLabel(T("Настройки"), "cardTitle"));
     top->addStretch(1);
-    tabs_ = new Segmented({T("Основные"), T("Оформление"), T("Оверлей КПС")}, false);
+    tabs_ = new Segmented({T("Основные"), T("Оформление"), T("Оверлей КПС"), T("Подсказки")}, false);
     top->addWidget(tabs_);
     outer->addLayout(top);
 
@@ -101,6 +104,7 @@ SettingsDialog::SettingsDialog(OverlayWindow* overlay, Page page, QWidget* paren
     pages_->addWidget(scrolled(buildGeneralPage()));
     pages_->addWidget(scrolled(buildAppearancePage()));
     pages_->addWidget(scrolled(buildOverlayPage()));
+    pages_->addWidget(scrolled(buildTipsPage()));
     outer->addWidget(pages_, 1);
 
     auto* foot = new QHBoxLayout();
@@ -482,6 +486,96 @@ QWidget* SettingsDialog::buildGeneralPage() {
     connect(again, &QPushButton::clicked, this, &SettingsDialog::onboardingRequested);
     lay->addWidget(again, 0, Qt::AlignLeft);
     lay->addStretch(1);
+    return page;
+}
+
+// ===========================================================================
+// Подсказки (И2): все подсказки по разделам, поиск; значки «?» и первое знакомство
+// ===========================================================================
+QWidget* SettingsDialog::buildTipsPage() {
+    auto* page = new QWidget();
+    page->setObjectName("mainInner");
+    auto* lay = new QVBoxLayout(page);
+    lay->setContentsMargins(22, 10, 22, 10);
+    lay->setSpacing(12);
+    lay->addWidget(mkLabel(T("Как и что делать в AutoQ — коротко, по разделам."), "muted"));
+    auto toggle = [&](const QString& text, const QString& tip, bool on, const std::function<void(bool)>& apply) {
+        auto* h = new QHBoxLayout();
+        h->setSpacing(10);
+        auto* sw = new ToggleSwitch();
+        sw->setChecked(on);
+        sw->setAccessibleName(text);
+        sw->setToolTip(tip);
+        h->addWidget(sw);
+        auto* l = mkLabel(text, "muted");
+        l->setToolTip(tip);
+        l->setWordWrap(true);
+        h->addWidget(l, 1);
+        lay->addLayout(h);
+        connect(sw, &ToggleSwitch::toggled, this, [apply](bool v) { apply(v); });
+    };
+    toggle(T("Значки «?» рядом с функциями"), T("Щелчок по «?» — подсказки по этой функции: как и что делать"),
+           Tips::badges(), [this](bool v) { Tips::setBadges(v); emit tipsChanged(); });
+    toggle(T("Подсказывать при первом знакомстве с функцией"),
+           T("Один раз, когда впервые пробуешь функцию (по шагам, группы, редактор интерфейса), внизу окна — короткая подсказка"),
+           Tips::firstTime(), [](bool v) { Tips::setFirstTime(v); });
+    auto* again = new QPushButton(T("Показать подсказки заново"));
+    again->setObjectName("outline");
+    again->setCursor(Qt::PointingHandCursor);
+    again->setToolTip(T("Подсказки при первом знакомстве покажутся ещё раз"));
+    again->setEnabled(Tips::seenCount() > 0);
+    lay->addWidget(again, 0, Qt::AlignLeft);
+    connect(again, &QPushButton::clicked, this, [this, again]() {
+        Tips::resetSeen();
+        again->setEnabled(false);
+        Toast::show(this, T("Подсказки при первом знакомстве покажутся снова."));
+    });
+
+    auto* search = new QLineEdit();
+    search->setPlaceholderText(T("Найти подсказку: группа, шаги, профиль…"));
+    search->setClearButtonEnabled(true);
+    search->setAccessibleName(T("Найти подсказку"));
+    lay->addWidget(search);
+
+    // разделы и карточки подсказок: поиск прячет лишнее (и пустые разделы)
+    struct Row { QWidget* w; QString id; };
+    QList<Row> rows;
+    QHash<QString, QLabel*> heads;
+    QString section;
+    for (const Tips::Tip& t : Tips::all()) {
+        if (t.section != section) {
+            section = t.section;
+            QLabel* h = mkLabel(section, "fieldLabel");
+            lay->addWidget(h);
+            heads.insert(section, h);
+        }
+        auto* card = new QFrame();
+        card->setObjectName("summary");
+        auto* cv = new QVBoxLayout(card);
+        cv->setContentsMargins(14, 10, 14, 11);
+        cv->setSpacing(4);
+        auto* title = mkLabel(t.title, "tipTitle");
+        title->setWordWrap(true);
+        cv->addWidget(title);
+        auto* text = mkLabel(t.text, "muted");
+        text->setWordWrap(true);
+        text->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        cv->addWidget(text);
+        lay->addWidget(card);
+        rows << Row{card, t.id};
+    }
+    auto* nothing = mkLabel(T("Ничего не нашлось — попробуй другое слово."), "muted");
+    nothing->hide();
+    lay->addWidget(nothing);
+    lay->addStretch(1);
+    connect(search, &QLineEdit::textChanged, this, [rows, heads, nothing](const QString& q) {
+        QSet<QString> show;
+        QSet<QString> sections;
+        for (const Tips::Tip& t : Tips::find(q)) { show.insert(t.id); sections.insert(t.section); }
+        for (const Row& r : rows) r.w->setVisible(show.contains(r.id));
+        for (auto it = heads.cbegin(); it != heads.cend(); ++it) it.value()->setVisible(sections.contains(it.key()));
+        nothing->setVisible(show.isEmpty());
+    });
     return page;
 }
 
