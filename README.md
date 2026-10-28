@@ -1,117 +1,73 @@
-# AutoQ 1.17.0 beta — created by Qisit
+<div align="center">
 
-Автокликер с базой игр: скип диалогов в Genshin и похожих играх, спам,
-комбинации и удержание клавиш в Minecraft и своих играх. Четыре режима —
-«По очереди», «Вместе», «Зажать» и «По шагам» (нажать ↓ и отпустить ↑ —
-отдельные шаги, для кикфлипов и отмен); действий — сколько угодно, у каждого
-своё «держать, мс» и пауза; «старт через» и «повтор через» в начале и в конце
-цепочки. Кликает только в выбранном окне игры.
-Три стиля интерфейса — «Студия», «Стекло», «Терминал» (выбор при первом
-запуске), анимации и размер интерфейса 100–200 %. Редактор интерфейса прямо в
-окне: карточки и блоки перетаскиваются (шапка — тоже блоки), края карточек
-тянутся (ширина четвертями, высота), у карточки свой вид и цвет, лишние блоки
-прячутся, шаблоны «Классика», «Компакт», «Монитор», «Одна колонка», раскладка
-в файл и обратно, боковая панель слева, справа, узкая или скрытая, Ctrl+Z / Ctrl+Y.
-Щелчок по мелкому элементу в редакторе (шаг, клавиша, плашка, кнопки профиля,
-«Старт», подсказки) — его вид, цвет, скругление, размер, «спрятать» — сразу у
-всей группы. «Мои стили»: оформление под своим именем (по желанию с раскладкой),
-файл `.aqstyle` — поделиться с другом.
-Блок «Монитор запуска»: сколько идёт запуск, круги, нажатия, текущий шаг.
-У каждой игры своя клавиша старт/стоп (любая клавиша, сочетание, две клавиши
-вроде Tab+F, колёсико, Mouse 4/5), режим «вкл/выкл» или «пока держу»; «активные» игры запускаются
-своей клавишей, даже когда открыта другая, — можно несколько сразу.
-Клавиши профилей и «активна / нет». Мини-окно, значок в трее.
-Группы действий: Ctrl + щелчок по карточкам — «Сделать группой», у группы
-имя и «×N» повторов. Правка `settings.ini` при открытом AutoQ подхватывается сама.
-Оверлей КПС поверх игры — клики в секунду (всего и по каждому действию),
-счётчик, статус, график; место, цвета, прозрачность, размер и шрифт — свои.
-Значки игр — четыре стиля на выбор: «Глянец» (по умолчанию), «Иллюстрация»,
-«Неон», «Классика» (Настройки → Оформление).
-Русский и английский интерфейс (Настройки → Основные → Язык).
-Linux (X11 / XWayland), Windows 10/11 и macOS 12+. 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/logo-light.png">
+  <img alt="AutoQ" src="docs/images/logo-light.png" width="400">
+</picture>
 
-## Linux (Arch)
+<br><br>
 
-```bash
-sudo pacman -S --needed qt6-base libx11 libxtst libxi xcb-util-cursor cmake gcc ninja
-tar -xf autoq-v114.tar.gz
-cd autoq
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-cp build/AutoQ ~/.local/bin/AutoQ
-~/.local/bin/AutoQ
-```
+[![downloads](https://img.shields.io/github/downloads/QIISIT/Autoq/total?label=downloads&color=2ea043)](https://github.com/QIISIT/Autoq/releases)
+[![release](https://img.shields.io/github/v/release/QIISIT/Autoq?label=release&color=e8453c)](https://github.com/QIISIT/Autoq/releases/latest)
+[![platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-0a7bbb)](#скачать)
+[![license](https://img.shields.io/badge/license-PolyForm%20NC%201.0-8957e5)](LICENSE.md)
+[![issues](https://img.shields.io/github/issues/QIISIT/Autoq?color=d4a72c)](https://github.com/QIISIT/Autoq/issues)
 
-Перед обновлением закройте запущенный AutoQ (значок в трее → Выход).
+</div>
 
-Ubuntu/Debian: `sudo apt install qt6-base-dev libx11-dev libxtst-dev libxi-dev cmake g++ ninja-build`.
+## Что такое AutoQ?
 
-Под Wayland клики и глобальная клавиша работают с играми, которые идут через
-XWayland (Proton/Wine, Minecraft Java) — это почти все игры. Окна AutoQ под
-Wayland тоже открываются через XWayland — только так оверлей КПС встаёт поверх
-игры в нужном месте. Отключить: Настройки → «Оверлей КПС» → «Linux · Wayland».
+AutoQ — **автокликер для игр**, который кликает только в окне выбранной игры.
+Свернул игру, ответил в Discord, открыл браузер — клики туда не уйдут.
+Windows, Linux и macOS, интерфейс на русском и английском.
 
-## Windows
+![Главное окно AutoQ](docs/images/screenshot.png)
+<p align="center"><i>v1.17.0</i></p>
 
-Готовые файлы: `AutoQ-Windows-Portable.zip` (один exe) или `AutoQ-Setup.exe`. Инструкция —
-`windows/README_WINDOWS.txt`. Пересборка exe из Linux: `windows/build-from-linux.sh`.
+[![made with C++](https://img.shields.io/badge/made%20with-C%2B%2B-e8453c?style=for-the-badge)](docs/DEVELOPMENT.md)
+[![built with Qt 6](https://img.shields.io/badge/built%20with-Qt%206-41cd52?style=for-the-badge)](https://www.qt.io)
+[![download](https://img.shields.io/github/v/release/QIISIT/Autoq?style=for-the-badge&label=download&color=3a7bd5)](https://github.com/QIISIT/Autoq/releases/latest)
 
-## macOS
+## Чем отличается от обычных автокликеров
 
-Собирается на Маке (`macos/build-mac.sh`, нужен `brew install cmake ninja qt`) или
-в GitHub Actions (`.github/workflows/macos.yml` — одна сборка для Apple Silicon и Intel).
-Как открыть без платной подписи Apple и какие разрешения дать —
-`macos/README_MAC.txt`. Про подпись Windows и macOS — `SIGNING.md`.
+- **Знает, где игра.** Обычный автокликер жмёт везде, где стоит мышь. AutoQ привязан
+  к окну игры, у каждой игры свои настройки и своя клавиша старт/стоп, а несколько
+  игр могут работать одновременно.
+- **Не только клик.** Мышь и клавиатура вперемешку, удержание, паузы, группы с повтором ×N.
+  Режимы «По очереди», «Вместе», «Зажать» и «По шагам», где нажать и отпустить — отдельные шаги.
+- **Пресеты и профили.** Например, «Скип диалогов» для Genshin (ЛКМ → F).
+  Профили переключаются своей клавишей.
+- **Видно, что происходит.** Оверлей КПС поверх игры: клики в секунду, счётчик и график.
+- **Свой вид.** Три стиля, редактор карточек прямо в окне, свои цвета. Стиль можно
+  сохранить в файл и отдать другу.
 
-## Как устроено
+## Скачать
 
-| Файл | Что делает |
+**[Последняя версия →](https://github.com/QIISIT/Autoq/releases/latest)**
+
+| Система | Что скачать |
 |---|---|
-| `keys.cpp` | единая таблица клавиш: имя → код Windows, X11, Qt |
-| `games.cpp` | база игр, значки игр, режимы, пресеты, профили, перенос старых настроек |
-| `winmatch.cpp` | какое окно активно и принадлежит ли оно игре (процесс + заголовок) |
-| `clicker.cpp` | отправка нажатий (SendInput со скан-кодами / XTest / CGEvent) |
-| `hotkey.cpp` | глобальные клавиши: старт/стоп игр, профили (RegisterHotKey / XGrabKey / CGEventTap; буквы и кнопки мыши — хуки / XInput2), нажатие и отпускание |
-| `macsupport.mm`, `macperm.cpp` | macOS: активное приложение, окна поверх полноэкранных игр, разрешения |
-| `icons.cpp` | логотип и значки, нарисованные кодом (свой набор, без логотипов игр; 4 стиля) |
-| `i18n.cpp`, `i18n_en.cpp` | язык интерфейса: строки пишутся по-русски через `T("…")`, английский словарь — в `i18n_en.cpp` (тест проверяет, что переведено всё) |
-| `theme.cpp` | стили «Студия» / «Стекло» / «Терминал», тема из цвета акцента и фона, редактор интерфейса, размер, шрифты |
-| `animations.cpp` | анимации переходов и сообщения внутри окна |
-| `onboarding.cpp` | первый запуск: выбор стиля и анимаций |
-| `actionseditor.cpp` | действия игры: сколько угодно, «держать» и паузы, группы (выделить, «Сделать группой», ×N) |
-| `groupdialog.cpp` | окно группы действий: имя, свои действия, удалить |
-| `hotkeydialog.cpp` | окно «назначить клавишу» (профили, «активна») |
-| `keypicker.cpp` | выбор клавиши из всей клавиатуры с поиском |
-| `colorpicker.cpp` | свой цвет с живым образцом окна |
-| `overlay.cpp` | оверлей КПС поверх игры (прозрачный для мыши) и его образец в настройках |
-| `cardlayout.cpp`, `board.cpp` | редактор интерфейса: раскладка у каждой игры (карточки, блоки, ширина, высота, вид, цвет, скрытые блоки), вид мелких элементов по группам, шаблоны, файл раскладки, отмена, боковая панель |
-| `styles.cpp`, `styleui.cpp` | «Мои стили»: оформление (и по желанию раскладка) в файле `.aqstyle` — сохранить, поставить, переименовать, в файл и из файла |
-| `sounds.cpp` | звуки старт/стоп: встроенный набор, «Мои звуки» (свои WAV), громкость |
-| `framesync.cpp` | клики в такт с монитором (частота кадров) |
-| `appsettings.cpp` | папка данных: settings.ini, профили файлами, портативный режим (AutoQ-data), правка файла снаружи |
-| `mainwindow.cpp`, `miniwindow.cpp`, `gameeditdialog.cpp`, `settingsdialog.cpp`, `widgets.cpp` | интерфейс |
+| Windows 10/11 | `…-Windows-Setup.exe` — установщик, или `…-Windows-Portable.zip` — без установки |
+| macOS 12+ | `…-macOS.dmg` — одна сборка для Apple Silicon и Intel ([первый запуск](macos/README_MAC.txt)) |
+| Linux (X11 / XWayland) | собирается из исходников за пару минут, команда — в описании релиза |
 
-Шрифты Unbounded, Onest и JetBrains Mono — под лицензией SIL OFL 1.1
-(тексты лицензий в `resources/fonts`).
+Windows может предупредить о «неизвестном издателе»: «Подробнее» → «Выполнить в любом случае».
+
+## Для разработчиков
+
+Сборка, устройство кода и тесты — в [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 ## Лицензия
 
-© 2026 Qisit. Код AutoQ — под лицензией [PolyForm Noncommercial 1.0.0](LICENSE.md):
-смотреть, собирать, менять и делиться можно бесплатно и только не для заработка.
-Продавать AutoQ или его код, встраивать в платные продукты и сервисы нельзя без
-отдельного разрешения автора. Qt и шрифты — под своими лицензиями, см.
-[THIRD-PARTY.md](THIRD-PARTY.md).
+© 2026 Qisit. [PolyForm Noncommercial 1.0.0](LICENSE.md): смотреть, собирать, менять
+и делиться можно бесплатно и только не для заработка. Продавать AutoQ или его код,
+встраивать в платные продукты и сервисы нельзя без отдельного разрешения автора.
+Qt и шрифты — под своими лицензиями, см. [THIRD-PARTY.md](THIRD-PARTY.md).
 
-## Тесты
+---
 
-```bash
-cmake -S . -B build -G Ninja -DAQ_BUILD_TESTS=ON && cmake --build build
-./build/tests/test_core                              # ядро
-QT_QPA_PLATFORM=offscreen ./build/tests/test_icons   # значки
-QT_QPA_PLATFORM=offscreen ./build/tests/test_overlay # оверлей КПС, вид элементов, стили
-./build/tests/inputtool probe                        # какое окно активно и какой игре подходит
-```
-
-`inputtool probe` полезен, если игра не распознаётся: запустите
-`sleep 3; ./build/tests/inputtool probe`, переключитесь в игру и посмотрите
-процесс и заголовок — их можно вписать в правила игры (карандаш у названия).
+**English.** AutoQ is a game autoclicker that clicks only inside the game window you pick.
+Windows, Linux and macOS, Russian and English UI. Get it from
+[Releases](https://github.com/QIISIT/Autoq/releases/latest). Free for non-commercial use
+under PolyForm Noncommercial 1.0.0.
