@@ -24,6 +24,7 @@
 #include "framesync.h"
 #include "updater.h"
 #include "macsupport.h"
+#include "tips.h"
 #include <QWidget>
 #include <QFrame>
 #include <QVBoxLayout>
@@ -510,6 +511,8 @@ void MainWindow::buildActionsCard() {
     head->addWidget(mkLabel(T("Режим"), "small"));
     head->addWidget(modeSeg_);
     head->addWidget(singleSeg_);
+    head->addWidget(tipBadge({"actions.modes", "actions.steps", "groups.make", "groups.create", "groups.steps"}),
+                    0, Qt::AlignVCenter);
     blk->setHead(headW);
     QVBoxLayout* lay = blk->body();
 
@@ -568,6 +571,7 @@ void MainWindow::buildSpeedCard() {
     rateCaption_->setWordWrap(true);
     rate->addWidget(rateLabel_, 0, Qt::AlignBottom);
     rate->addWidget(rateCaption_, 1, Qt::AlignBottom);
+    rate->addWidget(tipBadge({"speed.units", "speed.jitter", "speed.sync"}), 0, Qt::AlignTop);
     lay->addLayout(rate);
     slider_ = new QSlider(Qt::Horizontal);
     slider_->setRange(0, 1000);
@@ -698,6 +702,7 @@ void MainWindow::buildWindowCard() {
     countdown_->setIdleText(T("Выбрать окно"));
     capRow->addWidget(checkBtn_, 1);
     capRow->addWidget(timeSeg_);
+    capRow->addWidget(tipBadge({"window.pick", "window.rules"}), 0, Qt::AlignVCenter);
     lay->addLayout(capRow);
 }
 
@@ -761,6 +766,7 @@ void MainWindow::buildProfileCard() {
         profileMoreBtn_->setMenu(m);
     }
     prow->addWidget(profileMoreBtn_);
+    prow->addWidget(tipBadge({"profiles.save", "profiles.key", "profiles.file"}), 0, Qt::AlignVCenter);
     lay->addLayout(prow);
     profileState_ = mkLabel(QString(), "profileState");
     profileState_->setWordWrap(true);
@@ -810,6 +816,8 @@ void MainWindow::buildProfileCard() {
     captureBtn_ = new KeyCaptureButton(false);
     captureBtn_->setObjectName("captureOval");
     hk->addWidget(captureBtn_);
+    hk->addWidget(tipBadge({"launch.key", "launch.chord", "launch.block", "launch.keymode", "launch.several"}),
+                  0, Qt::AlignVCenter);
     hk->addStretch(1);
     lay->addLayout(hk);
     // кнопка мыши или буква обычно доходят до игры; можно забрать их только под AutoQ
@@ -936,6 +944,7 @@ void MainWindow::connectSignals() {
     });
     connect(overlayBtn_, &QToolButton::customContextMenuRequested, this, &MainWindow::openOverlaySettings);
     connect(settingsBtn_, &QToolButton::clicked, this, &MainWindow::openSettings);
+    InfoBadge::setAllTipsHandler([this]() { openSettingsPage(SettingsDialog::TipsPage); });
     connect(startBtn_, &QPushButton::clicked, this, &MainWindow::startPressed);
     connect(onboarding_, &OnboardingPage::appearanceChanged, this, &MainWindow::appearanceChanged);
     connect(onboarding_, &OnboardingPage::finished, this, &MainWindow::finishOnboarding);
@@ -969,8 +978,9 @@ void MainWindow::connectSignals() {
     });
     connect(actionsEdit_, &ActionsEditor::changed, this, [this]() {
         if (loading_) return;
-        // группы игры: сделали, поправили или удалили (у удалённой вызовы в другом ряду —
-        // «По шагам» или действия — тоже становятся обычными карточками)
+        // группы (общие для всех игр): сделали, поправили или удалили. У удалённой вызовы
+        // в другом ряду этой игры («По шагам» или действия) и в рядах других игр тоже
+        // становятся обычными карточками
         const QList<ActionGroup> groups = actionsEdit_->groups();
         if (groups != cur_.groups) {
             const bool steps = game_.mode == GameMode::Steps;
@@ -978,18 +988,25 @@ void MainWindow::connectSignals() {
                 if (Groups::find(groups, g.id)) continue;
                 if (steps) cur_.actions = Groups::inlineAll(cur_.actions, g, false, kMaxActions);
                 else if (!cur_.steps.isEmpty()) cur_.steps = Groups::inlineAll(cur_.steps, g, true, kMaxSteps);
+                Games::inlineGroupEverywhere(g, game_.id);
             }
             if (cur_.actions.isEmpty()) cur_.actions << ActionStep{};
+            const bool made = groups.size() > cur_.groups.size();
             cur_.groups = groups;
-            Games::saveGroups(game_.id, groups);
+            Games::saveGroups(groups);
+            if (made) firstTimeTip("groups.shared");      // первая группа: она видна во всех играх
+        } else if (game_.mode == GameMode::Sequence && groups.isEmpty() && actionsEdit_->actions().size() >= 2) {
+            firstTimeTip("groups.make");                    // карточек уже несколько — их можно собрать в группу
         }
         if (game_.mode == GameMode::Steps) {
             cur_.steps = actionsEdit_->actions();
         } else {
             const bool wasMulti = cur_.multi();
             cur_.actions = actionsEdit_->actions();
-            // стало одно действие: «вместе» — то же, что «повторять»
-            if (wasMulti && !cur_.multi() && game_.mode == GameMode::Combo) {
+            // стало одно действие: «вместе» — то же, что «повторять»; в ряд встала группа —
+            // дальше по очереди (у группы есть порядок, «вместе» её не бывает)
+            if (game_.mode == GameMode::Combo &&
+                ((wasMulti && !cur_.multi()) || !Groups::usedIds(cur_.actions).isEmpty())) {
                 game_.mode = GameMode::Sequence;
                 Games::save(game_);
             }
@@ -1617,6 +1634,7 @@ void MainWindow::setGameMode(GameMode m, bool announce) {
     updateHeader();
     commit();
     if (announce) notify(T("Режим: %1").arg(gameModeName(m)));
+    if (m == GameMode::Steps) firstTimeTip("actions.steps");
 }
 
 void MainWindow::applyModeLayout() {
@@ -3607,6 +3625,29 @@ void MainWindow::notify(const QString& text) {
         tray_->showMessage(kAppTitle, text, QSystemTrayIcon::Information, 2500);
 }
 
+InfoBadge* MainWindow::tipBadge(const QStringList& ids) {
+    auto* b = new InfoBadge(ids);
+    b->setVisible(Tips::badges());
+    tipBadges_ << b;
+    return b;
+}
+
+void MainWindow::applyTipBadges() {
+    const bool on = Tips::badges();
+    for (const QPointer<InfoBadge>& b : tipBadges_)
+        if (b) b->setVisible(on);
+}
+
+// Подсказка при первом знакомстве с функцией: один раз (выключается и показывается
+// заново — Настройки → Подсказки). Пока окно спрятано — ждёт следующего раза
+bool MainWindow::firstTimeTip(const QString& id) {
+    if (!Prefs::onboardingDone() || !isVisible() || isMinimized()) return false;
+    if (!Tips::takeFirstTime(id)) return false;
+    const Tips::Tip t = Tips::get(id);
+    Toast::show(rootStack_, T("Подсказка · %1").arg(t.title) + '\n' + t.text, 9000);
+    return true;
+}
+
 void MainWindow::showMain() {
     if (mini_) mini_->hide();
     miniMode_ = false;
@@ -3758,6 +3799,7 @@ void MainWindow::setLayoutEditing(bool on) {
     }
     if (on && mini_ && mini_->isVisible()) showMain();
     board_->setEditMode(on);
+    if (on) firstTimeTip("ui.editor");
 }
 
 // ---------------------------------------------------------------------------
@@ -3914,6 +3956,7 @@ void MainWindow::openSettingsPage(int page) {
         refreshLive();
     });
     connect(&dlg, &SettingsDialog::appearanceChanged, this, &MainWindow::appearanceChanged);
+    connect(&dlg, &SettingsDialog::tipsChanged, this, &MainWindow::applyTipBadges);
     dlg.setLayoutSource([this]() { return currentLayoutJson(); });
     connect(&dlg, &SettingsDialog::styleApplyRequested, this, [this, &dlg](const QString& name) {
         if (applyStyle(name, &dlg)) dlg.reloadAppearance();
