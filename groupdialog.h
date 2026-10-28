@@ -6,7 +6,10 @@
 class QWidget;
 
 namespace GroupDialog {
-enum Result { Cancelled, Saved, Deleted };
+enum Result { Cancelled, Saved, Deleted, DeletedWithCards };
 // uses — сколько раз группа стоит в текущем ряду
 Result edit(QWidget* parent, ActionGroup& g, int uses);
+// «Удалить группу?»: Deleted — её карточки в ряду станут обычными действиями,
+// DeletedWithCards — пропадут из ряда вместе с ней, Cancelled — не удалять
+Result askDelete(QWidget* parent, const ActionGroup& g, int uses);
 }
