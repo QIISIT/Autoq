@@ -202,16 +202,22 @@ QList<ActionStep> Groups::expand(const QList<ActionStep>& chain, const QList<Act
         const QList<ActionStep> items = groupItems(*g, steps);
         if (items.isEmpty()) continue;
         const int reps = once ? 1 : qBound(1, a.repeat, kMaxRepeat);
+        const int between = betweenMs(*g, a);
         for (int r = 0; r < reps; ++r)
             for (int j = 0; j < items.size(); ++j) {
                 if (out.size() >= kMaxRun) return out;
                 ActionStep x = items[j];
-                if (j + 1 == items.size()) x.afterMs = a.afterMs;   // пауза после вызова
+                // между повторами — пауза группы, после последнего — пауза после вызова
+                if (j + 1 == items.size()) x.afterMs = r + 1 < reps ? between : a.afterMs;
                 out << x;
                 if (owner) *owner << i;
             }
     }
     return out;
+}
+
+int Groups::betweenMs(const ActionGroup& g, const ActionStep& call) {
+    return g.betweenMs >= 0 ? g.betweenMs : call.afterMs;
 }
 
 QList<ActionStep> Groups::inlineCall(const ActionStep& call, const ActionGroup& g, bool steps) {
@@ -588,7 +594,7 @@ void Games::save(const GameDef& g) {
     s->sync();
 }
 
-bool Games::remove(const QString& id) {
+bool Games::remove(const QString& id, bool withProfiles) {
     auto s = AppSettings::open();
     ensureList(*s);
     QStringList order = s->value("games/order").toStringList();
@@ -596,7 +602,7 @@ bool Games::remove(const QString& id) {
     order.removeAll(id);
     s->setValue("games/order", order);
     s->remove("games/" + id);
-    QDir(profileDir(id)).removeRecursively();      // и файлы профилей этой игры
+    if (withProfiles) QDir(profileDir(id)).removeRecursively();
     dropProfileCache(id);
     if (s->value("currentGame").toString() == id) {
         if (order.isEmpty()) s->remove("currentGame");
@@ -782,6 +788,7 @@ static void writeGroups(QSettings& s, const QString& prefix, const QList<ActionG
         const QString k = prefix + "group/" + g.id + "/";
         s.setValue(k + "name", g.name.trimmed().left(40));
         s.setValue(k + "steps", g.steps);
+        if (g.betweenMs >= 0) s.setValue(k + "between", g.betweenMs);
         QStringList items;
         for (const ActionStep& a : g.items)
             if (!a.isGroup()) items << encodeStep(a, g.steps);
@@ -801,6 +808,8 @@ static QList<ActionGroup> readGroups(QSettings& s, const QString& prefix) {
         g.name = s.value(k + "name").toString().trimmed().left(40);
         if (g.name.isEmpty()) g.name = Groups::freeName(out);
         g.steps = s.value(k + "steps", false).toBool();
+        // нет ключа — группа из 1.17.0: паузу между повторами подберёт attachGroups
+        g.betweenMs = s.contains(k + "between") ? qBound(0, s.value(k + "between").toInt(), 60000) : -1;
         for (const QString& e : s.value(k + "items").toStringList()) {
             ActionStep a;
             if (!decodeStep(e, &a) || a.isGroup() || g.items.size() >= (g.steps ? kMaxSteps : kMaxActions)) continue;
@@ -828,13 +837,21 @@ void Games::saveGroups(const QString& gameId, const QList<ActionGroup>& groups) 
 
 // Группы игры — в состояние. embedded — копии из файла профиля: каких у игры нет,
 // те добавляются к игре (профиль принёс их с собой). Свои группы игры важнее копий:
-// группу могли поправить после того, как профиль сохранили
+// группу могли поправить после того, как профиль сохранили.
+// У групп из 1.17.0 нет паузы между повторами (между повторами шла пауза после вызова) —
+// ставим ту же паузу паузой группы: круг жмётся как раньше, а пауза после вызова дальше
+// меняет только ожидание перед следующим, а не скорость самой группы
 static void attachGroups(GameState& st, const QString& gameId, const QList<ActionGroup>& embedded = {}) {
     QList<ActionGroup> mine = Games::groups(gameId);
-    bool added = false;
+    bool changed = false;
     for (const ActionGroup& g : embedded)
-        if (!Groups::find(mine, g.id) && mine.size() < kMaxGroups) { mine << g; added = true; }
-    if (added) Games::saveGroups(gameId, mine);
+        if (!Groups::find(mine, g.id) && mine.size() < kMaxGroups) { mine << g; changed = true; }
+    for (ActionGroup& g : mine) {
+        if (g.betweenMs >= 0) continue;
+        for (const ActionStep& a : st.actions + st.steps)
+            if (a.group == g.id) { g.betweenMs = a.afterMs; changed = true; break; }
+    }
+    if (changed) Games::saveGroups(gameId, mine);
     st.groups = mine;
 }
 
@@ -964,6 +981,49 @@ GameState defaultFor(const QString& gameId) {
 QString Games::profileFile(const QString& gameId, const QString& name) { return findProfile(gameId, name).path; }
 void Games::reloadProfiles() { profileCache().clear(); }
 QString Games::profilesFolder(const QString& gameId) { return profileDir(gameId); }
+
+// Профили убранной игры остаются в её папке. Своя игра при новом добавлении получает новый
+// id — папку другую; её профили находятся по названию игры, записанному в файлах профилей
+int Games::adoptProfiles(const QString& gameId, const QString& name) {
+    const QString want = name.trimmed();
+    if (gameId.isEmpty() || want.isEmpty()) return 0;
+    // папки игр из списка не трогаем, встроенных — тоже: их профили ждут, когда игру вернут
+    QStringList own;
+    for (const GameDef& g : list()) own << AppSettings::safeFileName(g.id);
+    for (const GameDef& g : builtinDefaults()) own << AppSettings::safeFileName(g.id);
+    QDir root(AppSettings::profilesDir());
+    int moved = 0;
+    for (const QFileInfo& di : root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name)) {
+        if (own.contains(di.fileName())) continue;
+        const QFileInfoList files = QDir(di.absoluteFilePath()).entryInfoList({"*.ini"}, QDir::Files, QDir::Name);
+        bool same = false;
+        for (const QFileInfo& fi : files) {
+            QSettings f(fi.absoluteFilePath(), QSettings::IniFormat);
+            if (f.value("AutoQ/type").toString() == "profile" &&
+                f.value("AutoQ/gameName").toString().trimmed().compare(want, Qt::CaseInsensitive) == 0) { same = true; break; }
+        }
+        if (!same) continue;
+        for (const QFileInfo& fi : files) {
+            QString pname;
+            {
+                QSettings f(fi.absoluteFilePath(), QSettings::IniFormat);
+                if (f.value("AutoQ/type").toString() != "profile") continue;
+                pname = f.value("AutoQ/name").toString().trimmed();
+            }
+            if (!validProfileName(pname, nullptr)) pname = fi.completeBaseName().trimmed();
+            const QString to = newProfilePath(gameId, pname);
+            QDir().mkpath(QFileInfo(to).absolutePath());
+            if (!QFile::rename(fi.absoluteFilePath(), to)) continue;
+            QSettings f(to, QSettings::IniFormat);
+            f.setValue("AutoQ/game", gameId);
+            f.sync();
+            ++moved;
+        }
+        root.rmdir(di.fileName());          // пустая — убираем (не пустая остаётся как есть)
+    }
+    dropProfileCache(gameId);
+    return moved;
+}
 
 QStringList Games::profiles(const QString& gameId) {
     QStringList names;

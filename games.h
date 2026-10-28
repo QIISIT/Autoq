@@ -123,8 +123,11 @@ struct ActionGroup {
     QString name;
     bool steps = false;       // шаги («По шагам»: нажать / отпустить) или действия («По очереди»)
     QList<ActionStep> items;
+    // пауза между повторами (×N у вызова), мс. Пауза после вызова — только после последнего
+    // повтора. -1 — группа из 1.17.0 (между повторами — пауза после вызова, как тогда)
+    int betweenMs = 0;
     bool operator==(const ActionGroup& o) const {
-        return id == o.id && name == o.name && steps == o.steps && items == o.items;
+        return id == o.id && name == o.name && steps == o.steps && items == o.items && betweenMs == o.betweenMs;
     }
     bool operator!=(const ActionGroup& o) const { return !(*this == o); }
 };
@@ -137,8 +140,8 @@ namespace Groups {
     QString newId(const QList<ActionGroup>& taken);
     const ActionGroup* find(const QList<ActionGroup>& groups, const QString& id);
     // Развернуть вызовы групп — то, что жмёт кликер. steps — ряд «По шагам» (группа из
-    // действий становится шагами), once — «Вместе» / «Зажать» (без повторов). Пауза после
-    // вызова — после последнего действия группы (и между повторами). owner[i] — номер
+    // действий становится шагами), once — «Вместе» / «Зажать» (без повторов). Между повторами —
+    // пауза группы (betweenMs), после последнего повтора — пауза после вызова. owner[i] — номер
     // карточки ряда, из которой шаг i (подсветить, что жмётся сейчас)
     QList<ActionStep> expand(const QList<ActionStep>& chain, const QList<ActionGroup>& groups,
                              bool steps, bool once = false, QList<int>* owner = nullptr);
@@ -146,6 +149,8 @@ namespace Groups {
     QList<ActionStep> inlineCall(const ActionStep& call, const ActionGroup& g, bool steps);
     // группу удалили: все её вызовы в ряду — её действиями (не больше max)
     QList<ActionStep> inlineAll(const QList<ActionStep>& chain, const ActionGroup& g, bool steps, int max);
+    // пауза между повторами вызова call (у групп из 1.17.0 — пауза после вызова)
+    int betweenMs(const ActionGroup& g, const ActionStep& call);
     QStringList usedIds(const QList<ActionStep>& chain);
     int uses(const QList<ActionStep>& chain, const QString& id);
     QString preview(const ActionGroup& g, int max = 4);     // «ЛКМ ↓ ПКМ ↕ ЛКМ ↑ +2»
@@ -221,7 +226,12 @@ namespace Games {
     bool contains(const QString& id);
     void save(const GameDef& g);
     bool addBuiltin(const QString& id);          // добавить игру из шаблона
-    bool remove(const QString& id);
+    // убрать игру из списка; файлы профилей остаются (withProfiles — удалить и их):
+    // встроенная игра, добавленная снова, находит их сама, своя — через adoptProfiles
+    bool remove(const QString& id, bool withProfiles = false);
+    // своя игра с тем же названием, что у убранной раньше: её профили — к этой игре.
+    // Вернёт, сколько профилей вернулось
+    int adoptProfiles(const QString& gameId, const QString& name);
     bool resetToDefault(const QString& id);      // вернуть встроенной игре правила
     GameDef builtinDefault(const QString& id, bool* ok = nullptr);
     QString newCustomId();
