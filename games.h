@@ -116,8 +116,9 @@ struct ActionStep {
 
 // Группа действий — как функция: несколько действий или шагов под своим именем. В ряд
 // ставится вызов группы (ActionStep::group); поправил группу — поменялось во всех вызовах.
-// Группы живут у игры, общие для всех её профилей. В файл профиля пишется копия групп,
-// которые он вызывает: профиль с другого ПК приносит их с собой. Группа в группе — нельзя.
+// Группы общие для всех игр и профилей (до 1.18 — у каждой игры свои). В файл профиля
+// пишется копия групп, которые он вызывает: профиль с другого ПК приносит их с собой.
+// Группа в группе — нельзя.
 struct ActionGroup {
     QString id;               // 8 знаков 0-9a-f: случайный, у копий одной группы — один
     QString name;
@@ -131,7 +132,7 @@ struct ActionGroup {
     }
     bool operator!=(const ActionGroup& o) const { return !(*this == o); }
 };
-constexpr int kMaxGroups = 50;
+constexpr int kMaxGroups = 200;       // на все игры вместе
 constexpr int kMaxRepeat = 99;
 constexpr int kMaxRun = 4096;         // круг с развёрнутыми группами — не длиннее (шагов)
 
@@ -154,8 +155,13 @@ namespace Groups {
     QStringList usedIds(const QList<ActionStep>& chain);
     int uses(const QList<ActionStep>& chain, const QString& id);
     QString preview(const ActionGroup& g, int max = 4);     // «ЛКМ ↓ ПКМ ↕ ЛКМ ↑ +2»
+    // группа так, как её жмут в ряду этого вида: в «По шагам» — шагами (действие —
+    // «нажать» и «отпустить»), в ряду действий — действиями (см. Steps::toActions)
+    ActionGroup inRow(const ActionGroup& g, bool steps);
     bool validName(const QString& name, QString* why = nullptr);
     QString freeName(const QList<ActionGroup>& groups);    // «Группа 1», «Группа 2»…
+    // группа для «Создать группу…»: новое имя и id, одно действие или клавиша «нажать ↓, отпустить ↑»
+    ActionGroup blank(const QList<ActionGroup>& groups, bool steps);
 }
 
 // Настройки действий одной игры (текущие и в профилях)
@@ -211,6 +217,10 @@ namespace Steps {
     // остаются нажатыми в конце (их кликер отпустит сам)
     QList<int> strayUps(const QList<ActionStep>& steps);
     QList<ActionStep> leftDown(const QList<ActionStep>& steps);
+    // шаги -> действия: «нажать ↓» и сразу «отпустить ↑» той же клавиши — одно действие
+    // («держать» — пауза между ними), «клик ↕» — клик. exact = false — что-то не собралось:
+    // «нажать» без пары стало кликом, лишнее «отпустить» пропало (его пауза — у предыдущего)
+    QList<ActionStep> toActions(const QList<ActionStep>& steps, bool* exact = nullptr);
 }
 
 struct GamePreset {
@@ -252,9 +262,12 @@ namespace Games {
     void saveProfile(const QString& gameId, const QString& name, const GameState& st, int mode = -1);
     void removeProfile(const QString& gameId, const QString& name);
     bool renameProfile(const QString& gameId, const QString& from, const QString& to);
-    // Группы действий игры (общие для её профилей)
-    QList<ActionGroup> groups(const QString& gameId);
-    void saveGroups(const QString& gameId, const QList<ActionGroup>& groups);
+    // Группы действий — общие для всех игр и их профилей
+    QList<ActionGroup> groups();
+    void saveGroups(const QList<ActionGroup>& groups);
+    // группу удалили: в сохранённых рядах остальных игр её вызовы — её действиями
+    // (как в открытой игре). Файлы профилей не трогаются: в них своя копия группы
+    void inlineGroupEverywhere(const ActionGroup& g, const QString& exceptGameId);
     QString profileFile(const QString& gameId, const QString& name);   // путь к файлу профиля ("" — нет)
     QString profilesFolder(const QString& gameId);                     // папка профилей игры
     void reloadProfiles();     // файлы в папках профилей поменяли снаружи — читать списки заново
