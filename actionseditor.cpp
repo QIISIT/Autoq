@@ -127,7 +127,8 @@ void ActionsEditor::setState(const QList<ActionStep>& list, GameMode mode, int s
     }
 }
 
-int ActionsEditor::repeatMin() const { return repeatMinMs(mode_, int(run().size()), minIntervalMs_); }
+// в окне группы «повтор через» — пауза между её повторами: от 0
+int ActionsEditor::repeatMin() const { return groupMode_ ? 0 : repeatMinMs(mode_, int(run().size()), minIntervalMs_); }
 
 QList<ActionStep> ActionsEditor::run(QList<int>* owner) const {
     return Groups::expand(actions_, groups_, steps(), mode_ == GameMode::Combo || mode_ == GameMode::Hold, owner);
@@ -264,7 +265,7 @@ void ActionsEditor::rebuild() {
             hc->setToolTip(T("Сколько держать нажатым (0 — клик: нажать и сразу отпустить)"));
             g->addWidget(hc, 0, 2, Qt::AlignRight | Qt::AlignVCenter);
         }
-        if (n > 1) {
+        if (n > 1 || call) {
             ui.remove = new QToolButton();
             ui.remove->setObjectName("icon");
             ui.remove->setFixedSize(22, 22);
@@ -323,7 +324,10 @@ void ActionsEditor::rebuild() {
         if (i + 1 < n) {
             QWidget* conn;
             if (paused) {
-                ui.after = smallSpin(0, 60000, steps()
+                ui.after = smallSpin(0, 60000, call
+                    ? T("Пауза после группы — после её последнего повтора, перед следующим в ряду. Скорость самой группы не меняет: "
+                        "паузу между повторами задаёт «повтор через» в окне группы")
+                    : steps()
                     ? T("Пауза после шага %1 перед шагом %2 (щёлкни по полю — и колёсиком быстро менять)").arg(i + 1).arg(i + 2)
                     : T("Пауза после действия %1 перед действием %2 (щёлкни по полю — и колёсиком быстро менять)").arg(i + 1).arg(i + 2));
                 conn = chip(T("пауза"), ui.after, new ArrowLine());
@@ -351,6 +355,16 @@ void ActionsEditor::rebuild() {
             connect(repeatSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
                 if (loading_) return;
                 intervalMs_ = qMax(repeatMin(), v);
+                edited();
+            });
+        } else if (groupMode_) {
+            // окно группы: после последнего — пауза между повторами (×N у карточки группы)
+            repeatSpin_ = smallSpin(0, 60000, T("Пауза между повторами группы (×N на её карточке). После последнего повтора — "
+                                                "пауза, что стоит в ряду после группы"));
+            uh->addWidget(chip(T("повтор через"), repeatSpin_, new LoopLine()), 0, Qt::AlignVCenter);
+            connect(repeatSpin_, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+                if (loading_) return;
+                intervalMs_ = qMax(0, v);
                 edited();
             });
         }
@@ -543,7 +557,13 @@ void ActionsEditor::insertAt(int at, const ActionStep& a) {
 }
 
 void ActionsEditor::removeAt(int i) {
-    if (actions_.size() <= 1 || i < 0 || i >= actions_.size()) return;
+    if (i < 0 || i >= actions_.size()) return;
+    if (actions_.size() == 1) {
+        // одна карточка-группа: убрать её из ряда можно — вместо неё новое действие
+        if (!actions_[i].isGroup()) return;
+        applyEdit({newItem()}, {-1}, i);
+        return;
+    }
     QList<ActionStep> next = actions_;
     next.removeAt(i);
     QList<int> oldOf;
@@ -614,7 +634,10 @@ void ActionsEditor::showMenu(int i, const QPoint& global) {
     right->setEnabled(i + 1 < n);
     m.addSeparator();
     QAction* del = m.addAction(call ? T("Убрать из ряда") : steps() ? T("Убрать шаг") : T("Убрать действие"));
-    del->setEnabled(n > 1);
+    del->setEnabled(n > 1 || call);     // одна группа в ряду — вместо неё станет новое действие
+    QAction* drop = nullptr;
+    if (call && Groups::find(groups_, actions_[i].group))
+        drop = m.addAction(AqIcons::ui("trash", Theme::t().muted, 14), T("Удалить группу…"));
     QAction* got = m.exec(global);
     if (!got) return;
     if (got == flip) {
@@ -628,7 +651,7 @@ void ActionsEditor::showMenu(int i, const QPoint& global) {
     // меню удалится вместе с пунктами — запоминаем, что выбрали, числом
     // (вставка группы из подменю — уже сделана: её пункты сами вызывают insertGroup)
     const int what = got == before ? 1 : got == after ? 2 : got == dup ? 3 : got == left ? 4 : got == right ? 5
-                   : got == del ? 6 : got == edit ? 7 : got == split ? 8 : got == group ? 9 : 0;
+                   : got == del ? 6 : got == edit ? 7 : got == split ? 8 : got == group ? 9 : got == drop ? 10 : 0;
     if (!what) return;
     later([this, i, what]() {
         if (i >= actions_.size()) return;
@@ -645,6 +668,7 @@ void ActionsEditor::showMenu(int i, const QPoint& global) {
                 if (!sel_.contains(i)) setSelection({i});
                 makeGroup();
                 break;
+            case 10: deleteGroup(i); break;
             default: break;
         }
     });
@@ -738,6 +762,7 @@ void ActionsEditor::makeGroup() {
     c.key.clear();
     c.press = ActionStep::Click;
     c.afterMs = actions_[last].afterMs;
+    g.betweenMs = c.afterMs;                // между повторами — та же пауза: ритм ряда не меняется
     groups_ << g;
     QList<ActionStep> next = actions_;
     next.erase(next.begin() + first, next.begin() + first + count);
@@ -773,27 +798,50 @@ void ActionsEditor::editGroup(int i) {
     const ActionGroup* found = Groups::find(groups_, id);
     if (!found) return;
     ActionGroup g = *found;
+    g.betweenMs = Groups::betweenMs(g, actions_[i]);    // группа из 1.17.0 — как жмётся сейчас
     const auto res = GroupDialog::edit(this, g, Groups::uses(actions_, id));
     if (res == GroupDialog::Cancelled) return;
-    for (int k = 0; k < groups_.size(); ++k) {
-        if (groups_[k].id != id) continue;
-        if (res == GroupDialog::Deleted) groups_.removeAt(k); else groups_[k] = g;
-        break;
+    if (res != GroupDialog::Saved) { removeGroup(id, res == GroupDialog::DeletedWithCards); return; }
+    for (ActionGroup& x : groups_)
+        if (x.id == id) { x = g; break; }
+    if (repeatSpin_ && repeatSpin_->minimum() != repeatMin()) {
+        QSignalBlocker b(repeatSpin_);
+        repeatSpin_->setMinimum(repeatMin());
     }
-    if (res == GroupDialog::Deleted) {
-        // её вызовы в ряду — обычными карточками, на тех же местах
-        actions_ = Groups::inlineAll(actions_, g, steps(), maxItems());
-        if (actions_.isEmpty()) actions_ << newItem();
-        setUpdatesEnabled(false);
-        rebuild();
-        setUpdatesEnabled(true);
+    if (builtKey_ != buildKey()) rebuild(); else updateValues();
+    edited();
+}
+
+void ActionsEditor::deleteGroup(int i) {
+    if (i < 0 || i >= actions_.size() || !actions_[i].isGroup()) return;
+    const QString id = actions_[i].group;
+    const ActionGroup* g = Groups::find(groups_, id);
+    if (!g) return;
+    const auto res = GroupDialog::askDelete(this, *g, Groups::uses(actions_, id));
+    if (res == GroupDialog::Cancelled) return;
+    removeGroup(id, res == GroupDialog::DeletedWithCards);
+}
+
+// Группу удалили: её вызовы в ряду — обычными карточками на тех же местах (withCards —
+// убираются из ряда). Ряд без карточек не бывает: останется одно новое действие
+void ActionsEditor::removeGroup(const QString& id, bool withCards) {
+    const ActionGroup* found = Groups::find(groups_, id);
+    if (!found) return;
+    const ActionGroup g = *found;
+    for (int k = 0; k < groups_.size(); ++k)
+        if (groups_[k].id == id) { groups_.removeAt(k); break; }
+    if (withCards) {
+        QList<ActionStep> next;
+        for (const ActionStep& a : actions_)
+            if (a.group != id) next << a;
+        actions_ = next;
     } else {
-        if (repeatSpin_ && repeatSpin_->minimum() != repeatMin()) {
-            QSignalBlocker b(repeatSpin_);
-            repeatSpin_->setMinimum(repeatMin());
-        }
-        if (builtKey_ != buildKey()) rebuild(); else updateValues();
+        actions_ = Groups::inlineAll(actions_, g, steps(), maxItems());
     }
+    if (actions_.isEmpty()) actions_ << newItem();
+    setUpdatesEnabled(false);
+    rebuild();
+    setUpdatesEnabled(true);
     edited();
 }
 
@@ -1112,6 +1160,12 @@ void ActionsEditor::updateValues() {
             ui.caption->setText(ui.caption->fontMetrics().elidedText(pv.isEmpty() ? T("пусто") : pv, Qt::ElideRight,
                                                                      qMax(30, cardW - 16 - 14 - 22 - 12)));
             if (ui.repeat && ui.repeat->value() != a.repeat) { QSignalBlocker b(ui.repeat); ui.repeat->setValue(a.repeat); }
+            if (ui.repeat && g) {
+                const QString tip = T("Сколько раз подряд выполнить группу. Между повторами — %1 мс (меняется в окне группы)")
+                                        .arg(Groups::betweenMs(*g, a));
+                ui.repeat->setToolTip(tip);
+                ui.repeat->setAccessibleName(tip);
+            }
             if (ui.after && ui.after->value() != a.afterMs) { QSignalBlocker b(ui.after); ui.after->setValue(a.afterMs); }
             const bool warn = stray.contains(i);
             if (ui.frame->property("warn").toBool() != warn) {
