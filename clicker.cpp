@@ -219,6 +219,14 @@ void Clicker::sleepUntilRunning(std::chrono::steady_clock::time_point until) {
     }
 }
 
+// «Зажать»: клавиши уже зажаты, ждать нечего — раз в ms проверяем окно игры (ушли —
+// отпустить, вернулись — зажать снова). Стоп и смена настроек будят сразу, а не через ms
+void Clicker::napHold(std::chrono::milliseconds ms) {
+    std::unique_lock<std::mutex> lk(wakeMutex_);
+    wake_.wait_for(lk, ms, [this] { return !running_ || configDirty_; });
+    configDirty_ = false;
+}
+
 // Пауза, пока что-то зажато: раз в 40 мс проверяем, что всё ещё в игре — ушли
 // (другое окно, курсор с окна) — сразу false, и зажатое отпускают, а не держат
 // до конца паузы. false — и при стопе.
@@ -431,7 +439,7 @@ void Clicker::loop() {
                     for (int i = 0; i < static_cast<int>(held_.size()); ++i) countAction(i);
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            napHold(std::chrono::milliseconds(40));
             continue;
         }
         if (!held_.empty()) releaseHeld();   // режим сменили на ходу
@@ -452,7 +460,7 @@ void Clicker::loop() {
             auto now = std::chrono::steady_clock::now();
             if (now >= until) break;
             auto left = std::chrono::duration_cast<std::chrono::milliseconds>(until - now);
-            std::this_thread::sleep_for(std::min(left, std::chrono::milliseconds(50)));
+            std::this_thread::sleep_for(std::min(left, std::chrono::milliseconds(20)));
         }
     }
     releaseHeld();   // стоп — ничего не остаётся зажатым
@@ -485,6 +493,8 @@ void Clicker::start() {
 void Clicker::stop() {
     bool wasRunning = running_.exchange(false);
     if (wasRunning) stopMs_ = steadyMs();
+    { std::lock_guard<std::mutex> lk(wakeMutex_); }   // поток ждёт в napHold — разбудить
+    wake_.notify_all();
     if (worker_.joinable()) worker_.join();
 #ifdef _WIN32
     if (wasRunning) timeEndPeriod(1);
@@ -501,6 +511,13 @@ long long Clicker::runMs() const {
 }
 
 void Clicker::setConfig(const ClickerConfig& cfg) {
-    std::lock_guard<std::mutex> lk(configMutex_);
-    config_ = cfg;
+    {
+        std::lock_guard<std::mutex> lk(configMutex_);
+        config_ = cfg;
+    }
+    {
+        std::lock_guard<std::mutex> lk(wakeMutex_);
+        configDirty_ = true;
+    }
+    wake_.notify_all();
 }
