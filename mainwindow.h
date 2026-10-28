@@ -102,6 +102,7 @@ private:
     void buildProfileCard();
     QWidget* buildStatusBar();
     void buildTray();
+    void connectUpdater();           // автообновление: сообщения, перезапуск, пункт в трее
     void connectSignals();
     void connectMini();
     void setLayoutEditing(bool on);  // редактор интерфейса (Д.И.1)
@@ -385,6 +386,7 @@ private:
     QAction* trayMiniAction_ = nullptr;
     QAction* trayCheckAction_ = nullptr;
     QAction* trayOverlayAction_ = nullptr;
+    QAction* trayUpdateAction_ = nullptr;   // «Обновить до …» — вышла новая версия
     QMenu* trayOverlayMenu_ = nullptr;
     bool restart_ = false;
     MiniWindow* mini_ = nullptr;
