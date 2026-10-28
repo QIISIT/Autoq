@@ -27,6 +27,7 @@ set(CORE_SOURCES
     hotkey.cpp      hotkey.h
     sounds.cpp      sounds.h
     framesync.cpp   framesync.h
+    framewatch.cpp  framewatch.h
     cardlayout.cpp  cardlayout.h
     updates.cpp     updates.h
     tips.cpp        tips.h
@@ -98,7 +99,7 @@ qt_add_resources(AutoQ "aq_fonts"
 )
 
 if(WIN32)
-    target_link_libraries(aq_core PUBLIC winmm dwmapi)
+    target_link_libraries(aq_core PUBLIC winmm dwmapi advapi32)   # advapi32 — ETW («По кадрам»)
     target_compile_definitions(aq_core PUBLIC UNICODE _UNICODE)
     if(MINGW)
         # один самодостаточный exe — без libstdc++/libgcc/winpthread DLL
@@ -119,6 +120,18 @@ elseif(APPLE)
 elseif(UNIX)
     find_package(X11 REQUIRED)
     target_link_libraries(aq_core PUBLIC X11 Xtst Xi)
+    # «По кадрам»: кадры окна игры через расширение Present (Arch — в libxcb,
+    # Debian/Ubuntu — libxcb-present-dev). Нет — AutoQ собирается, но без «По кадрам»
+    find_package(PkgConfig)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(XCB_PRESENT IMPORTED_TARGET xcb xcb-present)
+    endif()
+    if(XCB_PRESENT_FOUND)
+        target_link_libraries(aq_core PUBLIC PkgConfig::XCB_PRESENT)
+        target_compile_definitions(aq_core PRIVATE AQ_XCB_PRESENT)
+    else()
+        message(WARNING "xcb-present не найден: «По кадрам» будет недоступно (нужен libxcb-present-dev)")
+    endif()
 endif()
 
 if(AQ_BUILD_TESTS)
