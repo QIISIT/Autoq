@@ -11,7 +11,7 @@
 # Arch / Manjaro
 sudo pacman -S --needed qt6-base libx11 libxtst libxi xcb-util-cursor cmake gcc ninja
 # Ubuntu 24.04+ / Debian 13+
-sudo apt install qt6-base-dev libx11-dev libxtst-dev libxi-dev cmake g++ ninja-build
+sudo apt install qt6-base-dev libx11-dev libxtst-dev libxi-dev libxcb-present-dev cmake g++ ninja-build
 
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
@@ -63,6 +63,7 @@ Exe и установщик собираются из Linux: `windows/build-from
 | `styles.cpp`, `styleui.cpp` | «Мои стили»: оформление (и по желанию раскладка) в файле `.aqstyle` — сохранить, поставить, переименовать, в файл и из файла |
 | `sounds.cpp` | звуки старт/стоп: встроенный набор, «Мои звуки» (свои WAV), громкость |
 | `framesync.cpp` | клики в такт с монитором (частота кадров) |
+| `framewatch.cpp` | «По кадрам»: кадры окна игры — Linux через расширение X11 Present (libxcb-present; без него собирается без «По кадрам»), Windows через события ETW о показе кадра (DXGI, D3D9, DxgKrnl; нужны права администратора) |
 | `appsettings.cpp` | папка данных: settings.ini, профили файлами, портативный режим (AutoQ-data), правка файла снаружи |
 | `mainwindow.cpp`, `miniwindow.cpp`, `gameeditdialog.cpp`, `settingsdialog.cpp`, `widgets.cpp` | интерфейс |
 
