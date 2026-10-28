@@ -8,7 +8,7 @@ ManifestDPIAware true
 
 !define APP_NAME    "AutoQ"
 !define APP_EXE     "AutoQ.exe"
-!define APP_VERSION "1.17.1 beta"
+!define APP_VERSION "1.18.0 beta"
 !define APP_AUTHOR  "Qisit"
 !define APP_REGKEY  "Software\Microsoft\Windows\CurrentVersion\Uninstall\AutoQ"
 
@@ -27,7 +27,7 @@ RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 BrandingText "${APP_NAME} ${APP_VERSION} · created by ${APP_AUTHOR}"
 
-VIProductVersion "1.17.1.0"
+VIProductVersion "1.18.0.0"
 VIAddVersionKey "ProductName" "${APP_NAME}"
 VIAddVersionKey "CompanyName" "${APP_AUTHOR}"
 VIAddVersionKey "FileDescription" "${APP_NAME} Setup"
