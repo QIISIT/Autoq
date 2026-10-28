@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19)
-project(AutoQ VERSION 1.17.1 LANGUAGES CXX)
+project(AutoQ VERSION 1.18.0 LANGUAGES CXX)
 if(APPLE)
     enable_language(OBJCXX)     # macsupport.mm — AppKit (NSWorkspace, NSWindow)
 endif()
@@ -29,6 +29,7 @@ set(CORE_SOURCES
     framesync.cpp   framesync.h
     cardlayout.cpp  cardlayout.h
     updates.cpp     updates.h
+    tips.cpp        tips.h
 )
 if(APPLE)
     list(APPEND CORE_SOURCES macsupport.mm macsupport.h)
