@@ -246,6 +246,42 @@ bool Clicker::waitHeld(int ms, const ClickerConfig& cfg) {
     return false;
 }
 
+// «По кадрам»: ждём n новых кадров окна игры — кусочками по 20 мс, чтобы «Стоп» срабатывал сразу
+bool Clicker::waitFrames(int n, const ClickerConfig& cfg, bool held) {
+    using clock = std::chrono::steady_clock;
+    if (n <= 0) return running_;
+    FrameWatch::Feed* f = cfg.frames.get();
+    const auto since = clock::now();
+    auto check = since + std::chrono::milliseconds(40);
+    const uint64_t target = f ? f->count() + static_cast<uint64_t>(n) : 0;
+    while (running_) {
+        if (f && f->waitUntil(target, std::chrono::milliseconds(20))) { noFrames_ = false; return true; }
+        if (!f) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const auto now = clock::now();
+        // кадров нет дольше 0,3 с — игра свёрнута, на паузе или нет прав: ждём, не жмём
+        const auto last = f ? std::max(f->lastFrame(), since) : since;
+        if (now - last > std::chrono::milliseconds(300)) {
+            noFrames_ = true;
+            allowedNow_ = false;
+            if (framesCfgChanged_.exchange(false)) return false;   // другое окно или режим — взять новые настройки
+        }
+        if (held && cfg.lockToWindow && now >= check) {
+            if (!allowedFor(cfg)) { allowedNow_ = false; return false; }
+            check = now + std::chrono::milliseconds(40);
+        }
+    }
+    return false;
+}
+
+void Clicker::pause(int n, const ClickerConfig& cfg) {
+    if (cfg.byFrames) waitFrames(n, cfg, false);
+    else sleepWhileRunning(n);
+}
+
+bool Clicker::holdFor(int n, const ClickerConfig& cfg) {
+    return cfg.byFrames ? waitFrames(n, cfg, true) : waitHeld(n, cfg);
+}
+
 void Clicker::countAction(int i) {
     counts_[static_cast<size_t>(std::min(i, kCounters - 1))] += 1;
 }
@@ -291,8 +327,8 @@ bool Clicker::doSteps(const ClickerConfig& cfg) {
         }
         if (i + 1 < n) {
             // что-то зажато — пауза с проверкой окна: ушли из игры — отпускаем сразу
-            if (down.empty()) sleepWhileRunning(a.afterMs);
-            else if (!waitHeld(a.afterMs, cfg)) { whole = false; break; }
+            if (down.empty()) pause(a.afterMs, cfg);
+            else if (!holdFor(a.afterMs, cfg)) { whole = false; break; }
         }
     }
     for (auto it = down.rbegin(); it != down.rend(); ++it) sendAction(display_, *it, false);
@@ -315,7 +351,7 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
             sendAction(display_, a, true);
             holdMs = std::max(holdMs, a.holdMs);
         }
-        const bool stayed = waitHeld(holdMs, cfg);   // ушли из игры — отпускаем, не дожидаясь конца
+        const bool stayed = holdFor(holdMs, cfg);    // ушли из игры — отпускаем, не дожидаясь конца
         for (int i = n - 1; i >= 0; --i) sendAction(display_, cfg.actions[i], false);
         clickCount_ += 1;
         for (int i = 0; i < n; ++i) countAction(i);
@@ -330,12 +366,12 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
         const ActionStep& a = cfg.actions[i];
         sendAction(display_, a, true);
         // «держать» — при стопе или уходе из игры отпускаем сразу
-        const bool stayed = a.holdMs <= 0 || waitHeld(a.holdMs, cfg);
+        const bool stayed = a.holdMs <= 0 || holdFor(a.holdMs, cfg);
         sendAction(display_, a, false);
         countAction(i);
         clickCount_ += 1;
         if (!stayed) { whole = false; break; }
-        if (i + 1 < n) sleepWhileRunning(a.afterMs);
+        if (i + 1 < n) pause(a.afterMs, cfg);
     }
     currentStep_ = -1;
     if (whole && running_) cycles_ += 1;
@@ -386,17 +422,44 @@ void Clicker::loop() {
     timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     if (!timer_) timer_ = CreateWaitableTimerW(nullptr, FALSE, nullptr);   // Windows постарше
 #endif
-    // «старт через N мс»: первый цикл — не сразу после нажатия
-    int startDelay = 0;
-    { std::lock_guard<std::mutex> lk(configMutex_); startDelay = config_.startDelayMs; }
-    if (startDelay > 0) {
+    // «старт через N мс» (или N кадров): первый цикл — не сразу после нажатия
+    ClickerConfig first;
+    { std::lock_guard<std::mutex> lk(configMutex_); first = config_; }
+    if (first.startDelayMs > 0) {
         waitingStart_ = true;
-        sleepWhileRunning(startDelay);
+        if (first.byFrames && !first.hold) waitFrames(first.startDelayMs, first, false);
+        else sleepWhileRunning(first.startDelayMs);
         waitingStart_ = false;
     }
+    bool aligned = false;                 // «По кадрам»: круг начнётся сразу после кадра игры
     while (running_) {
         ClickerConfig cfg;
         { std::lock_guard<std::mutex> lk(configMutex_); cfg = config_; }
+
+        // «По кадрам»: круг — сразу после кадра игры, «держать» и паузы — целыми кадрами
+        if (!cfg.hold && cfg.byFrames) {
+            if (!held_.empty()) releaseHeld();
+            grid.reset();
+            if (!aligned) { aligned = waitFrames(1, cfg, false); continue; }
+            FrameWatch::Feed* f = cfg.frames.get();
+            const uint64_t c0 = f ? f->count() : 0;
+            const bool allowed = allowedFor(cfg);
+            allowedNow_ = allowed;
+            if (allowed) doCycle(cfg);
+            int wait = cfg.intervalMs;
+            if (cfg.randomize && cfg.jitterMs > 0) {
+                std::uniform_int_distribution<int> dist(-cfg.jitterMs, cfg.jitterMs);
+                wait = std::max(cfg.intervalMs > 0 ? 1 : 0, wait + dist(rng));
+            }
+            bool ok = allowedNow_ && waitFrames(wait, cfg, false);
+            // круг целиком — не короче minCycleMs кадров (паузы между клавишами могут быть 0)
+            const uint64_t need = c0 + static_cast<uint64_t>(std::max(1, cfg.minCycleMs));
+            if (ok && f && f->count() < need) ok = waitFrames(static_cast<int>(need - f->count()), cfg, false);
+            if (!ok) aligned = false;     // вышли посреди круга — следующий снова с кадра
+            continue;
+        }
+        aligned = false;
+        noFrames_ = false;                // «По кадрам» выключили, пока кадров не было
 
         // «В такт с монитором»: цикл начинается ровно на своём кадре
         if (!cfg.hold && cfg.frameMs > 0) {
@@ -482,6 +545,8 @@ void Clicker::start() {
     for (auto& c : counts_) c = 0;
     allowedNow_ = false;
     pauseReason_ = 0;
+    noFrames_ = false;
+    framesCfgChanged_ = false;
     waitingStart_ = false;
     currentStep_ = -1;
     startMs_ = steadyMs();
@@ -515,6 +580,7 @@ void Clicker::setConfig(const ClickerConfig& cfg) {
         std::lock_guard<std::mutex> lk(configMutex_);
         config_ = cfg;
     }
+    framesCfgChanged_ = true;
     {
         std::lock_guard<std::mutex> lk(wakeMutex_);
         configDirty_ = true;

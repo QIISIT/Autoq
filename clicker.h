@@ -11,6 +11,7 @@
 #include <QList>
 #include "winmatch.h"
 #include "games.h"
+#include "framewatch.h"
 
 struct ClickerConfig {
     QList<ActionStep> actions{ActionStep{}};   // действия цикла (у каждого — «держать» и «пауза после»)
@@ -31,6 +32,11 @@ struct ClickerConfig {
     // «В такт с монитором»: длительность кадра, мс (0 — выключено). Циклы начинаются
     // ровно на кадрах, через целое число кадров; разброс — тоже целыми кадрами
     double frameMs = 0;
+    // «По кадрам»: «держать», паузы, «старт через», «повтор через» и разброс — в кадрах окна
+    // игры (числа в тех же полях, см. FrameUnits). Каждый круг начинается сразу после кадра.
+    // Кадры не идут (игра свёрнута, нет прав) — кликер ждёт, а не жмёт по времени
+    bool byFrames = false;
+    std::shared_ptr<FrameWatch::Feed> frames;
 };
 
 // Можно ли нажимать в этом окне (общая проверка для кликера и интерфейса)
@@ -55,7 +61,8 @@ public:
     int currentStep() const { return currentStep_; }    // шаг/действие, что идёт сейчас (-1 — пауза между циклами)
     unsigned long long cycleCount() const { return cycles_; }   // сколько кругов прошло целиком
     long long runMs() const;              // сколько идёт запуск, мс (после стопа — сколько шёл последний)
-    int pauseReason() const { return pauseReason_; }     // 0 — нет, 1 — не окно игры, 2 — курсор вне игры
+    // 0 — нет, 1 — не окно игры, 2 — курсор вне игры, 3 — «По кадрам»: игра не показывает кадры
+    int pauseReason() const { return noFrames_ ? 3 : pauseReason_.load(); }
     bool inputAvailable() const;          // есть ли куда слать ввод (X11 на Linux, разрешение на macOS)
 
     // Отправить одно действие прямо сейчас (для тестов). Возвращает false,
@@ -72,6 +79,11 @@ private:
     bool waitHeld(int ms, const ClickerConfig& cfg);   // пауза с зажатым: false — стоп или ушли из игры
     void sleepUntilRunning(std::chrono::steady_clock::time_point until);   // точно, до долей мс
     void napHold(std::chrono::milliseconds ms);   // «Зажать»: ждать, пока не стоп и не сменили настройки
+    // «По кадрам»: ждать n кадров игры. held — что-то зажато: ушли из игры — false сразу.
+    // false — и при стопе, и если кадры не идут, а настройки сменили (другое окно, режим)
+    bool waitFrames(int n, const ClickerConfig& cfg, bool held);
+    void pause(int n, const ClickerConfig& cfg);     // пауза: мс или кадры (по cfg.byFrames)
+    bool holdFor(int n, const ClickerConfig& cfg);   // держать зажатым: мс или кадры
     void countAction(int i);
     std::vector<ActionStep> held_;        // что сейчас зажато (режим "Зажать")
     std::atomic<bool> running_{false};
@@ -89,6 +101,8 @@ private:
     std::mutex wakeMutex_;                // stop() и setConfig() будят «Зажать» сразу
     std::condition_variable wake_;
     bool configDirty_ = false;            // под wakeMutex_
+    std::atomic<bool> noFrames_{false};   // «По кадрам»: ждём кадр, а игра их не показывает
+    std::atomic<bool> framesCfgChanged_{false};   // setConfig() — для waitFrames
     void* display_ = nullptr;             // Display* на Linux, CGEventSourceRef на macOS
     void* timer_ = nullptr;               // Windows: таймер высокой точности потока кликера
     std::unique_ptr<ActiveWindowProbe> probe_;
