@@ -80,7 +80,7 @@ bool ActionStep::sameInput(const ActionStep& o) const {
 
 bool ActionStep::operator==(const ActionStep& o) const {
     return sameInput(o) && holdMs == o.holdMs && afterMs == o.afterMs && press == o.press &&
-           (!isGroup() || repeat == o.repeat);
+           holdFr == o.holdFr && afterFr == o.afterFr && (!isGroup() || repeat == o.repeat);
 }
 
 QString ActionStep::itemName() const { return mouse ? MouseButtons::itemName(button) : key; }
@@ -142,7 +142,71 @@ bool GameState::usesMouse(GameMode m) const {
 bool GameState::operator==(const GameState& o) const {
     return actions == o.actions && steps == o.steps && startDelayMs == o.startDelayMs && intervalMs == o.intervalMs &&
            randomize == o.randomize && jitterMs == o.jitterMs && lockWindow == o.lockWindow &&
-           frameSync == o.frameSync && frameHz == o.frameHz && soundOn == o.soundOn && soundOff == o.soundOff;
+           frameSync == o.frameSync && frameHz == o.frameHz && soundOn == o.soundOn && soundOff == o.soundOff &&
+           byFrames == o.byFrames && framesSet == o.framesSet && startFr == o.startFr && intervalFr == o.intervalFr && jitterFr == o.jitterFr;
+}
+
+// ---------------------------------------------------------------------------
+// «По кадрам»: мс ⇄ кадры
+// ---------------------------------------------------------------------------
+void FrameUnits::swap(ActionStep& a) {
+    std::swap(a.holdMs, a.holdFr);
+    std::swap(a.afterMs, a.afterFr);
+}
+
+void FrameUnits::swap(QList<ActionStep>& list) {
+    for (ActionStep& a : list) swap(a);
+}
+
+void FrameUnits::swap(QList<ActionGroup>& groups) {
+    for (ActionGroup& g : groups) {
+        swap(g.items);
+        std::swap(g.betweenMs, g.betweenFr);
+    }
+}
+
+void FrameUnits::swap(GameState& st) {
+    swap(st.actions);
+    swap(st.steps);
+    swap(st.groups);
+    std::swap(st.startDelayMs, st.startFr);
+    std::swap(st.intervalMs, st.intervalFr);
+    std::swap(st.jitterMs, st.jitterFr);
+}
+
+bool FrameUnits::seed(GameState& st, double fps) {
+    const double frame = 1000.0 / (fps >= 1 ? fps : 60.0);
+    // пауза есть — хотя бы кадр (иначе две клавиши слились бы в один кадр)
+    auto fr = [frame](int ms, int least) { return ms <= 0 ? 0 : qMax(least, qRound(ms / frame)); };
+    auto items = [&](QList<ActionStep>& l) {
+        for (ActionStep& a : l) {
+            a.holdFr = qMin(fr(a.holdMs, 1), 10000);
+            a.afterFr = qMin(fr(a.afterMs, 1), 60000);
+        }
+    };
+    bool changed = false;
+    if (!st.framesSet) {
+        items(st.actions);
+        items(st.steps);
+        st.startFr = qMin(fr(st.startDelayMs, 0), kMaxStartDelayMs);
+        st.intervalFr = qMin(fr(st.intervalMs, 1), 60000);
+        st.jitterFr = qMin(fr(st.jitterMs, 0), 1000);
+        st.framesSet = true;
+        changed = true;
+    }
+    for (ActionGroup& g : st.groups) {
+        if (g.betweenFr >= 0) continue;
+        items(g.items);
+        if (g.betweenMs >= 0) g.betweenFr = qMin(fr(g.betweenMs, 1), 60000);
+        changed = true;
+    }
+    return changed;
+}
+
+GameState FrameUnits::view(const GameState& st) {
+    GameState v = st;
+    if (st.byFrames) swap(v);
+    return v;
 }
 
 // ---------------------------------------------------------------------------
@@ -203,12 +267,16 @@ QList<ActionStep> Groups::expand(const QList<ActionStep>& chain, const QList<Act
         if (items.isEmpty()) continue;
         const int reps = once ? 1 : qBound(1, a.repeat, kMaxRepeat);
         const int between = betweenMs(*g, a);
+        const int betweenFr = g->betweenFr >= 0 ? g->betweenFr : a.afterFr;   // то же в кадрах
         for (int r = 0; r < reps; ++r)
             for (int j = 0; j < items.size(); ++j) {
                 if (out.size() >= kMaxRun) return out;
                 ActionStep x = items[j];
                 // между повторами — пауза группы, после последнего — пауза после вызова
-                if (j + 1 == items.size()) x.afterMs = r + 1 < reps ? between : a.afterMs;
+                if (j + 1 == items.size()) {
+                    x.afterMs = r + 1 < reps ? between : a.afterMs;
+                    x.afterFr = r + 1 < reps ? betweenFr : a.afterFr;
+                }
                 out << x;
                 if (owner) *owner << i;
             }
@@ -305,11 +373,13 @@ QList<ActionStep> Steps::fromActions(const QList<ActionStep>& actions) {
         if (out.size() + 2 > kMaxSteps) break;
         ActionStep d = a, u = a;
         d.press = ActionStep::Down;
-        d.holdMs = 0;
+        d.holdMs = d.holdFr = 0;
         d.afterMs = a.holdMs;
+        d.afterFr = a.holdFr;
         u.press = ActionStep::Up;
-        u.holdMs = 0;
+        u.holdMs = u.holdFr = 0;
         u.afterMs = a.afterMs;
+        u.afterFr = a.afterFr;
         out << d << u;
     }
     return out;
@@ -324,7 +394,7 @@ QList<ActionStep> Steps::pressedInputs(const QList<ActionStep>& steps) {
         if (seen) continue;
         ActionStep a = s;
         a.press = ActionStep::Click;
-        a.holdMs = a.afterMs = 0;
+        a.holdMs = a.afterMs = a.holdFr = a.afterFr = 0;
         out << a;
     }
     return out;
@@ -365,13 +435,15 @@ QList<ActionStep> Steps::toActions(const QList<ActionStep>& steps, bool* exact) 
         if (s.isGroup()) { out << s; continue; }        // вызов группы остаётся вызовом
         ActionStep a = s;
         a.press = ActionStep::Click;
-        a.holdMs = 0;
+        a.holdMs = a.holdFr = 0;
         if (s.press == ActionStep::Down && i + 1 < steps.size() && !steps[i + 1].isGroup() &&
             steps[i + 1].press == ActionStep::Up && steps[i + 1].sameInput(s)) {
-            // ↓ пауза ↑ — «держать» столько, сколько пауза между ними
-            if (s.afterMs > 10000) ok = false;
+            // ↓ пауза ↑ — «держать» столько, сколько пауза между ними (и в кадрах — тоже)
+            if (s.afterMs > 10000 || s.afterFr > 10000) ok = false;
             a.holdMs = qMin(s.afterMs, 10000);
+            a.holdFr = qMin(s.afterFr, 10000);
             a.afterMs = steps[i + 1].afterMs;
+            a.afterFr = steps[i + 1].afterFr;
             out << a;
             ++i;
             continue;
@@ -379,8 +451,10 @@ QList<ActionStep> Steps::toActions(const QList<ActionStep>& steps, bool* exact) 
         if (s.press == ActionStep::Click) { out << a; continue; }
         ok = false;
         if (s.press == ActionStep::Down) out << a;      // нажать без пары — клик
-        else if (!out.isEmpty())                         // лишнее «отпустить»: его пауза не теряется
+        else if (!out.isEmpty()) {                       // лишнее «отпустить»: его пауза не теряется
             out.last().afterMs = qMin(60000, out.last().afterMs + s.afterMs);
+            out.last().afterFr = qMin(60000, out.last().afterFr + s.afterFr);
+        }
     }
     if (exact) *exact = ok;
     return out;
@@ -696,14 +770,32 @@ void Games::setCurrentId(const QString& id) {
 // шаги «По шагам» — с пятым полем: "m:1:0:150:d" (нажать) / "m:1:0:0:u" (отпустить) /
 // "m:1:0:0:c" (нажать и отпустить; шаг без поля — «нажать», как в 1.14).
 // Вызов группы: "g:<id группы>:<повторы>:<пауза после>" (версии до 1.17 его пропускают)
+// «По кадрам» — последним полем "f<держать>.<пауза после>" в кадрах, если не нули:
+// "m:1:0:120:c:f2.1", у вызова группы — "g:<id>:2:0:f0.3" (старые версии поле не читают)
+static QString framesField(const ActionStep& a) {
+    return (a.holdFr > 0 || a.afterFr > 0) ? QString(":f%1.%2").arg(a.holdFr).arg(a.afterFr) : QString();
+}
+
 static QString encodeStep(const ActionStep& a, bool step = false) {
-    if (a.isGroup()) return QString("g:%1:%2:%3").arg(a.group).arg(qBound(1, a.repeat, kMaxRepeat)).arg(a.afterMs);
+    if (a.isGroup()) {
+        ActionStep c = a;
+        c.holdFr = 0;
+        return QString("g:%1:%2:%3").arg(a.group).arg(qBound(1, a.repeat, kMaxRepeat)).arg(a.afterMs) + framesField(c);
+    }
     QString s = QString("%1:%2:%3:%4").arg(a.mouse ? "m" : "k", a.mouse ? QString::number(a.button) : a.key)
                                       .arg(a.holdMs).arg(a.afterMs);
+    const QString fr = framesField(a);
     if (a.press == ActionStep::Down) s += ":d";
     else if (a.press == ActionStep::Up) s += ":u";
-    else if (step) s += ":c";
-    return s;
+    else if (step || !fr.isEmpty()) s += ":c";
+    return s + fr;
+}
+
+static void decodeFrames(const QString& field, ActionStep* a) {
+    if (!field.startsWith('f')) return;
+    const QStringList v = field.mid(1).split('.');
+    a->holdFr = qBound(0, v.value(0).toInt(), 10000);
+    a->afterFr = qBound(0, v.value(1).toInt(), 60000);
 }
 
 static int validButton(int b) { return MouseButtons::valid(b) ? b : 1; }
@@ -723,6 +815,8 @@ static bool decodeStep(const QString& str, ActionStep* out) {
         a.repeat = qBound(1, p.value(2).toInt(), kMaxRepeat);
         a.afterMs = qBound(0, p.value(3).toInt(), 60000);
         a.press = ActionStep::Click;
+        decodeFrames(p.value(4), &a);
+        a.holdFr = 0;
         *out = a;
         return true;
     }
@@ -740,6 +834,7 @@ static bool decodeStep(const QString& str, ActionStep* out) {
     a.afterMs = qBound(0, p.value(3).toInt(), 60000);
     const QString pr = p.value(4);
     a.press = pr == "d" ? ActionStep::Down : pr == "u" ? ActionStep::Up : pr == "c" ? ActionStep::Click : -1;
+    decodeFrames(p.value(5), &a);
     *out = a;
     return true;
 }
@@ -759,6 +854,17 @@ static void writeState(QSettings& s, const QString& prefix, const GameState& st)
     s.setValue(prefix + "lockWindow", st.lockWindow);
     s.setValue(prefix + "frameSync", st.frameSync);
     s.setValue(prefix + "frameHz", st.frameHz);
+    // «По кадрам» — ключи, только если режим включали или числа не по умолчанию
+    const GameState d;
+    if (st.byFrames || st.framesSet || st.startFr != d.startFr || st.intervalFr != d.intervalFr || st.jitterFr != d.jitterFr) {
+        s.setValue(prefix + "byFrames", st.byFrames);
+        s.setValue(prefix + "framesSet", st.framesSet);
+        s.setValue(prefix + "startFrames", st.startFr);
+        s.setValue(prefix + "intervalFrames", st.intervalFr);
+        s.setValue(prefix + "jitterFrames", st.jitterFr);
+    } else {
+        for (const char* k : {"byFrames", "framesSet", "startFrames", "intervalFrames", "jitterFrames"}) s.remove(prefix + k);
+    }
     // свой звук: пусто — как в настройках (ключ не пишем)
     if (st.soundOn.isEmpty()) s.remove(prefix + "soundOn"); else s.setValue(prefix + "soundOn", st.soundOn);
     if (st.soundOff.isEmpty()) s.remove(prefix + "soundOff"); else s.setValue(prefix + "soundOff", st.soundOff);
@@ -803,7 +909,7 @@ static GameState readState(QSettings& s, const QString& prefix, const GameState&
         if (!decodeStep(e, &a) || st.steps.size() >= kMaxSteps) continue;
         if (a.press < 0) a.press = ActionStep::Down;     // без пятого поля — «нажать»
         if (a.isGroup()) a.press = ActionStep::Click;
-        a.holdMs = 0;
+        a.holdMs = a.holdFr = 0;
         st.steps << a;
     }
     if (!s.contains(prefix + "steps")) st.steps = def.steps;
@@ -815,6 +921,11 @@ static GameState readState(QSettings& s, const QString& prefix, const GameState&
     st.frameSync = s.value(prefix + "frameSync", def.frameSync).toBool();
     st.frameHz = s.value(prefix + "frameHz", def.frameHz).toInt();
     if (st.frameHz < 0 || st.frameHz > 1000) st.frameHz = 0;
+    st.byFrames = s.value(prefix + "byFrames", def.byFrames).toBool();
+    st.framesSet = s.value(prefix + "framesSet", def.framesSet).toBool();
+    st.startFr = qBound(0, s.value(prefix + "startFrames", def.startFr).toInt(), kMaxStartDelayMs);
+    st.intervalFr = qBound(0, s.value(prefix + "intervalFrames", def.intervalFr).toInt(), 60000);
+    st.jitterFr = qBound(0, s.value(prefix + "jitterFrames", def.jitterFr).toInt(), 1000);
     st.soundOn = s.value(prefix + "soundOn", def.soundOn).toString().left(1000);
     st.soundOff = s.value(prefix + "soundOff", def.soundOff).toString().left(1000);
     return st;
@@ -831,6 +942,7 @@ static void writeGroups(QSettings& s, const QString& prefix, const QList<ActionG
         s.setValue(k + "name", g.name.trimmed().left(40));
         s.setValue(k + "steps", g.steps);
         if (g.betweenMs >= 0) s.setValue(k + "between", g.betweenMs);
+        if (g.betweenFr >= 0) s.setValue(k + "betweenFrames", g.betweenFr);
         QStringList items;
         for (const ActionStep& a : g.items)
             if (!a.isGroup()) items << encodeStep(a, g.steps);
@@ -852,12 +964,13 @@ static QList<ActionGroup> readGroups(QSettings& s, const QString& prefix) {
         g.steps = s.value(k + "steps", false).toBool();
         // нет ключа — группа из 1.17.0: паузу между повторами подберёт attachGroups
         g.betweenMs = s.contains(k + "between") ? qBound(0, s.value(k + "between").toInt(), 60000) : -1;
+        g.betweenFr = s.contains(k + "betweenFrames") ? qBound(0, s.value(k + "betweenFrames").toInt(), 60000) : -1;
         for (const QString& e : s.value(k + "items").toStringList()) {
             ActionStep a;
             if (!decodeStep(e, &a) || a.isGroup() || g.items.size() >= (g.steps ? kMaxSteps : kMaxActions)) continue;
             if (!g.steps) a.press = ActionStep::Click;
             else if (a.press < 0) a.press = ActionStep::Down;
-            if (g.steps) a.holdMs = 0;
+            if (g.steps) a.holdMs = a.holdFr = 0;
             g.items << a;
         }
         if (!g.items.isEmpty()) out << g;
