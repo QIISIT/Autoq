@@ -19,6 +19,8 @@
 #include "games.h"
 #include "clicker.h"
 #include "updates.h"
+#include "framewatch.h"
+#include <atomic>
 
 static int g_fail = 0, g_pass = 0;
 #define CHECK(cond) do { if (cond) ++g_pass; else { ++g_fail; \
@@ -1824,6 +1826,209 @@ static void testTips() {
     { auto s = AppSettings::open(); s->clear(); s->sync(); }
 }
 
+// «По кадрам»: числа в кадрах — отдельно от мс, переключение туда-обратно ничего не теряет;
+// запись и чтение; кликер ждёт кадры игры (кадры — из теста)
+static void testFrames() {
+    const QString pid = QString::number(QCoreApplication::applicationPid());
+    AppSettings::setScope("AutoQTest", "frm_" + pid);
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+    CHECK(Games::addBuiltin("genshin"));
+    auto act = [](const QString& item, int hold, int after, int holdFr, int afterFr) {
+        ActionStep a = ActionStep::fromItem(item);
+        a.holdMs = hold; a.afterMs = after; a.holdFr = holdFr; a.afterFr = afterFr;
+        return a;
+    };
+    // вид «По кадрам»: в полях мс — кадры, и обратно то же самое
+    GameState st;
+    st.actions = {act("mouse:1", 40, 15, 2, 1), act("f", 0, 30, 0, 3)};
+    st.startDelayMs = 500; st.intervalMs = 120; st.jitterMs = 20;
+    st.startFr = 4; st.intervalFr = 2; st.jitterFr = 1;
+    CHECK(FrameUnits::view(st) == st);                        // выключено — вид тот же
+    st.byFrames = true;
+    const GameState v = FrameUnits::view(st);
+    CHECK(v.actions[0].holdMs == 2 && v.actions[0].afterMs == 1 && v.actions[1].afterMs == 3);
+    CHECK(v.actions[0].holdFr == 40 && v.actions[0].afterFr == 15);
+    CHECK(v.startDelayMs == 4 && v.intervalMs == 2 && v.jitterMs == 1);
+    CHECK(v.startFr == 500 && v.intervalFr == 120 && v.jitterFr == 20);
+    GameState back = v;
+    FrameUnits::swap(back);
+    CHECK(back == st);                                        // туда-обратно — без потерь
+    CHECK(!(v == st));
+    // в «По шагам» из действий: «держать» и пауза в кадрах — тоже паузы шагов
+    const QList<ActionStep> fs = Steps::fromActions({act("e", 50, 10, 2, 5)});
+    CHECK(fs.size() == 2 && fs[0].afterMs == 50 && fs[0].afterFr == 2 && fs[1].afterMs == 10 && fs[1].afterFr == 5);
+    CHECK(fs[0].holdFr == 0 && fs[1].holdFr == 0);
+    // группа: пауза между повторами в кадрах (-1 — как пауза после вызова)
+    ActionGroup g; g.id = "0f0f0f0f"; g.name = "Г";
+    g.items = {act("q", 0, 5, 0, 1), act("r", 0, 0, 0, 0)};
+    g.betweenMs = 25; g.betweenFr = -1;
+    ActionStep call; call.group = g.id; call.repeat = 2; call.afterMs = 70; call.afterFr = 6;
+    call.mouse = false; call.key.clear();
+    QList<ActionStep> run = Groups::expand({call}, {g}, false);
+    CHECK(run.size() == 4 && run[1].afterMs == 25 && run[1].afterFr == 6 && run[3].afterMs == 70 && run[3].afterFr == 6);
+    g.betweenFr = 2;
+    run = Groups::expand({call}, {g}, false);
+    CHECK(run[1].afterFr == 2 && run[3].afterFr == 6 && run[0].afterFr == 1);
+    {   // вид: кадры группы — в полях мс
+        QList<ActionGroup> gv{g};
+        FrameUnits::swap(gv);
+        CHECK(gv[0].betweenMs == 2 && gv[0].betweenFr == 25 && gv[0].items[0].afterMs == 1);
+        FrameUnits::swap(gv);
+        CHECK(gv[0] == g);
+    }
+    // первое включение: кадры из мс (60 кадров/с — кадр 16,7 мс), второй раз — не трогаются
+    {
+        GameState fs0;
+        fs0.actions = {act("mouse:1", 100, 5, 0, 0), act("f", 0, 0, 0, 0)};
+        fs0.startDelayMs = 500; fs0.intervalMs = 50; fs0.jitterMs = 8;
+        ActionGroup sg; sg.id = "0e0e0e0e"; sg.items = {act("q", 40, 0, 0, 0)}; sg.betweenMs = 30;
+        ActionGroup done = sg; done.id = "0d0d0d0d"; done.betweenFr = 4;
+        fs0.groups = {sg, done};
+        CHECK(FrameUnits::seed(fs0, 60));
+        CHECK(fs0.framesSet && fs0.actions[0].holdFr == 6 && fs0.actions[0].afterFr == 1);   // 5 мс — всё же кадр
+        CHECK(fs0.actions[1].holdFr == 0 && fs0.actions[1].afterFr == 0);
+        CHECK(fs0.startFr == 30 && fs0.intervalFr == 3 && fs0.jitterFr == 0);
+        CHECK(fs0.groups[0].betweenFr == 2 && fs0.groups[0].items[0].holdFr == 2);
+        CHECK(fs0.groups[1].betweenFr == 4 && fs0.groups[1].items[0].holdFr == 0);   // уже в кадрах — не трогаем
+        fs0.actions[0].holdFr = 1;
+        CHECK(!FrameUnits::seed(fs0, 144) && fs0.actions[0].holdFr == 1);
+        CHECK(FrameUnits::seed(fs0 = GameState{}, 0) && fs0.intervalFr == 6);          // FPS не знаем — 60
+    }
+    // средний круг в кадрах: клик раз в кадр; «держать 2» + «повтор через 1» — 3 кадра
+    CHECK(FrameSync::meanCycleFrames({act("e", 0, 0, 0, 0)}, 1, false, 0, 1) == 1.0);
+    CHECK(FrameSync::meanCycleFrames({act("e", 2, 0, 0, 0)}, 1, false, 0, 1) == 3.0);
+    CHECK(FrameSync::meanCycleFrames({act("e", 0, 1, 0, 0), act("f", 0, 0, 0, 0)}, 0, false, 0, 1) == 1.0);
+    CHECK(FrameSync::meanCycleFrames({act("e", 0, 0, 0, 0)}, 0, false, 0, 1) == 1.0);   // не быстрее кадра
+    CHECK(qAbs(FrameSync::meanCycleFrames({act("e", 0, 0, 0, 0)}, 2, false, 1, 1) - 2.0) < 1e-9);  // 1, 2, 3
+
+    // запись: «По кадрам», кадры действий, шагов и групп переживают сохранение
+    GameState gs = Games::loadState(Games::get("genshin"));
+    CHECK(!gs.byFrames && gs.intervalFr >= 1);                // по умолчанию — выключено
+    gs.actions = st.actions;
+    gs.steps = {act("e", 0, 10, 0, 2)};
+    gs.steps[0].press = ActionStep::Down;
+    gs.byFrames = true; gs.startFr = 3; gs.intervalFr = 5; gs.jitterFr = 2;
+    gs.groups = {g};
+    Games::saveGroups({g});
+    Games::saveState("genshin", gs);
+    const GameState rd = Games::loadState(Games::get("genshin"));
+    CHECK(rd.byFrames && rd.startFr == 3 && rd.intervalFr == 5 && rd.jitterFr == 2 && !rd.framesSet);
+    gs.framesSet = true;
+    Games::saveState("genshin", gs);
+    CHECK(Games::loadState(Games::get("genshin")).framesSet);
+    CHECK(rd.actions == gs.actions && rd.steps == gs.steps);
+    CHECK(rd.actions[0].holdFr == 2 && rd.actions[1].afterFr == 3 && rd.steps[0].afterFr == 2);
+    CHECK(Games::groups().value(0).betweenFr == 2);
+    {   // как это лежит в файле: старые версии читают те же поля, а кадры — в хвосте
+        auto s = AppSettings::open();
+        const QStringList a = s->value("games/genshin/state/actions").toStringList();
+        CHECK(a.value(0) == "m:1:40:15:c:f2.1" && a.value(1) == "k:f:0:30:c:f0.3");
+        CHECK(s->value("games/genshin/state/steps").toStringList().value(0) == "k:e:0:10:d:f0.2");
+    }
+    // вызов группы с паузой в кадрах; профиль хранит то же
+    gs.actions = {call, act("f", 0, 0, 0, 0)};
+    Games::saveProfile("genshin", "Кадры", gs, 0);
+    const GameState pr = Games::loadProfile("genshin", "Кадры");
+    CHECK(pr.byFrames && pr.intervalFr == 5 && pr.actions[0].isGroup() && pr.actions[0].afterFr == 6);
+    CHECK(pr.actions[1].holdFr == 0 && pr.actions[1].afterFr == 0);
+    // запись 1.17 (без кадров) — кадров нет, «По кадрам» выключено
+    {
+        auto s = AppSettings::open();
+        s->setValue("games/genshin/state/actions", QStringList{"m:1:40:15", "k:f:0:0:c", "g:0f0f0f0f:2:70"});
+        s->remove("games/genshin/state/byFrames");
+        s->sync();
+    }
+    const GameState old = Games::loadState(Games::get("genshin"));
+    CHECK(!old.byFrames && old.actions.size() == 3 && old.actions[0].holdMs == 40 && old.actions[0].holdFr == 0);
+    CHECK(old.actions[2].isGroup() && old.actions[2].afterMs == 70 && old.actions[2].afterFr == 0);
+    { auto s = AppSettings::open(); s->clear(); s->sync(); }
+
+    // кадры окна: счёт, ожидание, кадров в секунду
+    {
+        FrameWatch::Feed f;
+        CHECK(f.count() == 0 && f.fps() == 0 && f.status() == FrameWatch::Status::Waiting);
+        const auto t0 = FrameWatch::Clock::now();
+        for (int i = 0; i < 10; ++i) f.frame(t0 - std::chrono::milliseconds(100 * (9 - i)));
+        CHECK(f.count() == 10 && f.status() == FrameWatch::Status::Live);
+        CHECK(f.fps() >= 9 && f.fps() <= 11);
+        CHECK(f.waitUntil(10, std::chrono::milliseconds(1)));
+        CHECK(!f.waitUntil(11, std::chrono::milliseconds(5)));
+        f.setStatus(FrameWatch::Status::NeedAdmin);
+        f.frame(t0 - std::chrono::seconds(2));               // давний кадр — не «идут»
+        CHECK(f.status() == FrameWatch::Status::NeedAdmin);
+    }
+    // кликер «По кадрам»: кадр каждые 10 мс; клик раз в кадр, «держать 2 кадра» — круг 3 кадра;
+    // кадры кончились — пауза (нет кадров), пошли снова — жмёт дальше
+    {
+        auto feed = std::make_shared<FrameWatch::Feed>();
+        std::atomic<bool> on{true}, quit{false};
+        std::thread game([&]() {
+            while (!quit) {
+                if (on) feed->frame();
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+        Clicker c;
+        ClickerConfig cfg;
+        cfg.lockToWindow = false;
+        cfg.byFrames = true;
+        cfg.frames = feed;
+        cfg.intervalMs = 1;
+        cfg.minCycleMs = 1;
+        c.setConfig(cfg);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        uint64_t f0 = feed->count();
+        c.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        c.stop();
+        uint64_t frames = feed->count() - f0;
+        auto n = c.clickCount();
+        CHECK(n + 3 >= frames && n <= frames + 1);
+        if (!(n + 3 >= frames && n <= frames + 1)) std::printf("  по кадрам: %llu кликов за %llu кадров\n", n, (unsigned long long)frames);
+        ActionStep hold; hold.holdMs = 2;
+        cfg.actions = {hold};
+        c.setConfig(cfg);
+        f0 = feed->count();
+        c.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        c.stop();
+        frames = feed->count() - f0;
+        n = c.clickCount();
+        CHECK(n * 3 + 6 >= frames && n * 3 <= frames + 3);
+        if (!(n * 3 + 6 >= frames && n * 3 <= frames + 3)) std::printf("  держать 2 кадра: %llu кругов за %llu кадров\n", n, (unsigned long long)frames);
+        cfg.actions = {ActionStep{}};
+        c.setConfig(cfg);
+        c.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        on = false;                                           // игру свернули
+        std::this_thread::sleep_for(std::chrono::milliseconds(450));
+        CHECK(c.pauseReason() == 3 && !c.allowedNow());
+        const auto paused = c.clickCount();
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        CHECK(c.clickCount() == paused);                      // без кадров не жмёт
+        on = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        CHECK(c.pauseReason() != 3 && c.clickCount() > paused + 5);
+        c.stop();
+        quit = true;
+        game.join();
+    }
+    // Feed без источника: «По кадрам» без окна — ждёт, не жмёт
+    {
+        Clicker c;
+        ClickerConfig cfg;
+        cfg.lockToWindow = false;
+        cfg.byFrames = true;
+        cfg.frames = std::make_shared<FrameWatch::Feed>();
+        cfg.intervalMs = 1;
+        c.setConfig(cfg);
+        c.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        CHECK(c.clickCount() == 0 && c.pauseReason() == 3);
+        c.stop();
+    }
+}
+
 // --- автообновление: ответ GitHub, версии, файл под систему, контрольные суммы ---
 static void testUpdates() {
     using namespace Updates;
@@ -1921,13 +2126,14 @@ int main(int argc, char** argv) {
     testV114();
     testGroups();
     testTips();
+    testFrames();
     testDataDir();
     testCardLayout();
     testUpdates();
     testI18n();
     {
         const QString pid = QString::number(QCoreApplication::applicationPid());
-        for (const char* sc : {"t", "v15_", "imp_", "empty_", "modes_", "v17_", "v19_", "v112_", "v113_", "v114_", "snd_", "fs_", "grp_"})
+        for (const char* sc : {"t", "v15_", "imp_", "empty_", "modes_", "v17_", "v19_", "v112_", "v113_", "v114_", "snd_", "fs_", "grp_", "frm_"})
             AppSettings::dropScope("AutoQTest", QString::fromLatin1(sc) + pid);
     }
     std::printf("\n%d проверок пройдено, %d провалено\n", g_pass, g_fail);
