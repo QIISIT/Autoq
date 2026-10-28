@@ -20,6 +20,7 @@
 #include "icons.h"
 #include "autostart.h"
 #include "widgets.h"
+#include "updater.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -116,6 +117,9 @@ int main(int argc, char** argv) {
             QMessageBox::information(nullptr, AQ_NAME, T("AutoQ уже запущен — его значок в трее у часов."));
         return 0;
     }
+    // автообновление (Windows): скачанная версия ставится при запуске — эта копия выходит,
+    // новую запустит установщик или подмена exe
+    if (Updater::installPendingAtStart()) return 0;
 
     // старые форматы настроек -> база игр
     Games::migrate();

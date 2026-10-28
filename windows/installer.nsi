@@ -38,6 +38,11 @@ VIAddVersionKey "LegalCopyright" "created by ${APP_AUTHOR}"
 !include "MUI2.nsh"
 !include "x64.nsh"
 !include "LogicLib.nsh"
+!include "FileFunc.nsh"
+
+; AutoQ ставит обновление сам: AutoQ-Setup.exe /S /UPDATE (updater.cpp) — тихо,
+; без возврата удалённого ярлыка на рабочем столе, после установки запускает AutoQ
+Var IsUpdate
 
 !define MUI_ICON   "app.ico"
 !define MUI_UNICON "app.ico"
@@ -96,6 +101,12 @@ LangString TxtDeleteSettings ${LANG_RUSSIAN} "Удалить также наст
 LangString TxtDeleteSettings ${LANG_ENGLISH} "Also delete settings and profiles?"
 
 Function .onInit
+    ${GetParameters} $R0
+    ClearErrors
+    ${GetOptions} $R0 "/UPDATE" $R1
+    ${IfNot} ${Errors}
+        StrCpy $IsUpdate 1
+    ${EndIf}
     !insertmacro MUI_LANGDLL_DISPLAY
     ${IfNot} ${RunningX64}
         MessageBox MB_ICONSTOP "$(TxtOnly64)" /SD IDOK
@@ -155,8 +166,20 @@ Section "$(TxtSecMain)" SecMain
 SectionEnd
 
 Section "$(TxtSecDesktop)" SecDesktop
+    ; обновление из AutoQ: ярлык, который удалили, не возвращаем
+    ${If} $IsUpdate == 1
+    ${AndIfNot} ${FileExists} "$DESKTOP\${APP_NAME}.lnk"
+        Return
+    ${EndIf}
     CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}" "" "$INSTDIR\app.ico"
 SectionEnd
+
+; обновление из AutoQ: запустить новую версию (с --restarted она дождётся, пока старая закроется)
+Function .onInstSuccess
+    ${If} $IsUpdate == 1
+        Exec '"$INSTDIR\${APP_EXE}" --restarted'
+    ${EndIf}
+FunctionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
     !insertmacro MUI_DESCRIPTION_TEXT ${SecMain}    "$(DescMain)"
@@ -176,6 +199,7 @@ Section "Uninstall"
     Delete "$INSTDIR\README_WINDOWS_EN.txt"
     Delete "$INSTDIR\app.ico"
     Delete "$INSTDIR\Uninstall.exe"
+    RMDir /r "$INSTDIR\AutoQ-update"
     RMDir  "$INSTDIR"
 
     Delete "$DESKTOP\${APP_NAME}.lnk"

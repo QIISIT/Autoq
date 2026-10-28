@@ -28,6 +28,7 @@ set(CORE_SOURCES
     sounds.cpp      sounds.h
     framesync.cpp   framesync.h
     cardlayout.cpp  cardlayout.h
+    updates.cpp     updates.h
 )
 if(APPLE)
     list(APPEND CORE_SOURCES macsupport.mm macsupport.h)
@@ -63,6 +64,7 @@ set(APP_SOURCES
     groupdialog.cpp     groupdialog.h
     onboarding.cpp      onboarding.h
     hotkeydialog.cpp    hotkeydialog.h
+    updater.cpp         updater.h
     keycapturebutton.h
 )
 if(WIN32)

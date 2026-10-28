@@ -12,6 +12,7 @@
 #include "sounds.h"
 #include "styles.h"
 #include "styleui.h"
+#include "updater.h"
 #include <QMenu>
 #include <QApplication>
 #include <QGuiApplication>
@@ -254,6 +255,52 @@ QWidget* SettingsDialog::buildGeneralPage() {
         Prefs::closeToTray(), [](bool v) { Prefs::setCloseToTray(v); });
     row(T("Уведомления у значка в трее"), T("Когда окно AutoQ закрыто: «Профиль сохранён», «Окно игры выбрано» и т. п. Пока окно открыто — сообщения внутри окна."),
         Prefs::notifications(), [](bool v) { Prefs::setNotifications(v); });
+
+    // --- обновления: последний релиз на GitHub — скачать, проверить и поставить (updater.cpp)
+    lay->addWidget(mkLabel(T("Обновления"), "fieldLabel"));
+    {
+        row(T("Автообновление"),
+            T("AutoQ сам проверяет GitHub раз в 6 часов, скачивает новую версию, сверяет её контрольную сумму SHA-256 и ставит.\n"
+              "Выключи — и AutoQ сам не будет выходить в интернет: проверить можно кнопкой ниже."),
+            Updater::autoEnabled(), [](bool v) { Updater::instance().setAutoEnabled(v); });
+        auto* status = mkLabel(QString(), "small");
+        status->setWordWrap(true);
+        auto* sh = new QHBoxLayout();
+        sh->setContentsMargins(50, 0, 0, 0);
+        sh->addWidget(status, 1);
+        lay->addLayout(sh);
+        auto* checkBtn = new QPushButton(T("Проверить сейчас"));
+        auto* updateBtn = new QPushButton();
+        auto* pageBtn = new QPushButton(T("Что нового"));
+        checkBtn->setObjectName("outline");
+        updateBtn->setObjectName("accent");
+        pageBtn->setObjectName("outline");
+        pageBtn->setToolTip(T("Страница релиза на GitHub: что изменилось и все файлы"));
+        auto* bh = new QHBoxLayout();
+        bh->setContentsMargins(50, 0, 0, 0);
+        bh->setSpacing(8);
+        for (QPushButton* b : {checkBtn, updateBtn, pageBtn}) {
+            b->setCursor(Qt::PointingHandCursor);
+            bh->addWidget(b);
+        }
+        bh->addStretch(1);
+        lay->addLayout(bh);
+        auto sync = [status, checkBtn, updateBtn, pageBtn]() {
+            const Updater& u = Updater::instance();
+            status->setText(u.statusText());
+            checkBtn->setEnabled(!u.busy());
+            updateBtn->setVisible(u.canUpdate());
+            updateBtn->setText(u.updateButtonText());
+            pageBtn->setVisible(!u.version().isEmpty());
+        };
+        sync();
+        connect(&Updater::instance(), &Updater::changed, status, sync);
+        connect(checkBtn, &QPushButton::clicked, this, []() { Updater::instance().checkNow(); });
+        connect(updateBtn, &QPushButton::clicked, this, []() { Updater::instance().update(); });
+        connect(pageBtn, &QPushButton::clicked, this, []() {
+            QDesktopServices::openUrl(QUrl(Updater::instance().releasePage()));
+        });
+    }
 
     lay->addWidget(mkLabel(T("Кликер"), "fieldLabel"));
     row(T("Кнопкой мыши — только когда курсор над окном игры"),

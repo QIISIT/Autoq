@@ -22,6 +22,7 @@
 #include "theme.h"
 #include "sounds.h"
 #include "framesync.h"
+#include "updater.h"
 #include <QWidget>
 #include <QFrame>
 #include <QVBoxLayout>
@@ -178,6 +179,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (!run) stepTimer_->stop();
     });
     refreshLive();
+    connectUpdater();
 
     // первый запуск — сначала выбор оформления и анимаций
     if (!Prefs::onboardingDone()) rootStack_->setCurrentWidget(onboarding_);   // ничего не выбрано заранее
@@ -3438,6 +3440,10 @@ void MainWindow::buildTray() {
         connect(admin, &QAction::triggered, this, &MainWindow::restartAsAdmin);
     }
 #endif
+    // вышла новая версия — «Обновить до …» (видно, только когда есть что ставить)
+    trayUpdateAction_ = trayMenu_->addAction(QString());
+    trayUpdateAction_->setVisible(false);
+    connect(trayUpdateAction_, &QAction::triggered, this, []() { Updater::instance().update(); });
     trayMenu_->addSeparator();
     QAction* quitAction = trayMenu_->addAction(T("Выход"));
     connect(quitAction, &QAction::triggered, this, &MainWindow::quitApp);
@@ -3873,6 +3879,25 @@ void MainWindow::onTrayActivated(QSystemTrayIcon::ActivationReason reason) {
 void MainWindow::restartApp() {
     restart_ = true;
     quitApp();
+}
+
+// Автообновление: сообщения, перезапуск в новую версию, пункт в трее
+void MainWindow::connectUpdater() {
+    Updater& up = Updater::instance();
+    connect(&up, &Updater::notice, this, &MainWindow::notify);
+    connect(&up, &Updater::restartRequested, this, &MainWindow::restartApp);
+    connect(&up, &Updater::quitRequested, this, &MainWindow::quitApp);
+    auto sync = [this]() {
+        Updater& u = Updater::instance();
+        if (!trayUpdateAction_) return;
+        trayUpdateAction_->setVisible(u.canUpdate());
+        trayUpdateAction_->setText(T("Обновить до %1").arg(u.version()));
+    };
+    connect(&up, &Updater::changed, this, sync);
+    sync();
+    up.start();
+    if (!up.startNotice().isEmpty())
+        QTimer::singleShot(1500, this, [this]() { notify(Updater::instance().startNotice()); });
 }
 
 void MainWindow::restartAsAdmin() {
