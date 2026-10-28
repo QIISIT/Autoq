@@ -101,6 +101,8 @@ private:
     void makeGroup();
     void ungroup(int i);
     void editGroup(int i);
+    void deleteGroup(int i);                 // ПКМ → «Удалить группу…» (спросит, что с карточками)
+    void removeGroup(const QString& id, bool withCards);
     void insertGroup(int at, const QString& id);
     void fillGroupMenu(class QMenu* m, int at);
     void edited();

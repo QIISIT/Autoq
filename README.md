@@ -22,7 +22,7 @@ AutoQ — **автокликер для игр**. Работает на Windows,
 В нём удобный интерфейс и разные режимы работы.
 
 ![Главное окно AutoQ](docs/images/screenshot.png)
-<p align="center"><i>v1.17.0</i></p>
+<p align="center"><i>v1.17.1</i></p>
 
 [![made with C++](https://img.shields.io/badge/made%20with-C%2B%2B-e8453c?style=for-the-badge)](docs/DEVELOPMENT.md)
 [![built with Qt 6](https://img.shields.io/badge/built%20with-Qt%206-41cd52?style=for-the-badge)](https://www.qt.io)

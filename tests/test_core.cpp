@@ -1124,8 +1124,40 @@ static void testDataDir() {
     CHECK(Games::importProfile("minecraft", out) == "ТУРБО (2)");
     CHECK(Games::importProfile("genshin", AppSettings::settingsFile(), &err).isEmpty() && !err.isEmpty());
     CHECK(Games::importProfile("genshin", AppSettings::dataDir() + "/нет.ini", &err).isEmpty());
-    // удалить игру — удалить и её профили
-    CHECK(Games::remove("minecraft") && !QDir(AppSettings::profilesDir() + "/minecraft").exists());
+    // убрать игру — профили остаются; встроенная, добавленная снова, находит их сама
+    CHECK(Games::remove("minecraft") && QDir(AppSettings::profilesDir() + "/minecraft").exists());
+    CHECK(Games::addBuiltin("minecraft") && Games::profiles("minecraft").size() == 2);
+    // «Удалить и профили»
+    CHECK(Games::remove("minecraft", true) && !QDir(AppSettings::profilesDir() + "/minecraft").exists());
+    CHECK(Games::addBuiltin("minecraft") && Games::profiles("minecraft").isEmpty());
+    Games::saveProfile("minecraft", "Стройка", GameState{});
+    CHECK(Games::remove("minecraft"));
+    {   // своя игра с названием встроенной профили встроенной не забирает: они ждут её
+        GameDef c; c.id = Games::newCustomId(); c.name = Games::builtinDefault("minecraft").name; Games::save(c);
+        CHECK(Games::adoptProfiles(c.id, c.name) == 0);
+        CHECK(Games::remove(c.id, true));
+        CHECK(Games::addBuiltin("minecraft") && Games::profiles("minecraft") == QStringList{"Стройка"});
+        CHECK(Games::remove("minecraft", true));
+    }
+    {   // своя игра: при новом добавлении другой id — профили находятся по названию игры
+        GameDef c; c.id = Games::newCustomId(); c.name = "Моя игра"; Games::save(c);
+        Games::saveProfile(c.id, "Мой", GameState{});
+        Games::saveProfile(c.id, "Второй", GameState{});
+        CHECK(Games::remove(c.id));
+        GameDef other; other.id = Games::newCustomId(); other.name = "Другая"; Games::save(other);
+        CHECK(Games::adoptProfiles(other.id, other.name) == 0);      // чужие профили не берёт
+        GameDef again; again.id = Games::newCustomId(); again.name = "моя ИГРА"; Games::save(again);
+        CHECK(again.id != c.id);
+        CHECK(Games::adoptProfiles(again.id, again.name) == 2);
+        CHECK(Games::profiles(again.id) == (QStringList{"Второй", "Мой"}));
+        CHECK(!QDir(AppSettings::profilesDir() + "/" + c.id).exists());
+        CHECK(Games::adoptProfiles(again.id, again.name) == 0);      // уже забрали
+        {
+            QSettings f(Games::profileFile(again.id, "Мой"), QSettings::IniFormat);
+            CHECK(f.value("AutoQ/game").toString() == again.id);
+        }
+        CHECK(Games::remove(other.id, true) && Games::remove(again.id, true));
+    }
     // профили старого формата (внутри настроек) переезжают в файлы
     {
         auto s = AppSettings::open();
@@ -1480,14 +1512,25 @@ static void testGroups() {
     // группа действий: ЛКМ (держать 40), пауза 15, F
     ActionGroup combo; combo.id = "0a0b0c0d"; combo.name = "Комбо";
     combo.items = {act("mouse:1", 40, 15), act("f", 0, 999)};      // пауза у последнего — не используется
+    combo.betweenMs = 25;                                          // между повторами ×N
     // ряд: E, пауза 10, [Комбо ×3, пауза 70], Q
     const QList<ActionStep> chain{act("e", 0, 10), call(combo.id, 3, 70), act("q", 0, 5)};
     QList<int> owner;
     const QList<ActionStep> run = Groups::expand(chain, {combo}, false, false, &owner);
     CHECK(run.size() == 1 + 2 * 3 + 1);
     CHECK(run[0].key == "e" && run[1].mouse && run[1].holdMs == 40 && run[1].afterMs == 15);
-    CHECK(run[2].key == "f" && run[2].afterMs == 70);         // между повторами — пауза вызова
+    // между повторами — пауза группы, после последнего — пауза вызова (она не меняет скорость группы)
+    CHECK(run[2].key == "f" && run[2].afterMs == 25 && run[4].key == "f" && run[4].afterMs == 25);
     CHECK(run[6].key == "f" && run[6].afterMs == 70 && run[7].key == "q");
+    CHECK(Groups::betweenMs(combo, chain[1]) == 25);
+    {   // ×1 — только пауза вызова; группа из 1.17.0 (-1) — между повторами пауза вызова, как тогда
+        const QList<ActionStep> r1 = Groups::expand({call(combo.id, 1, 70)}, {combo}, false);
+        CHECK(r1.size() == 2 && r1[1].afterMs == 70);
+        ActionGroup old = combo; old.betweenMs = -1;
+        const QList<ActionStep> ro = Groups::expand(chain, {old}, false);
+        CHECK(ro[2].afterMs == 70 && ro[4].afterMs == 70 && ro[6].afterMs == 70);
+        CHECK(Groups::betweenMs(old, chain[1]) == 70);
+    }
     CHECK(owner == (QList<int>{0, 1, 1, 1, 1, 1, 1, 2}));
     for (const ActionStep& a : run) CHECK(!a.isGroup());
     // «Вместе» / «Зажать» — без повторов
@@ -1581,6 +1624,30 @@ static void testGroups() {
     CHECK(!name.isEmpty() && Games::groups("minecraft").size() == 2);
     CHECK(Games::loadProfile("minecraft", name).actions == chain);
     QFile::remove(file);
+
+    // группа из 1.17.0 (без паузы между повторами): становится паузой после её вызова в ряду —
+    // круг жмётся как раньше; запись — уже с паузой
+    {
+        auto s = AppSettings::open();
+        s->remove("games/genshin/group");
+        s->setValue("games/genshin/groups", QStringList{"0a0b0c0d", "deadbeef"});
+        s->setValue("games/genshin/group/0a0b0c0d/name", "Комбо");
+        s->setValue("games/genshin/group/0a0b0c0d/items", QStringList{"m:1:40:15", "k:f:0:0"});
+        s->setValue("games/genshin/group/deadbeef/name", "Не в ряду");
+        s->setValue("games/genshin/group/deadbeef/items", QStringList{"k:r:0:0"});
+        s->setValue("games/genshin/state/actions", QStringList{"k:e:0:10", "g:0a0b0c0d:3:70", "k:q:0:5"});
+        s->setValue("games/genshin/state/steps", QStringList{});
+        s->sync();
+    }
+    CHECK(Games::groups("genshin").value(0).betweenMs == -1);
+    const GameState legacy = Games::loadState(Games::get("genshin"));
+    CHECK(legacy.groups.size() == 2 && legacy.groups[0].betweenMs == 70);
+    CHECK(legacy.groups[1].betweenMs == -1);                  // не стоит в ряду — пока как было
+    CHECK(Games::groups("genshin")[0].betweenMs == 70);       // записано
+    {
+        const QList<ActionStep> lr = legacy.runList(GameMode::Sequence);
+        CHECK(lr.size() == 8 && lr[2].afterMs == 70 && lr[4].afterMs == 70 && lr[6].afterMs == 70);
+    }
 
     // старая запись без групп и мусор — не ломают чтение
     {

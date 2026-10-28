@@ -68,6 +68,7 @@ public slots:
     void startPressed();           // кнопка Старт: не используется — включить, иначе старт/стоп
     void onHotkeyEvent(const QString& spec, bool down);   // глобальная клавиша (из потока хоткеев)
     void showMain();
+    void restoreFromTray();      // значок трея, Dock на macOS: мини-окно (в мини-режиме) или главное
     void showMini();
     void openSettings();
     void openOverlaySettings();
@@ -78,6 +79,7 @@ private slots:
     void addGame();
     void editGame();
     void removeGame();
+    void notifyAdded(const GameDef& g, int profiles);   // «Игра добавлена» (и профили, если вернулись)
     void startWindowCheck();
     void checkWindowDone();
     void onCaptureStarted();

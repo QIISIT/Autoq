@@ -3,6 +3,7 @@
 #include <thread>
 #include <chrono>
 #include <mutex>
+#include <condition_variable>
 #include <memory>
 #include <vector>
 #include <array>
@@ -70,6 +71,7 @@ private:
     void sleepWhileRunning(int ms);
     bool waitHeld(int ms, const ClickerConfig& cfg);   // пауза с зажатым: false — стоп или ушли из игры
     void sleepUntilRunning(std::chrono::steady_clock::time_point until);   // точно, до долей мс
+    void napHold(std::chrono::milliseconds ms);   // «Зажать»: ждать, пока не стоп и не сменили настройки
     void countAction(int i);
     std::vector<ActionStep> held_;        // что сейчас зажато (режим "Зажать")
     std::atomic<bool> running_{false};
@@ -84,6 +86,9 @@ private:
     std::thread worker_;
     ClickerConfig config_;
     std::mutex configMutex_;
+    std::mutex wakeMutex_;                // stop() и setConfig() будят «Зажать» сразу
+    std::condition_variable wake_;
+    bool configDirty_ = false;            // под wakeMutex_
     void* display_ = nullptr;             // Display* на Linux, CGEventSourceRef на macOS
     void* timer_ = nullptr;               // Windows: таймер высокой точности потока кликера
     std::unique_ptr<ActiveWindowProbe> probe_;

@@ -247,7 +247,7 @@ GameEditDialog::GameEditDialog(const GameDef& game, bool isNew, QWidget* parent)
     if (!isNew) {
         auto* del = new QPushButton(T("Убрать игру…"));
         del->setObjectName("ghost");
-        del->setToolTip(T("Убрать игру из списка вместе с её профилями (спросит ещё раз)"));
+        del->setToolTip(T("Убрать игру из списка (спросит ещё раз; профили останутся в папке данных)"));
         connect(del, &QPushButton::clicked, this, [this]() {
             removeRequested_ = true;
             reject();
