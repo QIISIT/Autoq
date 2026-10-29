@@ -1,6 +1,6 @@
 #include "ui/overlay.h"
 #include "core/i18n.h"
-#include "core/games.h"
+#include "core/appsettings.h"
 #include "ui/style/theme.h"
 #include <QPainter>
 #include <QPainterPath>
