@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19)
-project(AutoQ VERSION 1.18.1 LANGUAGES CXX)
+project(AutoQ VERSION 1.18.2 LANGUAGES CXX)
 if(APPLE)
     enable_language(OBJCXX)     # macsupport.mm — AppKit (NSWorkspace, NSWindow)
 endif()
