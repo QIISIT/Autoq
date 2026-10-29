@@ -28,7 +28,8 @@ namespace Updates {
 
     // Номер из строки: "1.17.0 beta" / "v1.17.1" -> {1, 17, 1}; нет цифр — пусто
     QList<int> versionNumbers(const QString& text);
-    // <0 — a старше b, 0 — одна версия, >0 — a новее. Недостающие части — 0 (1.17 = 1.17.0)
+    // <0 — a старше b, 0 — одна версия, >0 — a новее. Недостающие части — 0 (1.17 = 1.17.0).
+    // При одном номере тестовая сборка («1.18.0 beta test») старше релиза («v1.18.0»)
     int compareVersions(const QString& a, const QString& b);
     bool isNewer(const QString& candidate, const QString& current);
 
