@@ -3,6 +3,7 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include "core/games.h"
+#include "core/appsettings.h"
 #include "ui/style/theme.h"
 #include "ui/style/icons.h"
 #include "core/tips.h"
@@ -920,7 +921,7 @@ bool InputGuard::eventFilter(QObject* o, QEvent* e) {
             return QObject::eventFilter(o, e);
         }
         auto* w = static_cast<QWidget*>(o);
-        if (!inScrollArea(w)) return QObject::eventFilter(o, e);    // листать нечего (мини-окно) — как раньше
+        if (!inScrollArea(w)) return QObject::eventFilter(o, e);    // листать нечего (мини-окно) — колёсико у поля
         if (w->hasFocus() && now - lastPageWheel_ > 600) return QObject::eventFilter(o, e);
         // мимо выбранного поля — событие идёт дальше вверх, до прокрутки страницы
         e->ignore();
