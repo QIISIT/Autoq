@@ -1,10 +1,5 @@
-// Где AutoQ хранит данные: одна видимая папка с файлами (без реестра).
-//   settings.ini            — все настройки и игры
-//   profiles/<игра>/*.ini   — профили, по файлу на каждый
-// Папка по умолчанию: Windows %APPDATA%\AutoQ, macOS ~/Library/Application Support/AutoQ,
-// Linux ~/.config/AutoQ. Свою папку выбирают в настройках (её путь — в location.ini
-// в папке по умолчанию). Рядом с программой есть папка AutoQ-data — портативный режим.
-#include "core/games.h"
+// Папка по умолчанию хранит location.ini — путь к своей папке данных, если её выбрали
+#include "core/appsettings.h"
 #include <QRegularExpression>
 #include <QDir>
 #include <QFile>
@@ -261,3 +256,44 @@ QString AppSettings::safeFileName(const QString& name) {
     if (reserved.match(out).hasMatch()) out += '_';
     return out;
 }
+
+// ---------------------------------------------------------------------------
+// Общие настройки программы
+// ---------------------------------------------------------------------------
+int Prefs::captureSeconds() {
+    auto s = AppSettings::open();
+    const int v = s->value("captureSeconds", 3).toInt();
+    return (v >= 1 && v <= 120) ? v : 3;
+}
+
+void Prefs::setCaptureSeconds(int sec) {
+    if (sec < 1 || sec > 120) return;
+    auto s = AppSettings::open();
+    s->setValue("captureSeconds", sec);
+}
+
+static bool prefBool(const char* key, bool def) {
+    auto s = AppSettings::open();
+    return s->value(key, def).toBool();
+}
+static void setPrefBool(const char* key, bool on) {
+    auto s = AppSettings::open();
+    s->setValue(key, on);
+    s->sync();
+}
+bool Prefs::closeToTray() { return prefBool("closeToTray", true); }
+void Prefs::setCloseToTray(bool on) { setPrefBool("closeToTray", on); }
+bool Prefs::notifications() { return prefBool("notifications", true); }
+void Prefs::setNotifications(bool on) { setPrefBool("notifications", on); }
+bool Prefs::startMini() { return prefBool("startMini", false); }
+void Prefs::setStartMini(bool on) { setPrefBool("startMini", on); }
+bool Prefs::stopOnGameClose() { return prefBool("stopOnGameClose", true); }
+void Prefs::setStopOnGameClose(bool on) { setPrefBool("stopOnGameClose", on); }
+bool Prefs::mouseOnlyOverGame() { return prefBool("mouseOnlyOverGame", true); }
+void Prefs::setMouseOnlyOverGame(bool on) { setPrefBool("mouseOnlyOverGame", on); }
+bool Prefs::miniOnTop() { return prefBool("miniOnTop", true); }
+void Prefs::setMiniOnTop(bool on) { setPrefBool("miniOnTop", on); }
+bool Prefs::elevateAtStart() { return prefBool("elevateAtStart", true); }
+void Prefs::setElevateAtStart(bool on) { setPrefBool("elevateAtStart", on); }
+bool Prefs::onboardingDone() { return prefBool("onboardingDone", false); }
+void Prefs::setOnboardingDone(bool done) { setPrefBool("onboardingDone", done); }
