@@ -20,72 +20,116 @@ endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
-# Ядро без интерфейса: клавиши, база игр, распознавание окна, кликер, хоткей
-set(CORE_SOURCES
-    src/core/i18n.cpp        src/core/i18n.h          src/core/i18n_en.cpp
-    src/core/keys.cpp        src/core/keys.h
-    src/core/games.cpp       src/core/games.h
-    src/core/appsettings.cpp
-    src/core/winmatch.cpp    src/core/winmatch.h
-    src/core/clicker.cpp     src/core/clicker.h
-    src/core/hotkey.cpp      src/core/hotkey.h
-    src/core/sounds.cpp      src/core/sounds.h
-    src/core/framesync.cpp   src/core/framesync.h
-    src/core/framewatch.cpp  src/core/framewatch.h
-    src/core/cardlayout.cpp  src/core/cardlayout.h
-    src/core/updates.cpp     src/core/updates.h
-    src/core/tips.cpp        src/core/tips.h
-)
-if(APPLE)
-    list(APPEND CORE_SOURCES src/platform/macos/macsupport.mm src/platform/macos/macsupport.h)
+set(SRC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# Код под одну ОС (src/platform): в сборку — только своей системы
+if(WIN32)
+    set(PLATFORM_CORE
+        ${SRC}/platform/windows/clicker_win.cpp
+        ${SRC}/platform/windows/framesync_win.cpp
+        ${SRC}/platform/windows/hotkey_win.cpp
+        ${SRC}/platform/windows/winmatch_win.cpp
+        ${SRC}/platform/windows/framewatch_win.cpp)
+    set(PLATFORM_APP
+        ${SRC}/platform/windows/autostart_win.cpp
+        ${SRC}/platform/windows/updater_win.cpp)
+elseif(APPLE)
+    set(PLATFORM_CORE
+        ${SRC}/platform/macos/clicker_mac.cpp
+        ${SRC}/platform/macos/framesync_mac.cpp
+        ${SRC}/platform/macos/hotkey_mac.cpp
+        ${SRC}/platform/macos/winmatch_mac.cpp
+        ${SRC}/platform/framewatch_none.cpp
+        ${SRC}/platform/macos/macsupport.mm     ${SRC}/platform/macos/macsupport.h)
+    set(PLATFORM_APP
+        ${SRC}/platform/macos/autostart_mac.cpp
+        ${SRC}/platform/macos/updater_mac.cpp
+        ${SRC}/platform/macos/macperm.cpp       ${SRC}/platform/macos/macperm.h)
+else()
+    find_package(X11 REQUIRED)
+    # «По кадрам»: кадры окна игры через расширение Present (Arch — в libxcb,
+    # Debian/Ubuntu — libxcb-present-dev). Нет — AutoQ собирается, но без «По кадрам»
+    find_package(PkgConfig)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(XCB_PRESENT IMPORTED_TARGET xcb xcb-present)
+    endif()
+    set(PLATFORM_CORE
+        ${SRC}/platform/linux/clicker_x11.cpp
+        ${SRC}/platform/linux/framesync_x11.cpp
+        ${SRC}/platform/linux/hotkey_x11.cpp
+        ${SRC}/platform/linux/keys_x11.cpp
+        ${SRC}/platform/linux/winmatch_x11.cpp  ${SRC}/platform/linux/winmatch_x11.h)
+    if(XCB_PRESENT_FOUND)
+        list(APPEND PLATFORM_CORE ${SRC}/platform/linux/framewatch_x11.cpp)
+    else()
+        message(WARNING "xcb-present не найден: «По кадрам» будет недоступно (нужен libxcb-present-dev)")
+        list(APPEND PLATFORM_CORE ${SRC}/platform/framewatch_none.cpp)
+    endif()
+    set(PLATFORM_APP
+        ${SRC}/platform/linux/autostart_linux.cpp
+        ${SRC}/platform/linux/updater_linux.cpp)
 endif()
-add_library(aq_core STATIC ${CORE_SOURCES})
+
+# Ядро без интерфейса (только Qt Core): клавиши, игры, окно игры, кликер, хоткей. Его же — тесты
+add_library(aq_core STATIC
+    ${SRC}/core/i18n.cpp        ${SRC}/core/i18n.h          ${SRC}/core/i18n_en.cpp
+    ${SRC}/core/keys.cpp        ${SRC}/core/keys.h
+    ${SRC}/core/games.cpp       ${SRC}/core/games.h
+    ${SRC}/core/appsettings.cpp ${SRC}/core/appsettings.h
+    ${SRC}/core/winmatch.cpp    ${SRC}/core/winmatch.h
+    ${SRC}/core/clicker.cpp     ${SRC}/core/clicker.h       ${SRC}/core/clicker_os.h
+    ${SRC}/core/hotkey.cpp      ${SRC}/core/hotkey.h
+    ${SRC}/core/sounds.cpp      ${SRC}/core/sounds.h
+    ${SRC}/core/framesync.cpp   ${SRC}/core/framesync.h
+    ${SRC}/core/framewatch.cpp  ${SRC}/core/framewatch.h    ${SRC}/core/framewatch_os.h
+    ${SRC}/core/cardlayout.cpp  ${SRC}/core/cardlayout.h
+    ${SRC}/core/updates.cpp     ${SRC}/core/updates.h
+    ${SRC}/core/tips.cpp        ${SRC}/core/tips.h
+    ${PLATFORM_CORE})
 target_link_libraries(aq_core PUBLIC Qt6::Core)
-target_include_directories(aq_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_include_directories(aq_core PUBLIC ${SRC})
 
 # Значки (логотип, иконки игр, интерфейс) — рисуются кодом
-add_library(aq_icons STATIC src/ui/style/icons.cpp src/ui/style/icons.h)
+add_library(aq_icons STATIC ${SRC}/ui/style/icons.cpp ${SRC}/ui/style/icons.h)
 target_link_libraries(aq_icons PUBLIC Qt6::Gui aq_core)
 
 set(APP_SOURCES
-    src/main.cpp
-    src/appinfo.h
-    src/ui/mainwindow.cpp              src/ui/mainwindow.h
-    src/ui/miniwindow.cpp              src/ui/miniwindow.h
-    src/ui/overlay.cpp                 src/ui/overlay.h
-    src/ui/onboarding.cpp              src/ui/onboarding.h
-    src/ui/actionseditor.cpp           src/ui/actionseditor.h
-    src/ui/board.cpp                   src/ui/board.h
-    src/ui/dialogs/settingsdialog.cpp  src/ui/dialogs/settingsdialog.h
-    src/ui/dialogs/gameeditdialog.cpp  src/ui/dialogs/gameeditdialog.h
-    src/ui/dialogs/groupdialog.cpp     src/ui/dialogs/groupdialog.h
-    src/ui/dialogs/hotkeydialog.cpp    src/ui/dialogs/hotkeydialog.h
-    src/ui/dialogs/keypicker.cpp       src/ui/dialogs/keypicker.h
-    src/ui/dialogs/windowpicker.cpp    src/ui/dialogs/windowpicker.h
-    src/ui/dialogs/colorpicker.cpp     src/ui/dialogs/colorpicker.h
-    src/ui/style/theme.cpp             src/ui/style/theme.h
-    src/ui/style/styles.cpp            src/ui/style/styles.h
-    src/ui/style/styleui.cpp           src/ui/style/styleui.h
-    src/ui/style/animations.cpp        src/ui/style/animations.h
-    src/ui/style/widgets.cpp           src/ui/style/widgets.h
-    src/ui/style/keycapturebutton.h
-    src/services/updater.cpp           src/services/updater.h
-    src/services/autostart.cpp         src/services/autostart.h
-)
+    ${SRC}/main.cpp
+    ${SRC}/appinfo.h
+    ${SRC}/services/updater.cpp           ${SRC}/services/updater.h    ${SRC}/services/updater_os.h
+    ${SRC}/services/autostart.h
+    ${SRC}/ui/mainwindow.cpp              ${SRC}/ui/mainwindow.h
+    ${SRC}/ui/miniwindow.cpp              ${SRC}/ui/miniwindow.h
+    ${SRC}/ui/overlay.cpp                 ${SRC}/ui/overlay.h
+    ${SRC}/ui/onboarding.cpp              ${SRC}/ui/onboarding.h
+    ${SRC}/ui/actionseditor.cpp           ${SRC}/ui/actionseditor.h
+    ${SRC}/ui/board.cpp                   ${SRC}/ui/board.h
+    ${SRC}/ui/dialogs/settingsdialog.cpp  ${SRC}/ui/dialogs/settingsdialog.h
+    ${SRC}/ui/dialogs/gameeditdialog.cpp  ${SRC}/ui/dialogs/gameeditdialog.h
+    ${SRC}/ui/dialogs/groupdialog.cpp     ${SRC}/ui/dialogs/groupdialog.h
+    ${SRC}/ui/dialogs/hotkeydialog.cpp    ${SRC}/ui/dialogs/hotkeydialog.h
+    ${SRC}/ui/dialogs/keypicker.cpp       ${SRC}/ui/dialogs/keypicker.h
+    ${SRC}/ui/dialogs/windowpicker.cpp    ${SRC}/ui/dialogs/windowpicker.h
+    ${SRC}/ui/dialogs/colorpicker.cpp     ${SRC}/ui/dialogs/colorpicker.h
+    ${SRC}/ui/style/theme.cpp             ${SRC}/ui/style/theme.h
+    ${SRC}/ui/style/styles.cpp            ${SRC}/ui/style/styles.h
+    ${SRC}/ui/style/styleui.cpp           ${SRC}/ui/style/styleui.h
+    ${SRC}/ui/style/animations.cpp        ${SRC}/ui/style/animations.h
+    ${SRC}/ui/style/widgets.cpp           ${SRC}/ui/style/widgets.h
+    ${SRC}/ui/style/keycapturebutton.h
+    ${PLATFORM_APP})
 if(WIN32)
     enable_language(RC)
-    # иконка exe, манифест (права администратора) и сведения о версии
+    # иконка exe, манифест и сведения о версии
     list(APPEND APP_SOURCES packaging/windows/app.rc)
-endif()
-if(APPLE)
-    # окно с разрешениями macOS и значок программы (.icns в Contents/Resources)
-    list(APPEND APP_SOURCES src/platform/macos/macperm.cpp src/platform/macos/macperm.h
-                            packaging/macos/AutoQ.icns)
+elseif(APPLE)
+    # значок программы (.icns в Contents/Resources)
+    list(APPEND APP_SOURCES packaging/macos/AutoQ.icns)
     set_source_files_properties(packaging/macos/AutoQ.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 endif()
 
 # WIN32 = GUI-приложение без чёрного окна консоли, MACOSX_BUNDLE = AutoQ.app
-# (на Linux оба игнорируются)
+# (на Linux оба игнорируются). Программа — в корне папки сборки: build/AutoQ
 qt_add_executable(AutoQ WIN32 MACOSX_BUNDLE ${APP_SOURCES})
 target_link_libraries(AutoQ PRIVATE aq_core aq_icons Qt6::Widgets)
 
@@ -122,20 +166,10 @@ elseif(APPLE)
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
         MACOSX_BUNDLE_ICON_FILE AutoQ.icns
         MACOSX_BUNDLE_COPYRIGHT "AutoQ — created by Qisit")
-elseif(UNIX)
-    find_package(X11 REQUIRED)
+else()
     target_link_libraries(aq_core PUBLIC X11 Xtst Xi)
-    # «По кадрам»: кадры окна игры через расширение Present (Arch — в libxcb,
-    # Debian/Ubuntu — libxcb-present-dev). Нет — AutoQ собирается, но без «По кадрам»
-    find_package(PkgConfig)
-    if(PKG_CONFIG_FOUND)
-        pkg_check_modules(XCB_PRESENT IMPORTED_TARGET xcb xcb-present)
-    endif()
     if(XCB_PRESENT_FOUND)
         target_link_libraries(aq_core PUBLIC PkgConfig::XCB_PRESENT)
-        target_compile_definitions(aq_core PRIVATE AQ_XCB_PRESENT)
-    else()
-        message(WARNING "xcb-present не найден: «По кадрам» будет недоступно (нужен libxcb-present-dev)")
     endif()
 endif()
 
