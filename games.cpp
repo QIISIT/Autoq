@@ -289,9 +289,7 @@ int Groups::betweenMs(const ActionGroup& g, const ActionStep& call) {
 }
 
 QList<ActionStep> Groups::inlineCall(const ActionStep& call, const ActionGroup& g, bool steps) {
-    ActionStep c = call;
-    c.repeat = qBound(1, call.repeat, kMaxRepeat);
-    return expand({c}, {g}, steps);
+    return expand({call}, {g}, steps, true);
 }
 
 QList<ActionStep> Groups::inlineAll(const QList<ActionStep>& chain, const ActionGroup& g, bool steps, int max) {

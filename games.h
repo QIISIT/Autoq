@@ -150,9 +150,10 @@ namespace Groups {
     // карточки ряда, из которой шаг i (подсветить, что жмётся сейчас)
     QList<ActionStep> expand(const QList<ActionStep>& chain, const QList<ActionGroup>& groups,
                              bool steps, bool once = false, QList<int>* owner = nullptr);
-    // вызов -> обычные карточки («Разгруппировать», группу удалили)
+    // «Разгруппировать»: вместо вызова — действия группы один раз (×N не повторяет),
+    // после последнего — пауза после вызова
     QList<ActionStep> inlineCall(const ActionStep& call, const ActionGroup& g, bool steps);
-    // группу удалили: все её вызовы в ряду — её действиями (не больше max)
+    // группу удалили: все её вызовы в ряду — её действиями, как при «Разгруппировать» (не больше max)
     QList<ActionStep> inlineAll(const QList<ActionStep>& chain, const ActionGroup& g, bool steps, int max);
     // пауза между повторами вызова call (у групп из 1.17.0 — пауза после вызова)
     int betweenMs(const ActionGroup& g, const ActionStep& call);
