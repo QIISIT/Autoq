@@ -1,7 +1,8 @@
 #include "services/updater.h"
+#include "services/updater_os.h"
 #include "appinfo.h"
 #include "services/autostart.h"
-#include "core/games.h"
+#include "core/appsettings.h"
 #include "core/i18n.h"
 #include <QCoreApplication>
 #include <QDesktopServices>
@@ -14,21 +15,6 @@
 #include <QTimer>
 #include <QUrl>
 
-#ifdef _WIN32
-    #ifndef NOMINMAX
-    #define NOMINMAX
-    #endif
-    #ifndef WIN32_LEAN_AND_MEAN
-    #define WIN32_LEAN_AND_MEAN
-    #endif
-    #include <windows.h>
-    #include <shellapi.h>
-#else
-    #include <csignal>
-    #include <cstdio>
-    #include <unistd.h>
-#endif
-
 using Updates::Package;
 
 namespace {
@@ -36,69 +22,19 @@ constexpr qint64 kCheckEverySec = 6 * 3600;        // автопроверка �
 constexpr int kTickMs = 30 * 60 * 1000;            // как часто смотреть, не пора ли
 constexpr int kFirstCheckMs = 20 * 1000;           // первая — через 20 с после запуска
 
-// Системная программа: в Windows — из System32 (curl.exe и tar.exe там с Windows 10 1803)
-QString tool(const char* name) {
-#ifdef _WIN32
-    const QString sys = qEnvironmentVariable("SystemRoot") + "/System32/" + QLatin1String(name) + ".exe";
-    if (QFile::exists(sys)) return sys;
-#endif
-    return QStandardPaths::findExecutable(QString::fromLatin1(name));
-}
+QString tool(const char* name) { return UpdaterOs::tool(QString::fromLatin1(name)); }
 
-QString exeDir(const QString& exe) { return QFileInfo(exe).absolutePath(); }
 QString cacheDir() {
     QString base = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);
     if (base.isEmpty()) base = QDir::tempPath();
     return base + "/AutoQ-update";
 }
 
-#ifdef _WIN32
-// Скачанное лежит в папке программы: в Program Files писать может только администратор —
-// туда не подложить чужой установщик, который AutoQ с правами запустил бы сам
-QString ownUpdateDir(const QString& exe) { return exeDir(exe) + "/AutoQ-update"; }
-
-bool dirWritable(const QString& dir) {
-    if (!QDir().mkpath(dir)) return false;
-    QFile probe(dir + "/.autoq-write-test");
-    const bool ok = probe.open(QIODevice::WriteOnly);
-    probe.remove();
-    return ok;
-}
-
-bool sameDir(const QString& a, const QString& b) {
-    const QString x = QFileInfo(a).canonicalFilePath(), y = QFileInfo(b).canonicalFilePath();
-    return !x.isEmpty() && x.compare(y, Qt::CaseInsensitive) == 0;
-}
-#endif
-
-// Как поставлена эта копия AutoQ — от этого зависит, какой файл релиза качать
+// своя сборка из build — только сообщаем о новой версии
 Package detectPackage(const QString& exe) {
-    const QString dir = exeDir(exe);
-    if (exe.isEmpty() || QFile::exists(dir + "/CMakeCache.txt")) return Package::None;   // своя сборка из build
-#ifdef _WIN32
-    if (!AppSettings::portable() && QFile::exists(dir + "/Uninstall.exe")) return Package::Setup;
-    return dirWritable(dir) ? Package::Portable : Package::None;
-#elif defined(__APPLE__)
-    return Package::Dmg;
-#else
-    return QFileInfo(dir).isWritable() ? Package::Source : Package::None;   // /usr/bin — пакетный менеджер
-#endif
+    if (exe.isEmpty() || QFile::exists(QFileInfo(exe).absolutePath() + "/CMakeCache.txt")) return Package::None;
+    return UpdaterOs::detectPackage(exe);
 }
-
-#ifdef _WIN32
-// Установщик с /S /UPDATE: без окон, ярлык на рабочем столе не возвращает, после
-// установки сам запускает AutoQ. Без прав администратора Windows покажет окно UAC
-bool launchInstaller(const QString& file) {
-    const std::wstring path = QDir::toNativeSeparators(file).toStdWString();
-    SHELLEXECUTEINFOW sei = {};
-    sei.cbSize = sizeof(sei);
-    sei.lpVerb = L"open";
-    sei.lpFile = path.c_str();
-    sei.lpParameters = L"/S /UPDATE";
-    sei.nShow = SW_SHOWNORMAL;
-    return ShellExecuteExW(&sei) != FALSE;
-}
-#endif
 
 // portable: работающий exe можно переименовать — старый становится AutoQ.exe.old
 // (удаляется при следующем запуске), новый встаёт на его место
@@ -157,9 +93,7 @@ Updater::Updater() {
         // ничего не ждёт установки (или уже стоит, или скачанное пропало) — убрать за собой
         s.reset();
         if (!tag.isEmpty()) clearPending();
-#ifdef _WIN32
-        QDir(ownUpdateDir(exePath_)).removeRecursively();
-#endif
+        UpdaterOs::cleanup(exePath_);
         QDir(cacheDir()).removeRecursively();
         return;
     }
@@ -178,11 +112,8 @@ Updater::Updater() {
 }
 
 Updater::~Updater() {
-#ifndef _WIN32
-    // сборка идёт своей группой процессов (cmake, компилятор) — остановить всю
-    if (proc_ && proc_->state() != QProcess::NotRunning && proc_->processId() > 0)
-        ::kill(-pid_t(proc_->processId()), SIGKILL);
-#endif
+    // сборка (cmake, компилятор) — остановить всю
+    if (proc_ && proc_->state() != QProcess::NotRunning) UpdaterOs::killGroup(proc_);
 }
 
 bool Updater::autoEnabled() {
@@ -203,8 +134,7 @@ void Updater::setAutoEnabled(bool on) {
 }
 
 bool Updater::installPendingAtStart() {
-#ifdef _WIN32
-    if (!autoEnabled()) return false;
+    if (!UpdaterOs::installsAtStart() || !autoEnabled()) return false;
     auto s = AppSettings::open();
     const QString tag = s->value("update/pendingTag").toString();
     const Package kind = Updates::packageFromKey(s->value("update/pendingKind").toString());
@@ -212,13 +142,13 @@ bool Updater::installPendingAtStart() {
     if (tag.isEmpty() || !Updates::isNewer(tag, AQ_VERSION) || s->value("update/autoTried").toString() == tag) return false;
     const QString exe = QCoreApplication::applicationFilePath();
     // только из своей папки рядом с программой и только тот файл, что скачали и проверили
-    if (!sameDir(QFileInfo(file).absolutePath(), ownUpdateDir(exe))) return false;
+    if (!UpdaterOs::trusted(file, exe)) return false;
     if (Updates::sha256OfFile(file) != s->value("update/pendingSha256").toString()) return false;
     if (kind == Package::Setup) {
         if (!Autostart::elevated()) return false;     // без прав было бы окно UAC прямо при запуске
         s->setValue("update/autoTried", tag);         // не вышло — второй раз сам не пробует
         s->sync();
-        return launchInstaller(file);
+        return UpdaterOs::launchInstaller(file);
     }
     if (kind == Package::Portable) {
         s->setValue("update/autoTried", tag);
@@ -226,7 +156,6 @@ bool Updater::installPendingAtStart() {
         // новая копия дождётся, пока эта выйдет (--restarted)
         return swapExe(exe, file) && QProcess::startDetached(exe, {QStringLiteral("--restarted")});
     }
-#endif
     return false;
 }
 
@@ -312,11 +241,8 @@ void Updater::update() {
 // ---------------------------------------------------------------------------
 
 QString Updater::workDir() const {
-#ifdef _WIN32
-    const QString own = ownUpdateDir(exePath_);
-    if (dirWritable(own)) return own;
-#endif
-    return cacheDir();
+    const QString own = UpdaterOs::workDir(exePath_);
+    return own.isEmpty() ? cacheDir() : own;
 }
 
 void Updater::download(bool installAfter) {
@@ -441,19 +367,10 @@ void Updater::build(const QString& tarball, bool installAfter) {
             fail(T("Не получилось собрать AutoQ %1 — подробности в %2").arg(release_.version, log));
             return;
         }
-#ifndef _WIN32
-        // новый файл рядом и переименование поверх старого: работающая программа не мешает
-        const QString fresh = exePath_ + ".new";
-        QFile::remove(fresh);
-        const bool copied = QFile::copy(built, fresh) &&
-            QFile::setPermissions(fresh, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner | QFile::ReadGroup |
-                                             QFile::ExeGroup | QFile::ReadOther | QFile::ExeOther);
-        if (!copied || std::rename(QFile::encodeName(fresh).constData(), QFile::encodeName(exePath_).constData()) != 0) {
-            QFile::remove(fresh);
+        if (!UpdaterOs::replaceProgram(built, exePath_)) {
             fail(T("Не удалось заменить программу: нет доступа к %1").arg(exePath_));
             return;
         }
-#endif
         QDir(src).removeRecursively();
         QFile::remove(tarball);
         QFile::remove(log);
@@ -493,8 +410,7 @@ void Updater::installNow() {
     }
     switch (package_) {
         case Package::Setup:
-#ifdef _WIN32
-            if (launchInstaller(pendingFile_)) {
+            if (UpdaterOs::launchInstaller(pendingFile_)) {
                 auto s = AppSettings::open();
                 s->setValue("update/autoTried", release_.tag);
                 s.reset();
@@ -502,7 +418,6 @@ void Updater::installNow() {
             } else {
                 emit notice(T("Обновление отменено: Windows не дала прав администратора (окно UAC)."));
             }
-#endif
             return;
         case Package::Portable:
             if (swapExe(exePath_, pendingFile_)) {
@@ -546,13 +461,9 @@ void Updater::announce(const QString& text) {
 }
 
 bool Updater::startsAtLaunch() const {
-#ifdef _WIN32
-    if (!autoEnabled() || triedAtStart_) return false;
+    if (!UpdaterOs::installsAtStart() || !autoEnabled() || triedAtStart_) return false;
     if (package_ == Package::Portable) return true;
-    return package_ == Package::Setup && Autostart::elevated() && sameDir(QFileInfo(pendingFile_).absolutePath(), ownUpdateDir(exePath_));
-#else
-    return false;
-#endif
+    return package_ == Package::Setup && Autostart::elevated() && UpdaterOs::trusted(pendingFile_, exePath_);
 }
 
 QString Updater::releasePage() const {
@@ -611,15 +522,11 @@ void Updater::run(const QString& program, const QStringList& args, int timeoutMs
         p->setProcessChannelMode(QProcess::MergedChannels);
         p->setStandardOutputFile(logFile);
     }
-#ifndef _WIN32
-    p->setChildProcessModifier([]() { ::setpgid(0, 0); });   // своя группа: остановить можно всю сборку
-#endif
+    UpdaterOs::ownProcessGroup(p);
     auto* guard = new QTimer(p);
     guard->setSingleShot(true);
     connect(guard, &QTimer::timeout, p, [p]() {
-#ifndef _WIN32
-        if (p->processId() > 0) ::kill(-pid_t(p->processId()), SIGKILL);
-#endif
+        UpdaterOs::killGroup(p);
         p->kill();
     });
     const bool capture = logFile.isEmpty();          // вывод в файл — читать нечего
