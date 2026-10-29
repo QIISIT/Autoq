@@ -1,6 +1,6 @@
 #include "core/sounds.h"
 #include "core/i18n.h"
-#include "core/games.h"
+#include "core/appsettings.h"
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
