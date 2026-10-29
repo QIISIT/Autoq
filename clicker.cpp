@@ -135,6 +135,29 @@ static bool sendAction(void* disp, const ActionStep& a, bool down) {
 }
 #endif
 
+// Нажать (отпускают всегда через sendAction). Linux: менеджер окон переводит фокус X
+// раньше, чем обновляет _NET_ACTIVE_WINDOW, а XTest шлёт в фокус — в миг переключения
+// allowedFor ещё видит игру, а нажатие ушло бы в новое окно. Поэтому «клавиатура у игры? —
+// нажать» идёт под захватом сервера X: между проверкой и нажатием фокус сменить некому.
+// Windows и macOS: окно переднего плана меняется сразу, отставания нет.
+// false — не нажато; если из-за фокуса — ещё и allowedNow_ = false.
+bool Clicker::press(const ActionStep& a, const ClickerConfig& cfg) {
+#if defined(_WIN32) || defined(__APPLE__)
+    (void)cfg;
+    return sendAction(display_, a, true);
+#else
+    Display* d = static_cast<Display*>(display_);
+    if (!cfg.lockToWindow || !d) return sendAction(display_, a, true);
+    XGrabServer(d);
+    const bool focused = x11FocusIn(d, activeWin_);
+    const bool sent = focused && sendAction(d, a, true);
+    XUngrabServer(d);
+    XFlush(d);
+    if (!focused) { pauseReason_ = 1; allowedNow_ = false; }
+    return sent;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 Clicker::Clicker() {
 #if defined(__APPLE__)
@@ -246,29 +269,67 @@ bool Clicker::waitHeld(int ms, const ClickerConfig& cfg) {
     return false;
 }
 
-// «По кадрам»: ждём n новых кадров окна игры — кусочками по 20 мс, чтобы «Стоп» срабатывал сразу
-bool Clicker::waitFrames(int n, const ClickerConfig& cfg, bool held) {
+// «По кадрам»: ждём, пока кадров игры станет target, — кусочками по 20 мс, чтобы «Стоп» срабатывал сразу
+bool Clicker::waitFrameCount(uint64_t target, const ClickerConfig& cfg, bool held) {
     using clock = std::chrono::steady_clock;
-    if (n <= 0) return running_;
     FrameWatch::Feed* f = cfg.frames.get();
     const auto since = clock::now();
     auto check = since + std::chrono::milliseconds(40);
-    const uint64_t target = f ? f->count() + static_cast<uint64_t>(n) : 0;
     while (running_) {
         if (f && f->waitUntil(target, std::chrono::milliseconds(20))) { noFrames_ = false; return true; }
         if (!f) std::this_thread::sleep_for(std::chrono::milliseconds(20));
         const auto now = clock::now();
-        // кадров нет дольше 0,3 с — игра свёрнута, на паузе или нет прав: ждём, не жмём
+        // кадров нет дольше 0,3 с — игра свёрнута, на паузе, грузится или нет прав: ждём, не жмём;
+        // зажатое — отпустить (фриз, загрузка — не держать клавишу, пока кадров нет)
         const auto last = f ? std::max(f->lastFrame(), since) : since;
         if (now - last > std::chrono::milliseconds(300)) {
             noFrames_ = true;
             allowedNow_ = false;
-            if (framesCfgChanged_.exchange(false)) return false;   // другое окно или режим — взять новые настройки
+            if (held || framesCfgChanged_.exchange(false)) return false;   // другое окно или режим — взять новые настройки
         }
         if (held && cfg.lockToWindow && now >= check) {
             if (!allowedFor(cfg)) { allowedNow_ = false; return false; }
             check = now + std::chrono::milliseconds(40);
         }
+    }
+    return false;
+}
+
+bool Clicker::alignFrame(const ClickerConfig& cfg) {
+    FrameWatch::Feed* f = cfg.frames.get();
+    framePhase_ = 0;
+    if (!waitFrameCount(f ? f->count() + 1 : 1, cfg, false)) return false;
+    frameBase_ = f ? f->count() : 0;
+    return true;
+}
+
+bool Clicker::waitFrames(int n, const ClickerConfig& cfg, bool held) {
+    using clock = std::chrono::steady_clock;
+    if (n <= 0) return running_;
+    FrameWatch::Feed* f = cfg.frames.get();
+    const int total = framePhase_ + n;
+    int part = n;                                // в том же кадре — ещё n десятых
+    if (total >= kFrameUnit) {
+        // идём с середины кадра — его конец и есть первый из целых кадров
+        const uint64_t from = f ? (framePhase_ > 0 ? frameBase_ : f->count()) : 0;
+        framePhase_ = 0;
+        if (!waitFrameCount(from + static_cast<uint64_t>(total / kFrameUnit), cfg, held)) return false;
+        frameBase_ = f ? f->count() : 0;
+        part = total % kFrameUnit;
+    }
+    if (part == 0) return true;
+    // дробь — доля длительности кадра сейчас (по последним кадрам, не по среднему: просадка
+    // FPS — и доля длиннее). Следующий кадр пришёл раньше (кадр вышел короче) — момент уже
+    // прошёл: жмём сразу, а счёт кадров дальше — от того же места (полкадра не теряются)
+    framePhase_ += part;
+    clock::duration frame = f ? f->frameTime() : clock::duration{};
+    if (frame <= clock::duration{}) frame = std::chrono::microseconds(16667);   // кадров не видно — как 60 к/с
+    const auto until = clock::now() + frame * part / kFrameUnit;
+    if (!f) { sleepUntilRunning(until); return running_; }
+    while (running_) {
+        const auto now = clock::now();
+        if (now >= until) return true;
+        if (f->waitUntil(frameBase_ + 1, std::min<clock::duration>(until - now, std::chrono::milliseconds(20)))) return true;
     }
     return false;
 }
@@ -313,18 +374,19 @@ bool Clicker::doSteps(const ClickerConfig& cfg) {
         } else if (a.press == ActionStep::Click) {
             // нажать и сразу отпустить (зажатую раньше — тоже: после шага она отпущена)
             if (k >= 0) down.erase(down.begin() + k);
-            if (sendAction(display_, a, true)) {
+            if (press(a, cfg)) {
                 sendAction(display_, a, false);
                 const int idx = Steps::inputIndex(inputs, a);
                 if (idx >= 0) countAction(idx);
                 clickCount_ += 1;
             }
-        } else if (k < 0 && sendAction(display_, a, true)) {
+        } else if (k < 0 && press(a, cfg)) {
             down.push_back(a);
             const int idx = Steps::inputIndex(inputs, a);
             if (idx >= 0) countAction(idx);
             clickCount_ += 1;
         }
+        if (!allowedNow_) { whole = false; break; }      // клавиатура уже не у игры
         if (i + 1 < n) {
             // что-то зажато — пауза с проверкой окна: ушли из игры — отпускаем сразу
             if (down.empty()) pause(a.afterMs, cfg);
@@ -346,13 +408,15 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
     }
     if (cfg.simultaneous && n > 1) {
         // комбинация: зажать все, подержать, отпустить в обратном порядке (как F3+A)
-        int holdMs = 0;
+        int holdMs = 0, pressed = 0;
         for (const ActionStep& a : cfg.actions) {
-            sendAction(display_, a, true);
+            if (!press(a, cfg) && !allowedNow_) break;    // клавиатура уже не у игры
+            ++pressed;
             holdMs = std::max(holdMs, a.holdMs);
         }
-        const bool stayed = holdFor(holdMs, cfg);    // ушли из игры — отпускаем, не дожидаясь конца
-        for (int i = n - 1; i >= 0; --i) sendAction(display_, cfg.actions[i], false);
+        const bool stayed = pressed == n && holdFor(holdMs, cfg);    // ушли из игры — отпускаем, не дожидаясь конца
+        for (int i = pressed - 1; i >= 0; --i) sendAction(display_, cfg.actions[i], false);
+        if (pressed < n) return;
         clickCount_ += 1;
         for (int i = 0; i < n; ++i) countAction(i);
         if (stayed) cycles_ += 1;
@@ -364,7 +428,7 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
         if (i > 0 && (!running_ || !allowedFor(cfg))) { allowedNow_ = false; whole = false; break; }
         currentStep_ = i;
         const ActionStep& a = cfg.actions[i];
-        sendAction(display_, a, true);
+        if (!press(a, cfg) && !allowedNow_) { whole = false; break; }   // клавиатура уже не у игры
         // «держать» — при стопе или уходе из игры отпускаем сразу
         const bool stayed = a.holdMs <= 0 || holdFor(a.holdMs, cfg);
         sendAction(display_, a, false);
@@ -380,7 +444,9 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
 bool Clicker::allowedFor(const ClickerConfig& cfg) {
     pauseReason_ = 0;
     if (!cfg.lockToWindow) return true;
-    if (!clickAllowed(cfg, probe_->query())) { pauseReason_ = 1; return false; }
+    const WindowInfo w = probe_->query();
+    if (!clickAllowed(cfg, w)) { pauseReason_ = 1; return false; }
+    activeWin_ = w.handle;
     // кнопкой мыши — только когда курсор над окном игры (иначе клик ушёл бы
     // в соседнее окно или на другой монитор и забрал бы фокус у игры)
     bool anyMouse = false;
@@ -425,24 +491,25 @@ void Clicker::loop() {
     // «старт через N мс» (или N кадров): первый цикл — не сразу после нажатия
     ClickerConfig first;
     { std::lock_guard<std::mutex> lk(configMutex_); first = config_; }
+    bool aligned = false;                 // «По кадрам»: круг начнётся сразу после кадра игры
     if (first.startDelayMs > 0) {
         waitingStart_ = true;
-        if (first.byFrames && !first.hold) waitFrames(first.startDelayMs, first, false);
+        // «По кадрам»: от следующего кадра — N кадров (и дробь): с этого места первый круг
+        if (first.byFrames && !first.hold) aligned = alignFrame(first) && waitFrames(first.startDelayMs, first, false);
         else sleepWhileRunning(first.startDelayMs);
         waitingStart_ = false;
     }
-    bool aligned = false;                 // «По кадрам»: круг начнётся сразу после кадра игры
     while (running_) {
         ClickerConfig cfg;
         { std::lock_guard<std::mutex> lk(configMutex_); cfg = config_; }
 
-        // «По кадрам»: круг — сразу после кадра игры, «держать» и паузы — целыми кадрами
+        // «По кадрам»: круг — сразу после кадра игры, «держать» и паузы — кадрами (и долями кадра)
         if (!cfg.hold && cfg.byFrames) {
             if (!held_.empty()) releaseHeld();
             grid.reset();
-            if (!aligned) { aligned = waitFrames(1, cfg, false); continue; }
+            if (!aligned) { aligned = alignFrame(cfg); continue; }
             FrameWatch::Feed* f = cfg.frames.get();
-            const uint64_t c0 = f ? f->count() : 0;
+            const uint64_t c0 = framePhase_ > 0 ? frameBase_ : f ? f->count() : 0;
             const bool allowed = allowedFor(cfg);
             allowedNow_ = allowed;
             if (allowed) doCycle(cfg);
@@ -452,9 +519,13 @@ void Clicker::loop() {
                 wait = std::max(cfg.intervalMs > 0 ? 1 : 0, wait + dist(rng));
             }
             bool ok = allowedNow_ && waitFrames(wait, cfg, false);
-            // круг целиком — не короче minCycleMs кадров (паузы между клавишами могут быть 0)
-            const uint64_t need = c0 + static_cast<uint64_t>(std::max(1, cfg.minCycleMs));
-            if (ok && f && f->count() < need) ok = waitFrames(static_cast<int>(need - f->count()), cfg, false);
+            // круг целиком — не короче minCycleMs (хотя бы кадр: паузы между клавишами могут быть 0)
+            const uint64_t need = c0 + static_cast<uint64_t>(std::max(1, (cfg.minCycleMs + kFrameUnit - 1) / kFrameUnit));
+            if (ok && f && f->count() < need) {
+                framePhase_ = 0;
+                ok = waitFrameCount(need, cfg, false);
+                frameBase_ = f->count();
+            }
             if (!ok) aligned = false;     // вышли посреди круга — следующий снова с кадра
             continue;
         }
@@ -496,7 +567,7 @@ void Clicker::loop() {
             if (changed) {
                 releaseHeld();
                 for (const ActionStep& a : want)
-                    if (sendAction(display_, a, true)) held_.push_back(a);
+                    if (press(a, cfg)) held_.push_back(a);
                 if (!held_.empty()) {
                     clickCount_ += 1;
                     for (int i = 0; i < static_cast<int>(held_.size()); ++i) countAction(i);

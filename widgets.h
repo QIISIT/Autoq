@@ -27,6 +27,10 @@ QString askText(QWidget* parent, const QString& title, const QString& label, con
 QLabel* mkLabel(const QString& text, const char* objectName);
 // поле «… мс» без стрелок, число по центру
 class QSpinBox* msSpin(int lo, int hi);
+// «По кадрам»: в поле msSpin — десятые кадра (FrameUnits), видно «1,5»; колёсиком — по полкадра
+void setFrameTenths(class QSpinBox* s, bool on);
+// поле с дробью; со свойством aqTrim целое — без «,0» (знаки после запятой — только когда нужны)
+class QDoubleSpinBox* trimSpin();
 // шапка всплывающего списка: поиск и крестик «Закрыть»; поле поиска — в search
 void addPopupSearch(QBoxLayout* lay, QWidget* popup, QLineEdit* search, const QString& placeholder);
 

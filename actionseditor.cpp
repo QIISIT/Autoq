@@ -140,12 +140,15 @@ QString ActionsEditor::buildKey() const {
     return k + (frames_ ? "/f" : "");
 }
 
-// «По кадрам»: числа ряда — в кадрах игры (сам ряд тот же, меняются подписи)
+// «По кадрам»: числа ряда — в кадрах игры, можно дробно (сам ряд тот же, меняются подписи)
 void ActionsEditor::applyFrameUnits() {
     for (QSpinBox* s : findChildren<QSpinBox*>())
-        if (s->suffix() == T(" мс")) s->setSuffix(T(" кадр."));
-    for (SlotUi& ui : slots_)                // «держать» узкое: «10 кадр.» длиннее «100 мс»
-        if (ui.hold) ui.hold->setFixedWidth(qMax(ui.hold->width(), 76));
+        if (s->suffix() == T(" мс")) {
+            s->setSuffix(T(" кадр."));
+            setFrameTenths(s, true);
+        }
+    for (SlotUi& ui : slots_)                // «держать» узкое: «0,5 кадр.» длиннее «100 мс»
+        if (ui.hold) ui.hold->setFixedWidth(qMax(ui.hold->width(), 86));
     const QString start = T("Старт через столько кадров игры после нажатия «Старт» или клавиши (0 — со следующего кадра)");
     if (startSpin_) { startSpin_->setToolTip(start); startSpin_->setAccessibleName(start); }
     if (repeatSpin_ && !groupMode_) {
@@ -1161,7 +1164,7 @@ void ActionsEditor::openModePlate(int i) {
         if (steps()) {
             a.press = k == 1 ? ActionStep::Up : k == 2 ? ActionStep::Click : ActionStep::Down;
         } else if ((k == 1) != (a.holdMs > 0)) {
-            a.holdMs = k == 1 ? (frames_ ? 2 : 100) : 0;     // «По кадрам» — 2 кадра
+            a.holdMs = k == 1 ? (frames_ ? 2 * kFrameUnit : 100) : 0;     // «По кадрам» — 2 кадра
         } else {
             return;
         }

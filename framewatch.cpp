@@ -32,7 +32,7 @@ using namespace std::chrono_literals;
 // ---------------------------------------------------------------------------
 // Feed — счётчик кадров одного окна
 // ---------------------------------------------------------------------------
-bool Feed::waitUntil(uint64_t target, std::chrono::milliseconds timeout) {
+bool Feed::waitUntil(uint64_t target, Clock::duration timeout) {
     if (count_.load() >= target) return true;
     std::unique_lock<std::mutex> lk(m_);
     return cv_.wait_for(lk, timeout, [&] { return count_.load() >= target; });
@@ -101,6 +101,26 @@ double Feed::fps() const {
     const double sec = std::chrono::duration<double>(t.back() - t[b]).count();
     const size_t n = t.size() - 1 - b;
     return n && sec > 0 ? double(n) / sec : 0;
+}
+
+Clock::duration Feed::frameTime() const {
+    std::vector<Clock::time_point> t;
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        const uint64_t n = std::min<uint64_t>({ringN_, kRing, 9});
+        for (uint64_t k = 0; k < n; ++k) t.push_back(ring_[(ringN_ - 1 - k) % kRing]);
+    }
+    std::sort(t.begin(), t.end());
+    std::vector<Clock::duration> gaps;
+    for (size_t i = 1; i < t.size(); ++i) gaps.push_back(t[i] - t[i - 1]);
+    if (!gaps.empty()) {
+        std::nth_element(gaps.begin(), gaps.begin() + gaps.size() / 2, gaps.end());
+        const Clock::duration mid = gaps[gaps.size() / 2];
+        if (mid > 200us) return mid;
+    }
+    const double f = fps();                                       // кадры пришли пачкой
+    return f > 0 ? std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / f))
+                 : Clock::duration{};
 }
 
 Status Feed::status() const {

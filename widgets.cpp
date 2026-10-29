@@ -755,8 +755,65 @@ QLabel* mkLabel(const QString& text, const char* objectName) {
     return l;
 }
 
+namespace {
+// мс или — «По кадрам» — десятые кадра: 15 видно как «1,5», вводить можно «1,5» и «1.5»
+class MsSpin : public QSpinBox {
+public:
+    bool tenths = false;
+protected:
+    QString textFromValue(int v) const override {
+        if (!tenths) return QSpinBox::textFromValue(v);
+        return locale().toString(v / double(kFrameUnit), 'f', v % kFrameUnit ? 1 : 0);
+    }
+    QString number(QString t) const {
+        if (t.startsWith(prefix())) t.remove(0, prefix().size());
+        if (t.endsWith(suffix())) t.chop(suffix().size());
+        t = t.trimmed();
+        t.replace(',', '.');
+        if (locale().decimalPoint() != ".") t.replace(locale().decimalPoint(), ".");
+        return t;
+    }
+    int valueFromText(const QString& text) const override {
+        if (!tenths) return QSpinBox::valueFromText(text);
+        return qRound(number(text).toDouble() * kFrameUnit);
+    }
+    QValidator::State validate(QString& input, int& pos) const override {
+        if (!tenths) return QSpinBox::validate(input, pos);
+        static const QRegularExpression re("^\\d*(\\.\\d?)?$");
+        const QString t = number(input);
+        if (!re.match(t).hasMatch()) return QValidator::Invalid;
+        if (t.isEmpty() || t == ".") return QValidator::Intermediate;
+        const int v = qRound(t.toDouble() * kFrameUnit);
+        return v >= minimum() && v <= maximum() ? QValidator::Acceptable : QValidator::Intermediate;
+    }
+};
+
+class TrimSpin : public QDoubleSpinBox {
+protected:
+    QString textFromValue(double v) const override {
+        QString t = QDoubleSpinBox::textFromValue(v);
+        const QString dp = locale().decimalPoint();
+        if (property("aqTrim").toBool() && decimals() > 0 && t.contains(dp)) {
+            while (t.endsWith('0')) t.chop(1);
+            if (t.endsWith(dp)) t.chop(dp.size());
+        }
+        return t;
+    }
+};
+}
+
+void setFrameTenths(QSpinBox* s, bool on) {
+    auto* m = dynamic_cast<MsSpin*>(s);
+    if (!m || m->tenths == on) return;
+    m->tenths = on;
+    m->setSingleStep(on ? kFrameUnit / 2 : 1);
+    m->setSuffix(m->suffix());                 // текст поля — заново, в новых единицах
+}
+
+QDoubleSpinBox* trimSpin() { return new TrimSpin(); }
+
 QSpinBox* msSpin(int lo, int hi) {
-    auto* s = new QSpinBox();
+    auto* s = new MsSpin();
     s->setRange(lo, hi);
     s->setSuffix(T(" мс"));
     s->setButtonSymbols(QAbstractSpinBox::NoButtons);
