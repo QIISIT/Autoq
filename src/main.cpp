@@ -16,6 +16,7 @@
 #include "core/hotkey.h"
 #include "ui/style/theme.h"
 #include "core/games.h"
+#include "core/appsettings.h"
 #include "core/keys.h"
 #include "ui/style/icons.h"
 #include "services/autostart.h"
@@ -72,12 +73,7 @@ int main(int argc, char** argv) {
 #endif
     QApplication app(argc, argv);
     I18n::installQtTranslator();    // меню правки у полей, кнопки окон Qt — на языке AutoQ
-#if !defined(_WIN32) && !defined(__APPLE__)
-    // Ставим ПОСЛЕ QApplication: Qt при подключении к X11 ставит свой обработчик
-    // ошибок, и тогда программа не узнала бы, что клавиша запуска занята.
-    // Наш обработчик тоже не роняет программу при ошибках X11.
-    GlobalHotkey::installX11ErrorHandler();
-#endif
+    GlobalHotkey::init();
     app.setOrganizationName(AQ_NAME);
     app.setApplicationName("config");
     app.setApplicationVersion(AQ_VERSION);
