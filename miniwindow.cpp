@@ -121,12 +121,7 @@ MiniWindow::MiniWindow(QWidget* parent)
     acts->addWidget(act2_);
     acts->addWidget(moreActs_);
     acts->addStretch(1);
-    interval_ = new QSpinBox();
-    interval_->setRange(5, 60000);
-    interval_->setSuffix(T(" мс"));
-    interval_->setButtonSymbols(QAbstractSpinBox::NoButtons);
-    interval_->setAlignment(Qt::AlignCenter);
-    interval_->setAccelerated(true);
+    interval_ = msSpin(5, 60000);
     interval_->setFixedWidth(84);
     interval_->setToolTip(T("Интервал: пауза между нажатиями (колёсико мыши — быстро менять)"));
     interval_->setAccessibleName(T("Интервал"));
@@ -334,6 +329,7 @@ void MiniWindow::setState(const GameState& st, GameMode mode, int minInterval, b
         QSignalBlocker b(interval_);
         interval_->setMinimum(minInterval);
         interval_->setSuffix(frames ? T(" кадр.") : T(" мс"));
+        setFrameTenths(interval_, frames);          // «По кадрам» — можно дробно: «1,5 кадр.»
         interval_->setValue(st.intervalMs);
     }
     interval_->setEnabled(mode != GameMode::Hold);
