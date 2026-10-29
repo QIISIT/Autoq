@@ -1,5 +1,6 @@
 #pragma once
-#include <string>
+// Автозапуск вместе с системой и права администратора (Windows).
+// Реализация — platform/*/autostart_*.cpp
 class Autostart {
 public:
     static bool setEnabled(bool enable);
@@ -20,5 +21,4 @@ public:
     // xdg-desktop-portal пишет при запуске «App info not found for 'autoq'».
     // Вызывать до создания QApplication. На Windows и macOS ничего не делает.
     static void ensureDesktopEntry();
-    static std::string execPath();
 };
