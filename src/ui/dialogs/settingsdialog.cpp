@@ -7,7 +7,7 @@
 #include "ui/style/icons.h"
 #include "appinfo.h"
 #include "ui/dialogs/colorpicker.h"
-#include "core/games.h"
+#include "core/appsettings.h"
 #include "ui/style/animations.h"
 #include "core/sounds.h"
 #include "ui/style/styles.h"
@@ -198,16 +198,13 @@ QWidget* SettingsDialog::buildGeneralPage() {
 
     lay->addWidget(mkLabel(T("Запуск"), "fieldLabel"));
 #ifdef _WIN32
-    const QString autoText = T("Автозапуск");
     const QString autoTip = T("AutoQ запускается при входе в Windows и ждёт в трее — нажми клавишу старт/стоп в игре.\nВыключить можно здесь или в Диспетчере задач → Автозагрузка.");
 #elif defined(__APPLE__)
-    const QString autoText = T("Запускать при входе");
     const QString autoTip = T("AutoQ запускается при входе в macOS и ждёт в строке меню.");
 #else
-    const QString autoText = T("Автозапуск в трей");
     const QString autoTip = T("AutoQ запускается вместе с системой и ждёт в трее — нажми клавишу старт/стоп в игре");
 #endif
-    ToggleSwitch* autoSw = row(autoText, autoTip, Autostart::isEnabled(), [](bool) {});
+    ToggleSwitch* autoSw = row(autoText_(), autoTip, Autostart::isEnabled(), [](bool) {});
     // переключатель показывает, как есть на самом деле (могли выключить в Диспетчере задач)
     disconnect(autoSw, &ToggleSwitch::toggled, this, nullptr);
     connect(autoSw, &ToggleSwitch::toggled, this, [this, autoSw](bool v) {
