@@ -152,7 +152,7 @@ private:
     bool framesOn() const { return framesOn(cur_) && game_.mode != GameMode::Hold; }
     static bool framesOn(const GameState& st);
     static GameState frameView(const GameState& st);
-    int repeatMinFr() const { return cur_.repeatMin(game_.mode, 1); }   // «повтор через» в кадрах — от
+    int repeatMinFr() const { return cur_.repeatMin(game_.mode, kFrameUnit); }   // «повтор через» в кадрах — от
     void updateFramesUi();             // переключатель, подпись (кадров/с, нет окна, нет прав)
     double framesFps() const;          // кадров в секунду у окна игры (0 — не знаем)
     double sliderLo() const { return qMax(1, repeatMin()); }   // левый край шкалы скорости (самый быстрый)

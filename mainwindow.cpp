@@ -118,8 +118,20 @@ static QString everyFrames(int n) {
     return T("каждые %1 кадров").arg(n);
 }
 
-// «1 кадр», «3 кадра», «5 кадров»
-static QString framesCount(int n) {
+// «По кадрам» — дробное (числа в десятых кадра): «каждые 1,5 кадра»; целое — как everyFrames
+static QString everyFramesTenths(int t) {
+    if (t % kFrameUnit == 0) return everyFrames(t / kFrameUnit);
+    const QString n = I18n::locale().toString(t / double(kFrameUnit), 'f', 1);
+    return I18n::english() ? QString("every %1 frames").arg(n) : T("каждые %1 кадра").arg(n);
+}
+
+// «1 кадр», «1,5 кадра», «3 кадра», «5 кадров» — из десятых кадра
+static QString framesCount(int t) {
+    if (t % kFrameUnit) {                       // дробное — «кадра»
+        const QString n = I18n::locale().toString(t / double(kFrameUnit), 'f', 1);
+        return I18n::english() ? QString("%1 frames").arg(n) : T("%1 кадра").arg(n);
+    }
+    const int n = t / kFrameUnit;
     if (I18n::english()) return n == 1 ? QString("1 frame") : QString("%1 frames").arg(n);
     const int a = n % 100, b = n % 10;
     if (a >= 11 && a <= 14) return T("%1 кадров").arg(n);
@@ -601,7 +613,7 @@ void MainWindow::buildSpeedCard() {
     auto* r1 = new QHBoxLayout();
     speedCaption_ = mkLabel(T("Интервал"), "muted");
     r1->addWidget(speedCaption_, 1);
-    speedBox_ = new QDoubleSpinBox();
+    speedBox_ = trimSpin();                 // «По кадрам» — «1,5 кадр.», а целое — без «,0»
     speedBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
     speedBox_->setAlignment(Qt::AlignCenter);
     speedBox_->setAccelerated(true);
@@ -676,6 +688,8 @@ void MainWindow::buildSpeedCard() {
         T("Игра показывает кадры — 60, 144, 240 в секунду, сколько выдаёт. «По кадрам» AutoQ видит каждый кадр "
           "выбранного окна игры и жмёт сразу после него. Паузы, «держать», «старт через» и «повтор через» в действиях "
           "считаются в кадрах: «повтор через 1 кадр» — нажатие в каждом кадре, «держать 2 кадра» — нажато ровно два кадра.\n\n"
+          "Можно и дробно: «повтор через 1,5 кадра» — кадр и ещё полкадра по времени (полкадра — по нынешнему FPS игры), "
+          "так нажатия идут через кадр и через два по очереди. Круг из дробных пауз — ровно столько кадров, сколько в сумме.\n\n"
           "Так каждое нажатие попадает в свой кадр, даже когда FPS скачет. Игра свёрнута или на паузе и кадров нет — "
           "кликер ждёт, а не жмёт наугад.\n\n"
           "Нужно выбранное окно игры («Выбрать окно»). Linux — игры в окнах X11 и XWayland (Proton, Wine, Minecraft), "
@@ -1094,7 +1108,7 @@ void MainWindow::connectSignals() {
     connect(speedBox_, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
         if (loading_) return;
         if (framesOn()) {                       // «По кадрам»: в поле — «повтор через N кадров»
-            cur_.intervalFr = qBound(repeatMinFr(), qRound(v), 60000);
+            cur_.intervalFr = qBound(repeatMinFr(), qRound(v * kFrameUnit), 60000);
             commit();
             return;
         }
@@ -1790,7 +1804,7 @@ void MainWindow::applyModeLayout() {
         const GameState v = frameView(cur_);
         actionsEdit_->setFrames(fr);
         actionsEdit_->setGroups(v.groups);
-        actionsEdit_->setState(v.chain(m), m, v.startDelayMs, v.intervalMs, fr ? 1 : game_.minIntervalMs);
+        actionsEdit_->setState(v.chain(m), m, v.startDelayMs, v.intervalMs, fr ? kFrameUnit : game_.minIntervalMs);
         loading_ = wasLoading;
     }
 }
@@ -1842,8 +1856,9 @@ void MainWindow::stateToUi() {
     cur_.intervalFr = qMax(cur_.intervalFr, repeatMinFr());
     randomizeSwitch_->setChecked(cur_.randomize);
     // «По кадрам» — разброс тоже в кадрах
-    jitterBox_->setRange(0, framesOn() ? 60 : 1000);
+    jitterBox_->setRange(0, framesOn() ? 60 * kFrameUnit : 1000);
     jitterBox_->setSuffix(framesOn() ? T(" кадр.") : T(" мс"));
+    setFrameTenths(jitterBox_, framesOn());     // можно дробно: ± 0,5 кадра
     jitterBox_->setValue(framesOn() ? cur_.jitterFr : cur_.jitterMs);
     jitterBox_->setEnabled(cur_.randomize);
     lockSwitch_->setChecked(cur_.lockWindow);
@@ -1874,12 +1889,13 @@ void MainWindow::syncSpeedBox() {
     const int unit = qMax(0, unitSeg_->current());
     const int minMs = qMax(1, repeatMin());
     const bool multi = (cur_.multi() && game_.mode != GameMode::Hold) || game_.mode == GameMode::Steps;
-    if (framesOn()) {                   // «По кадрам»: «повтор через N кадров»
-        speedBox_->setDecimals(0);
-        speedBox_->setRange(repeatMinFr(), 600);
-        speedBox_->setSingleStep(1);
+    speedBox_->setProperty("aqTrim", framesOn());
+    if (framesOn()) {                   // «По кадрам»: «повтор через N кадров», можно дробно
+        speedBox_->setDecimals(1);
+        speedBox_->setRange(repeatMinFr() / double(kFrameUnit), 600);
+        speedBox_->setSingleStep(0.5);
         speedBox_->setSuffix(T(" кадр."));
-        speedBox_->setValue(cur_.intervalFr);
+        speedBox_->setValue(cur_.intervalFr / double(kFrameUnit));
         speedCaption_->setText(T("Повтор через"));
     } else if (unit == 1) {
         speedBox_->setDecimals(cur_.intervalMs > 2000 ? 2 : 1);
@@ -1910,7 +1926,7 @@ ClickerConfig MainWindow::buildConfig(const GameDef& g, const GameState& own, co
     // «По кадрам»: кликеру — кадры в полях «мс» (FrameUnits) и кадры окна игры; минимум — кадр
     const bool fr = framesOn(own) && g.mode != GameMode::Hold;
     const GameState st = fr ? frameView(own) : own;
-    const int gameMin = fr ? 1 : g.minIntervalMs;
+    const int gameMin = fr ? kFrameUnit : g.minIntervalMs;
     ClickerConfig c;
     c.actions = st.runList(g.mode);
     c.steps = g.mode == GameMode::Steps && !c.actions.isEmpty();
@@ -2028,9 +2044,9 @@ double MainWindow::perSecond(const GameDef& g, const GameState& st) const {
         const GameState v = frameView(st);
         double fps = g.id == game_.id ? framesFps() : 0;
         if (fps <= 0) fps = monitorHz(boundHandle(g.id));     // кадров не видно — оценка по монитору
-        const double cycle = FrameSync::meanCycleFrames(v.runList(g.mode), qMax(v.intervalMs, v.repeatMin(g.mode, 1)),
+        const double cycle = FrameSync::meanCycleFrames(v.runList(g.mode), qMax(v.intervalMs, v.repeatMin(g.mode, kFrameUnit)),
                                                         g.mode == GameMode::Combo, v.randomize ? v.jitterMs : 0,
-                                                        v.minCycle(g.mode, 1));
+                                                        v.minCycle(g.mode, kFrameUnit));
         return combo ? fps / cycle : fps / cycle * n;
     }
     // круг целиком — не быстрее minCycle (минимум игры, а где паузы свои — 1 мс)
@@ -2067,9 +2083,9 @@ void MainWindow::updateRate() {
         QString t;
         if (framesOn()) {
             const GameState v = frameView(cur_);
-            const int fr = qRound(FrameSync::meanCycleFrames(v.runList(game_.mode), qMax(v.intervalMs, repeatMinFr()),
-                                                             game_.mode == GameMode::Combo, 0, v.minCycle(game_.mode, 1)));
-            QString every = everyFrames(qMax(1, fr));
+            const double fr = FrameSync::meanCycleFrames(v.runList(game_.mode), qMax(v.intervalMs, repeatMinFr()),
+                                                         game_.mode == GameMode::Combo, 0, v.minCycle(game_.mode, kFrameUnit));
+            QString every = everyFramesTenths(qMax(kFrameUnit, qRound(fr * kFrameUnit)));
             if (cur_.randomize && cur_.jitterFr > 0) every = T("в среднем ") + every;
             const double fps = framesFps();
             t = fps > 0 ? T("По кадрам: %1 · игра %2 кадров/с · %3 в минуту").arg(every, dec(fps), num(qRound64(ps * 60)))
@@ -2206,10 +2222,11 @@ void MainWindow::applyPreset(int index) {
 // без чисел «По кадрам» — сравнить с пресетом (в нём только мс)
 static GameState withoutFrames(GameState s) {
     s.byFrames = false;
+    const GameState d;
     s.framesSet = false;
-    s.startFr = 0;
-    s.intervalFr = 1;
-    s.jitterFr = 0;
+    s.startFr = d.startFr;
+    s.intervalFr = d.intervalFr;
+    s.jitterFr = d.jitterFr;
     for (QList<ActionStep>* l : {&s.actions, &s.steps})
         for (ActionStep& a : *l) a.holdFr = a.afterFr = 0;
     for (ActionGroup& g : s.groups) {
