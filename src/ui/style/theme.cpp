@@ -22,7 +22,7 @@
 #include <QRegularExpression>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include "core/games.h"
+#include "core/appsettings.h"
 #include "appinfo.h"
 
 namespace {
@@ -778,7 +778,7 @@ void Theme::setGuiScale(int percent) {
 int Theme::startupGuiScale() { return g_startupScale; }
 
 void Theme::applyGuiScaleEnv() {
-    const int v = guiScale();                      // был 90 % — теперь 100 %
+    const int v = guiScale();
     g_startupScale = v;
     // перезапуск из AutoQ: старое значение досталось от нас же — его можно менять
     if (qEnvironmentVariableIsSet("AQ_OWN_SCALE")) {
