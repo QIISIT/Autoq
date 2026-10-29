@@ -5,6 +5,7 @@
 #include <cstdio>
 #include "ui/overlay.h"
 #include "core/games.h"
+#include "core/appsettings.h"
 #include "ui/style/theme.h"
 #include "ui/style/keycapturebutton.h"
 #include "ui/style/styles.h"

@@ -19,6 +19,7 @@
 #include "core/keys.h"
 #include "core/winmatch.h"
 #include "core/games.h"
+#include "core/appsettings.h"
 #include "core/clicker.h"
 #include "core/updates.h"
 #include "core/framewatch.h"
@@ -81,6 +82,13 @@ static void testKeys() {
     CHECK(Keys::fromKeyEvent(Qt::Key_VolumeUp, false, 0) == nullptr);
 #ifdef _WIN32
     CHECK(Keys::fromKeyEvent(0x0410, false, 0x46) == Keys::byName("f"));
+#elif !defined(__APPLE__)
+    // X11 (evdev: keycode 41 — F, 39 — S): клавиша по keycode при любой раскладке — «І» на S
+    if (!qEnvironmentVariableIsEmpty("DISPLAY") && Keys::byX11Keycode(41)) {
+        CHECK(Keys::byX11Keycode(41) == Keys::byName("f"));
+        CHECK(Keys::fromKeyEvent(0x0406, false, 0x6b6, 39) == Keys::byName("s"));
+        CHECK(Keys::fromKeyEvent(Qt::Key_F, false, 0x66, 39) == Keys::byName("f"));   // латиница — по Qt
+    }
 #endif
 }
 
@@ -2321,10 +2329,12 @@ static void testUpdates() {
     CHECK(!parseRelease("<html>").valid());
 
     const QByteArray sums = "64cc08bf42b5e744e544ae2894000dd65402d54eec5c238e52de55875880ad05  AutoQ-1.17.1-beta-Windows-Setup.exe\n"
-                            "A7FD033F27E2ACC12F4C3529D45C066B45022768B7A9A28E5B886BBB1662A5B8 *autoq-v1171.tar.gz\r\n";
+                            "A7FD033F27E2ACC12F4C3529D45C066B45022768B7A9A28E5B886BBB1662A5B8 *autoq-v1171.tar.gz\r\n"
+                            "1111111111111111111111111111111111111111111111111111111111111111  ./AutoQ-1.17.1-macOS.dmg\n";
     CHECK(sumFor(sums, "AutoQ-1.17.1-beta-Windows-Setup.exe") == "64cc08bf42b5e744e544ae2894000dd65402d54eec5c238e52de55875880ad05");
     CHECK(sumFor(sums, "autoq-v1171.tar.gz") == "a7fd033f27e2acc12f4c3529d45c066b45022768b7a9a28e5b886bbb1662a5b8");
     CHECK(sumFor(sums, "AutoQ-Setup.exe").isEmpty());
+    CHECK(sumFor(sums, "AutoQ-1.17.1-macOS.dmg") == QString(64, '1'));        // shasum ./*.dmg
 
     QTemporaryDir tmp;
     QFile f(tmp.filePath("abc.bin"));

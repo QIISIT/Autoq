@@ -1,5 +1,5 @@
 # Автотесты: собираются с -DAQ_BUILD_TESTS=ON
-set(AQ_SRC ${CMAKE_SOURCE_DIR}/src)
+set(AQ_SRC ${SRC})
 
 add_executable(test_core test_core.cpp)
 target_link_libraries(test_core PRIVATE aq_core)
