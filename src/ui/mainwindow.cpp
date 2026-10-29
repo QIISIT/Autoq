@@ -1,4 +1,5 @@
 #include "ui/mainwindow.h"
+#include "core/appsettings.h"
 #include "ui/board.h"
 #include "core/cardlayout.h"
 #include "core/i18n.h"
@@ -1962,10 +1963,15 @@ double MainWindow::monitorHz(unsigned long long handle) {
     if (hz <= 0) {
         QScreen* scr = nullptr;
         int x = 0, y = 0;
-        if (FrameSync::windowCenter(handle, &x, &y))    // Linux: экран, где окно игры
+        if (FrameSync::windowCenter(handle, &x, &y))    // Linux и macOS: экран, где окно игры
             for (QScreen* sc : QGuiApplication::screens()) {
                 const QRect g = sc->geometry();
-                if (QRect(g.topLeft(), g.size() * sc->devicePixelRatio()).contains(x, y)) { scr = sc; break; }
+#ifdef __APPLE__
+                const qreal px = 1;                       // окна и экраны — в точках
+#else
+                const qreal px = sc->devicePixelRatio();  // X11: окна — в пикселях, экраны Qt — от угла в пикселях
+#endif
+                if (QRect(g.topLeft(), g.size() * px).contains(x, y)) { scr = sc; break; }
             }
         if (!scr) scr = QGuiApplication::primaryScreen();
         hz = scr ? scr->refreshRate() : 60;
@@ -3218,8 +3224,7 @@ void MainWindow::onHotkeyEvent(const QString& specStr, bool down) {
         else toggles << t.game;
     }
     // одна клавиша «используется» на нескольких играх — как старт/стоп: хоть одна используется —
-    // выключить все, иначе включить все (раньше каждая переключалась сама по себе и при разных
-    // состояниях они так и шли вразнобой)
+    // выключить все, иначе включить все (иначе при разных состояниях они шли бы вразнобой)
     if (!arms.isEmpty()) {
         bool any = false;
         for (const QString& id : arms) any = any || Games::armed(id);
@@ -3848,6 +3853,7 @@ void MainWindow::rebuildTrayGames() {
 
 void MainWindow::rebuildTrayProfiles() {
     if (!trayProfileMenu_) return;
+    for (QActionGroup* g : trayProfileMenu_->findChildren<QActionGroup*>()) g->deleteLater();
     trayProfileMenu_->clear();
     if (!hasGame()) {
         trayProfileMenu_->addAction(T("сначала добавь игру"))->setEnabled(false);
