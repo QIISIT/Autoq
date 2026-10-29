@@ -109,21 +109,38 @@ struct LLBind {
     bool block = false; bool swallowUp = false;
 };
 std::vector<LLBind> g_llKeys;    // клавиши: виртуальный код
+std::vector<LLBind> g_llReg;     // клавиши RegisterHotKey — когда сама Windows их не поймает (см. llRegistered)
 std::vector<LLBind> g_llMouse;   // кнопки мыши: 2, 8, 9
 std::vector<std::pair<int, bool>> g_llEvents;
 bool g_llDown[256] = {};         // что зажал человек (нажатия кликера — SendInput — не считаются)
+bool g_kbHooked = false;         // хук клавиатуры стоит — g_llDown знает модификаторы человека
 
 bool keyHeld(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
 // первая клавиша сочетания зажата: по хуку (не кликером) и по состоянию клавиатуры
 // (если отпускание хук пропустил — клавиша не «залипает»)
 bool holdOk(unsigned vk) { return vk < 256 && g_llDown[vk] && keyHeld(static_cast<int>(vk)); }
 
-int currentMods() {
+// Модификаторы по состоянию клавиатуры — вместе с зажатыми кликером (SendInput меняет и его).
+// По ним Windows сверяет RegisterHotKey.
+int systemMods() {
     int m = 0;
     if (keyHeld(VK_CONTROL)) m |= ModCtrl;
     if (keyHeld(VK_MENU)) m |= ModAlt;
     if (keyHeld(VK_SHIFT)) m |= ModShift;
     if (keyHeld(VK_LWIN) || keyHeld(VK_RWIN)) m |= ModWin;
+    return m;
+}
+
+// Модификаторы, зажатые человеком: по хуку (нажатия кликера не в счёт) и по состоянию
+// клавиатуры (пропущенное хуком отпускание не оставит модификатор «залипшим»)
+int currentMods() {
+    if (!g_kbHooked) return systemMods();
+    auto human = [](int l, int r) { return (g_llDown[l] && keyHeld(l)) || (g_llDown[r] && keyHeld(r)); };
+    int m = 0;
+    if (human(VK_LCONTROL, VK_RCONTROL)) m |= ModCtrl;
+    if (human(VK_LMENU, VK_RMENU)) m |= ModAlt;
+    if (human(VK_LSHIFT, VK_RSHIFT)) m |= ModShift;
+    if (human(VK_LWIN, VK_RWIN)) m |= ModWin;
     return m;
 }
 
@@ -167,6 +184,34 @@ bool llEvent(std::vector<LLBind>& binds, unsigned code, bool down) {
     return swallow;
 }
 
+// Клавиши RegisterHotKey. Windows сверяет модификаторы с состоянием клавиатуры, а его меняет и
+// кликер: держит Shift — и F6 человека для Windows уже Shift+F6, хоткей молчит (или наоборот,
+// сработал бы чужой Ctrl+F6). Решаем по модификаторам человека, как на Linux: Windows поймает
+// сама — не мешаем; не поймает — срабатываем отсюда; поймает не то — забираем нажатие.
+// true — нажатие (и его отпускание) забираем себе.
+bool llRegistered(unsigned code, bool down) {
+    bool swallow = false;
+    for (LLBind& b : g_llReg) {
+        if (b.code != code) continue;
+        if (!down) {
+            if (!b.down) continue;
+            b.down = false;
+            if (b.swallowUp) { b.swallowUp = false; swallow = true; }
+            if (b.fired) { b.fired = false; g_llEvents.push_back({b.id, false}); }
+            continue;
+        }
+        if (b.down) { swallow = swallow || b.swallowUp; continue; }    // автоповтор — как само нажатие
+        b.down = true;
+        const bool human = currentMods() == b.mods, system = systemMods() == b.mods;
+        if (human == system) continue;                                 // решит RegisterHotKey
+        b.swallowUp = true;
+        b.fired = human;
+        if (human) g_llEvents.push_back({b.id, true});
+        swallow = true;
+    }
+    return swallow;
+}
+
 LRESULT CALLBACK llKeyboardProc(int code, WPARAM w, LPARAM l) {
     if (code == HC_ACTION) {
         const auto* k = reinterpret_cast<const KBDLLHOOKSTRUCT*>(l);
@@ -175,6 +220,7 @@ LRESULT CALLBACK llKeyboardProc(int code, WPARAM w, LPARAM l) {
             const bool down = w == WM_KEYDOWN || w == WM_SYSKEYDOWN;
             if (k->vkCode < 256) g_llDown[k->vkCode] = down;
             llEvent(g_llKeys, k->vkCode, down);
+            if (llRegistered(k->vkCode, down)) return 1;
         }
     }
     return CallNextHookEx(nullptr, code, w, l);
@@ -216,11 +262,13 @@ void GlobalHotkey::loop() {
         for (int r : registered) UnregisterHotKey(NULL, r);
         registered.clear();
         if (kbHook) { UnhookWindowsHookEx(kbHook); kbHook = nullptr; }
+        g_kbHooked = false;
         if (mouseHook) { UnhookWindowsHookEx(mouseHook); mouseHook = nullptr; }
         // не оставить «зажатой»: и клавиши RegisterHotKey, и сквозные (хуки)
-        for (const auto* list : {&g_llKeys, &g_llMouse})
+        for (const auto* list : {&g_llKeys, &g_llReg, &g_llMouse})
             for (const LLBind& b : *list) if (b.fired) fire(b.id, false);
         g_llKeys.clear();
+        g_llReg.clear();
         g_llMouse.clear();
         g_llEvents.clear();
         // что человек держит прямо сейчас (Tab у «Tab+F») — помним и через переустановку хуков:
@@ -267,6 +315,7 @@ void GlobalHotkey::loop() {
             if (RegisterHotKey(NULL, id + 1, mods, k->winVK)) {
                 registered.push_back(id + 1);
                 regVk[static_cast<size_t>(id)] = k->winVK;
+                g_llReg.push_back({k->winVK, sp.mods, id});
                 setStatus(id, Status::Ok);
             } else {
                 setStatus(id, Status::Busy);
@@ -274,9 +323,12 @@ void GlobalHotkey::loop() {
         }
         // зажатое через переустановку — уже нажато: его автоповтор не новое нажатие (иначе «Tab+1»
         // у «используется», если держать 1, переключал бы туда-сюда с частотой повтора)
-        for (LLBind& b : g_llKeys) if (b.code < 256 && g_llDown[b.code]) b.down = true;
-        if (!g_llKeys.empty()) {
+        for (auto* list : {&g_llKeys, &g_llReg})
+            for (LLBind& b : *list) if (b.code < 256 && g_llDown[b.code]) b.down = true;
+        // хук клавиатуры — и для RegisterHotKey, и для кнопок мыши: модификаторы человека видны только по нему
+        if (!g_llKeys.empty() || !g_llReg.empty() || !g_llMouse.empty()) {
             kbHook = SetWindowsHookExW(WH_KEYBOARD_LL, llKeyboardProc, GetModuleHandleW(nullptr), 0);
+            g_kbHooked = kbHook != nullptr;
             for (const LLBind& b : g_llKeys) setStatus(b.id, kbHook ? Status::Ok : Status::Busy);
         }
         if (!g_llMouse.empty()) {
@@ -621,6 +673,7 @@ void GlobalHotkey::loop() {
         unsigned xmods = 0;
         bool down = false;
         bool fired = false;
+        bool raw = false;      // нажал человек: решено по сырому событию, KeyPress/ButtonPress перехвата — не в счёт
     };
     std::vector<XBind> binds;
     bool rawSelected = false;
@@ -756,12 +809,19 @@ void GlobalHotkey::loop() {
                 continue;
             }
             if (b.mouse != mouse || b.code != code) continue;
-            if (b.grabbed && down) continue;        // нажатие перехваченной клавиши / кнопки приходит через grab
+            // Перехваченную клавишу человека тоже решаем здесь, по его модификаторам (modsNow).
+            // Перехват X сверяет модификаторы всей клавиатуры, а с ними и зажатые кликером через
+            // XTEST: кликер держит Shift — и F6 человека для X уже Shift+F6, перехват молчит.
             if (down) {
-                if (b.hold || b.down) continue;
-                b.down = true;
-                if (!chord && modsNow() == b.mods) { b.fired = true; fire(b.id, true); }
-            } else if (b.down) {
+                if (b.hold) continue;
+                // прошлое нажатие (через XTEST) отпустили мимо нас — сначала «отпущено»
+                if (b.down && b.fired) fire(b.id, false);
+                b.down = b.raw = true;
+                b.fired = !chord && modsNow() == b.mods;
+                if (b.fired) fire(b.id, true);
+            } else {
+                b.raw = false;
+                if (!b.down) continue;
                 b.down = false;
                 if (b.fired) { b.fired = false; fire(b.id, false); }
             }
@@ -812,6 +872,7 @@ void GlobalHotkey::loop() {
                     if (b.grabbed && b.mouse && ev.xbutton.button == static_cast<unsigned>(b.code) &&
                         (ev.xbutton.state & relevant) == b.xmods) {
                         ours = true;
+                        if (b.raw) continue;            // нажатие человека — уже по сырому событию (оно раньше)
                         // перехват срабатывает только на новое нажатие: если отпускание прошло
                         // мимо нас — сначала «отпущено», иначе клавиша срабатывала бы через раз
                         if (b.down && b.fired) fire(b.id, false);
@@ -828,7 +889,7 @@ void GlobalHotkey::loop() {
             if (ev.type == ButtonRelease) {
                 for (XBind& b : binds)
                     if (b.grabbed && b.mouse && ev.xbutton.button == static_cast<unsigned>(b.code) && b.down) {
-                        b.down = false;
+                        b.down = b.raw = false;
                         if (b.fired) { b.fired = false; fire(b.id, false); }
                     }
                 continue;
@@ -841,7 +902,7 @@ void GlobalHotkey::loop() {
                     if (b.grabbed && !b.mouse && ev.xkey.keycode == static_cast<unsigned>(b.code) &&
                         (ev.xkey.state & relevant) == b.xmods) {
                         ours = true;
-                        if (b.down) continue;
+                        if (b.down) continue;           // нажатие человека — уже по сырому событию (оно раньше) / автоповтор
                         b.down = true;
                         b.fired = !chord;
                         if (b.fired) fire(b.id, true);
@@ -864,11 +925,19 @@ void GlobalHotkey::loop() {
                 }
                 for (XBind& b : binds)
                     if (b.grabbed && !b.mouse && ev.xkey.keycode == static_cast<unsigned>(b.code) && b.down) {
-                        b.down = false;
+                        b.down = b.raw = false;
                         if (b.fired) { b.fired = false; fire(b.id, false); }
                     }
             }
         }
+        // Перехваченная клавиша нажата через XTEST (xdotool, VNC, Synergy): сырые события таких
+        // пропускаем, а обычное отпускание после XUngrabKeyboard уходит окну в фокусе. Отпущена
+        // ли — смотрим у сервера, иначе осталась бы «зажатой» и следующее нажатие молчало бы.
+        for (XBind& b : binds)
+            if (b.grabbed && !b.mouse && b.down && !b.raw && !keymapDown(b.code)) {
+                b.down = false;
+                if (b.fired) { b.fired = false; fire(b.id, false); }
+            }
         sleepMs(15);
     }
     ungrab();
