@@ -1883,7 +1883,8 @@ static void testFrames() {
         FrameUnits::swap(gv);
         CHECK(gv[0] == g);
     }
-    // первое включение: кадры из мс (60 кадров/с — кадр 16,7 мс), второй раз — не трогаются
+    // первое включение: кадры из мс (60 кадров/с — кадр 16,7 мс), второй раз — не трогаются.
+    // Кадры — в десятых (kFrameUnit): из мс — целыми кадрами
     {
         GameState fs0;
         fs0.actions = {act("mouse:1", 100, 5, 0, 0), act("f", 0, 0, 0, 0)};
@@ -1892,21 +1893,25 @@ static void testFrames() {
         ActionGroup done = sg; done.id = "0d0d0d0d"; done.betweenFr = 4;
         fs0.groups = {sg, done};
         CHECK(FrameUnits::seed(fs0, 60));
-        CHECK(fs0.framesSet && fs0.actions[0].holdFr == 6 && fs0.actions[0].afterFr == 1);   // 5 мс — всё же кадр
+        CHECK(fs0.framesSet && fs0.actions[0].holdFr == 60 && fs0.actions[0].afterFr == 10);   // 5 мс — всё же кадр
         CHECK(fs0.actions[1].holdFr == 0 && fs0.actions[1].afterFr == 0);
-        CHECK(fs0.startFr == 30 && fs0.intervalFr == 3 && fs0.jitterFr == 0);
-        CHECK(fs0.groups[0].betweenFr == 2 && fs0.groups[0].items[0].holdFr == 2);
+        CHECK(fs0.startFr == 300 && fs0.intervalFr == 30 && fs0.jitterFr == 0);
+        CHECK(fs0.groups[0].betweenFr == 20 && fs0.groups[0].items[0].holdFr == 20);
         CHECK(fs0.groups[1].betweenFr == 4 && fs0.groups[1].items[0].holdFr == 0);   // уже в кадрах — не трогаем
         fs0.actions[0].holdFr = 1;
         CHECK(!FrameUnits::seed(fs0, 144) && fs0.actions[0].holdFr == 1);
-        CHECK(FrameUnits::seed(fs0 = GameState{}, 0) && fs0.intervalFr == 6);          // FPS не знаем — 60
+        CHECK(FrameUnits::seed(fs0 = GameState{}, 0) && fs0.intervalFr == 60);         // FPS не знаем — 60
     }
-    // средний круг в кадрах: клик раз в кадр; «держать 2» + «повтор через 1» — 3 кадра
-    CHECK(FrameSync::meanCycleFrames({act("e", 0, 0, 0, 0)}, 1, false, 0, 1) == 1.0);
-    CHECK(FrameSync::meanCycleFrames({act("e", 2, 0, 0, 0)}, 1, false, 0, 1) == 3.0);
-    CHECK(FrameSync::meanCycleFrames({act("e", 0, 1, 0, 0), act("f", 0, 0, 0, 0)}, 0, false, 0, 1) == 1.0);
-    CHECK(FrameSync::meanCycleFrames({act("e", 0, 0, 0, 0)}, 0, false, 0, 1) == 1.0);   // не быстрее кадра
-    CHECK(qAbs(FrameSync::meanCycleFrames({act("e", 0, 0, 0, 0)}, 2, false, 1, 1) - 2.0) < 1e-9);  // 1, 2, 3
+    // средний круг в кадрах (числа — десятые кадра): клик раз в кадр; «держать 2» + «повтор через 1» — 3 кадра
+    CHECK(FrameSync::meanCycleFrames({act("e", 0, 0, 0, 0)}, 10, false, 0, 10) == 1.0);
+    CHECK(FrameSync::meanCycleFrames({act("e", 20, 0, 0, 0)}, 10, false, 0, 10) == 3.0);
+    CHECK(FrameSync::meanCycleFrames({act("e", 0, 10, 0, 0), act("f", 0, 0, 0, 0)}, 0, false, 0, 1) == 1.0);
+    CHECK(FrameSync::meanCycleFrames({act("e", 0, 0, 0, 0)}, 0, false, 0, 1) == 1.0);    // не быстрее кадра
+    CHECK(qAbs(FrameSync::meanCycleFrames({act("e", 0, 0, 0, 0)}, 20, false, 10, 10) - 2.0) < 1e-9);  // 1…3
+    // И2: дробные кадры — «держать 1,5» + «повтор через 1,5» — 3 кадра; «повтор через 2,5» — 2,5
+    CHECK(FrameSync::meanCycleFrames({act("e", 15, 0, 0, 0)}, 15, false, 0, 10) == 3.0);
+    CHECK(FrameSync::meanCycleFrames({act("e", 0, 0, 0, 0)}, 25, false, 0, 10) == 2.5);
+    CHECK(FrameSync::meanCycleFrames({act("e", 0, 5, 0, 0), act("f", 0, 0, 0, 0)}, 0, false, 0, 1) == 1.0);
 
     // запись: «По кадрам», кадры действий, шагов и групп переживают сохранение
     GameState gs = Games::loadState(Games::get("genshin"));
@@ -1929,8 +1934,29 @@ static void testFrames() {
     {   // как это лежит в файле: старые версии читают те же поля, а кадры — в хвосте
         auto s = AppSettings::open();
         const QStringList a = s->value("games/genshin/state/actions").toStringList();
-        CHECK(a.value(0) == "m:1:40:15:c:f2.1" && a.value(1) == "k:f:0:30:c:f0.3");
-        CHECK(s->value("games/genshin/state/steps").toStringList().value(0) == "k:e:0:10:d:f0.2");
+        CHECK(a.value(0) == "m:1:40:15:c:F2.1" && a.value(1) == "k:f:0:30:c:F0.3");
+        CHECK(s->value("games/genshin/state/steps").toStringList().value(0) == "k:e:0:10:d:F0.2");
+        CHECK(s->value("games/genshin/state/intervalFrames10").toInt() == 5 && !s->contains("games/genshin/state/intervalFrames"));
+    }
+    // запись 1.18.0: кадры целыми («f», …Frames) — читаем как десятые ×10
+    {
+        auto s = AppSettings::open();
+        s->setValue("games/genshin/state/actions", QStringList{"m:1:40:15:c:f2.1", "g:0f0f0f0f:2:70:f0.3"});
+        for (const char* k : {"startFrames10", "intervalFrames10", "jitterFrames10"}) s->remove(QString("games/genshin/state/") + k);
+        s->setValue("games/genshin/state/startFrames", 4);
+        s->setValue("games/genshin/state/intervalFrames", 2);
+        s->setValue("games/genshin/state/jitterFrames", 1);
+        s->setValue("actionGroups/group/" + g.id + "/betweenFrames", 3);
+        s->remove("actionGroups/group/" + g.id + "/betweenFrames10");
+        s->sync();
+    }
+    {
+        const GameState v18 = Games::loadState(Games::get("genshin"));
+        CHECK(v18.actions.size() == 2 && v18.actions[0].holdFr == 20 && v18.actions[0].afterFr == 10 && v18.actions[1].afterFr == 30);
+        CHECK(v18.startFr == 40 && v18.intervalFr == 20 && v18.jitterFr == 10);
+        CHECK(Games::groups().value(0).betweenFr == 30);
+        Games::saveGroups({g});
+        Games::saveState("genshin", gs);
     }
     // вызов группы с паузой в кадрах; профиль хранит то же
     gs.actions = {call, act("f", 0, 0, 0, 0)};
@@ -1962,6 +1988,23 @@ static void testFrames() {
         CHECK(!f.waitUntil(11, std::chrono::milliseconds(5)));
         f.frame(t0 - std::chrono::seconds(2));               // запоздавшее событие — последним не станет
         CHECK(f.lastFrame() == t0 && f.status() == FrameWatch::Status::Live);
+    }
+    // длительность кадра сейчас — по последним кадрам: просадка 100 → 33 кадров/с видна через
+    // пару кадров (среднее за 2 с ещё ~80); пачка — по fps()
+    {
+        using std::chrono::milliseconds;
+        const auto now = FrameWatch::Clock::now();
+        FrameWatch::Feed f;
+        CHECK(f.frameTime() == FrameWatch::Clock::duration{});
+        for (int i = 0; i < 100; ++i) f.frame(now - milliseconds(1150 - 10 * i));
+        CHECK(qAbs(std::chrono::duration<double, std::milli>(f.frameTime()).count() - 10) < 0.5);
+        for (int i = 1; i <= 5; ++i) f.frame(now - milliseconds(160 - 30 * i));
+        CHECK(qAbs(std::chrono::duration<double, std::milli>(f.frameTime()).count() - 30) < 0.5);
+        CHECK(f.fps() > 60);
+        FrameWatch::Feed b;
+        for (int burst = 0; burst < 2; ++burst)
+            for (int i = 0; i < 100; ++i) b.frame(now - milliseconds(1500 - 1000 * burst));
+        CHECK(qAbs(std::chrono::duration<double, std::milli>(b.frameTime()).count() - 10) < 0.5);
     }
     {
         FrameWatch::Feed f;
@@ -2059,8 +2102,8 @@ static void testFrames() {
         cfg.lockToWindow = false;
         cfg.byFrames = true;
         cfg.frames = feed;
-        cfg.intervalMs = 1;
-        cfg.minCycleMs = 1;
+        cfg.intervalMs = kFrameUnit;                          // числа — в десятых кадра
+        cfg.minCycleMs = kFrameUnit;
         c.setConfig(cfg);
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         uint64_t f0 = feed->count();
@@ -2071,7 +2114,7 @@ static void testFrames() {
         auto n = c.clickCount();
         CHECK(n + 3 >= frames && n <= frames + 1);
         if (!(n + 3 >= frames && n <= frames + 1)) std::printf("  по кадрам: %llu кликов за %llu кадров\n", n, (unsigned long long)frames);
-        ActionStep hold; hold.holdMs = 2;
+        ActionStep hold; hold.holdMs = 2 * kFrameUnit;
         cfg.actions = {hold};
         c.setConfig(cfg);
         f0 = feed->count();
@@ -2082,7 +2125,32 @@ static void testFrames() {
         n = c.clickCount();
         CHECK(n * 3 + 6 >= frames && n * 3 <= frames + 3);
         if (!(n * 3 + 6 >= frames && n * 3 <= frames + 3)) std::printf("  держать 2 кадра: %llu кругов за %llu кадров\n", n, (unsigned long long)frames);
+        // И2: «повтор через 1,5 кадра» — 2 нажатия за 3 кадра; «держать 0,5» + «повтор 1» — круг 1,5
         cfg.actions = {ActionStep{}};
+        cfg.intervalMs = 15;
+        c.setConfig(cfg);
+        f0 = feed->count();
+        c.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        c.stop();
+        frames = feed->count() - f0;
+        n = c.clickCount();
+        CHECK(n * 3 + 6 >= frames * 2 && n * 3 <= frames * 2 + 6);
+        if (!(n * 3 + 6 >= frames * 2 && n * 3 <= frames * 2 + 6)) std::printf("  повтор через 1,5 кадра: %llu кликов за %llu кадров\n", n, (unsigned long long)frames);
+        hold.holdMs = 5;
+        cfg.actions = {hold};
+        cfg.intervalMs = kFrameUnit;
+        c.setConfig(cfg);
+        f0 = feed->count();
+        c.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        c.stop();
+        frames = feed->count() - f0;
+        n = c.clickCount();
+        CHECK(n * 3 + 6 >= frames * 2 && n * 3 <= frames * 2 + 6);
+        if (!(n * 3 + 6 >= frames * 2 && n * 3 <= frames * 2 + 6)) std::printf("  держать 0,5 кадра: %llu кругов за %llu кадров\n", n, (unsigned long long)frames);
+        cfg.actions = {ActionStep{}};
+        cfg.intervalMs = kFrameUnit;
         c.setConfig(cfg);
         c.start();
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -2096,6 +2164,56 @@ static void testFrames() {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         CHECK(c.pauseReason() != 3 && c.clickCount() > paused + 5);
         c.stop();
+        // «держать 100 кадров», а кадры кончились (фриз, загрузка) — не держим, пока их нет
+        hold.holdMs = 100 * kFrameUnit;
+        cfg.actions = {hold};
+        c.setConfig(cfg);
+        c.start();
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        CHECK(c.currentStep() == 0);                          // держит
+        on = false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(450));
+        CHECK(c.currentStep() == -1 && c.pauseReason() == 3); // отпустил и ждёт кадры
+        on = true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        CHECK(c.currentStep() == 0);                          // кадры пошли — снова держит
+        c.stop();
+        quit = true;
+        game.join();
+    }
+    // нестабильный FPS: кадры то через 4 мс, то через 25 (просадки), то 60 мс фриз — кликер
+    // ждёт настоящие кадры: «повтор через 1 кадр» — нажатие на кадр, «1,5» — 2 на 3 кадра
+    {
+        auto feed = std::make_shared<FrameWatch::Feed>();
+        std::atomic<bool> quit{false};
+        std::thread game([&]() {
+            const int gaps[] = {4, 25, 8, 12, 4, 60, 10, 16, 6, 20};
+            for (int i = 0; !quit; ++i) {
+                feed->frame();
+                std::this_thread::sleep_for(std::chrono::milliseconds(gaps[i % 10]));
+            }
+        });
+        Clicker c;
+        ClickerConfig cfg;
+        cfg.lockToWindow = false;
+        cfg.byFrames = true;
+        cfg.frames = feed;
+        cfg.minCycleMs = kFrameUnit;
+        for (int iv : {kFrameUnit, 15}) {
+            cfg.intervalMs = iv;
+            c.setConfig(cfg);
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            const uint64_t f0 = feed->count();
+            c.start();
+            std::this_thread::sleep_for(std::chrono::milliseconds(900));
+            c.stop();
+            const uint64_t frames = feed->count() - f0;
+            const auto n = c.clickCount();
+            const bool ok = iv == kFrameUnit ? n + 3 >= frames && n <= frames + 1
+                                             : n * 3 + 9 >= frames * 2 && n * 3 <= frames * 2 + 9;
+            CHECK(ok);
+            if (!ok) std::printf("  неровный FPS, повтор %d/10: %llu кликов за %llu кадров\n", iv, n, (unsigned long long)frames);
+        }
         quit = true;
         game.join();
     }
