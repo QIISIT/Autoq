@@ -1953,9 +1953,88 @@ static void testFrames() {
         CHECK(f.fps() >= 9 && f.fps() <= 11);
         CHECK(f.waitUntil(10, std::chrono::milliseconds(1)));
         CHECK(!f.waitUntil(11, std::chrono::milliseconds(5)));
+        f.frame(t0 - std::chrono::seconds(2));               // запоздавшее событие — последним не станет
+        CHECK(f.lastFrame() == t0 && f.status() == FrameWatch::Status::Live);
+    }
+    {
+        FrameWatch::Feed f;
         f.setStatus(FrameWatch::Status::NeedAdmin);
-        f.frame(t0 - std::chrono::seconds(2));               // давний кадр — не «идут»
-        CHECK(f.status() == FrameWatch::Status::NeedAdmin);
+        f.frame(FrameWatch::Clock::now() - std::chrono::seconds(2));   // давний кадр — не «идут»
+        CHECK(f.status() == FrameWatch::Status::NeedAdmin && f.fps() == 0);
+    }
+    // Б2: игра держит 100 кадров/с, а показывало тысячи. Кадры приходят пачками (XWayland
+    // за скрытым окном — раз в секунду; время прихода у пачки почти одно)
+    {
+        using std::chrono::microseconds;
+        const auto now = FrameWatch::Clock::now();
+        FrameWatch::Feed spread, same;
+        for (int burst = 0; burst < 2; ++burst)
+            for (int i = 0; i < 100; ++i) {
+                const auto at = now - std::chrono::milliseconds(1500 - 1000 * burst);
+                spread.frame(at + microseconds(100 * i));       // пачка за 10 мс
+                same.frame(at);                                 // одно время показа у пачки
+            }
+        CHECK(spread.status() == FrameWatch::Status::Live);
+        CHECK(spread.fps() > 95 && spread.fps() < 105);
+        CHECK(same.fps() > 95 && same.fps() < 105);
+        FrameWatch::Feed one;                                   // одна пачка — сколько в секунду, не видно
+        for (int i = 0; i < 100; ++i) one.frame(now - std::chrono::milliseconds(300) + microseconds(100 * i));
+        CHECK(one.fps() == 0);
+        // ровный поток с рывком — не пачка
+        FrameWatch::Feed hitch;
+        for (int i = 0; i < 150; ++i) hitch.frame(now - std::chrono::milliseconds(1700 - 10 * i - (i >= 100 ? 200 : 0)));
+        CHECK(hitch.fps() > 80 && hitch.fps() < 90);
+        // события не по порядку (ETW: буферы процессоров) — те же 100
+        FrameWatch::Feed shuffled;
+        for (int i = 0; i < 100; ++i) shuffled.frame(now - std::chrono::milliseconds(10 * (99 - (i ^ 1))));
+        CHECK(shuffled.fps() > 99 && shuffled.fps() < 101);
+    }
+    // Б2: два окна (swapchain) игры показывают кадры — считаем одно, не сумму
+    {
+        const auto now = FrameWatch::Clock::now();
+        FrameWatch::Feed f;
+        for (int i = 0; i < 100; ++i) {
+            f.frame(now - std::chrono::milliseconds(990 - 10 * i), 1);
+            f.frame(now - std::chrono::milliseconds(985 - 10 * i), 2);
+        }
+        CHECK(f.count() == 100 && f.fps() > 99 && f.fps() < 101);
+        f.frame(now + std::chrono::milliseconds(300), 2);       // первое замолкло — считаем второе
+        CHECK(f.count() == 101);
+    }
+    // Б2 (Windows): кадр — только показанный Present(): не проверка DXGI_PRESENT_TEST,
+    // не повтор с DO_NOT_WAIT, пока видеокарта занята, не «окно не видно»
+    {
+        using A = FrameWatch::Presents::Api;
+        using FrameWatch::Presents;
+        CHECK(Presents::shown(A::Dxgi, 0, 0));
+        CHECK(!Presents::shown(A::Dxgi, 0x1, 0));                       // DXGI_PRESENT_TEST
+        CHECK(!Presents::shown(A::Dxgi, 0x8, 0x887A000Au));             // DO_NOT_WAIT → WAS_STILL_DRAWING
+        CHECK(!Presents::shown(A::Dxgi, 0, 0x087A0001u));               // DXGI_STATUS_OCCLUDED
+        CHECK(!Presents::shown(A::Dxgi, 0, 0x887A0005u));               // DXGI_ERROR_DEVICE_REMOVED
+        CHECK(Presents::shown(A::D3d9, 0x1, 0));                        // у D3D9 бит 1 — DONOTWAIT, кадр
+        CHECK(!Presents::shown(A::D3d9, 0, 0x08760878u));               // S_PRESENT_OCCLUDED
+        CHECK(!Presents::shown(A::D3d9, 0, 0x8876021Cu));               // D3DERR_WASSTILLDRAWING
+
+        // игра: кадр 100 раз в секунду, а между кадрами цикл крутит Present(TEST) и Present
+        // с DO_NOT_WAIT — 20 вызовов на кадр. Раньше считался каждый вызов: 2000 «кадров»
+        const auto t0 = FrameWatch::Clock::now() - std::chrono::seconds(1);
+        Presents p;
+        FrameWatch::Feed f;
+        Presents::Shown s;
+        int stops = 0;
+        for (int frame = 0; frame < 100; ++frame)
+            for (int k = 0; k < 20; ++k) {
+                const auto t = t0 + std::chrono::microseconds(10000 * frame + 500 * k);
+                const bool real = k == 19;
+                p.start(7, A::Dxgi, 0xA0, real ? 0 : k % 2 ? 0x1 : 0x8, t);
+                if (p.stop(7, A::Dxgi, real || k % 2 ? 0 : 0x887A000Au, s)) f.frame(s.t, s.swapchain);
+                ++stops;
+            }
+        CHECK(stops == 2000 && f.count() == 100);
+        CHECK(f.fps() > 99 && f.fps() < 101);
+        CHECK(!p.stop(7, A::Dxgi, 0, s));                               // конца без начала — нет кадра
+        p.start(8, A::D3d9, 0xB0, 0, t0);
+        CHECK(!p.stop(8, A::Dxgi, 0, s) && p.stop(8, A::D3d9, 0, s) && s.swapchain == 0xB0 && s.t == t0);
     }
     // кликер «По кадрам»: кадр каждые 10 мс; клик раз в кадр, «держать 2 кадра» — круг 3 кадра;
     // кадры кончились — пауза (нет кадров), пошли снова — жмёт дальше
