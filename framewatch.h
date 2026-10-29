@@ -36,8 +36,11 @@ class Feed {
 public:
     uint64_t count() const { return count_.load(); }        // кадров с начала подписки
     // ждать, пока count() >= target, не дольше timeout. true — дождались
-    bool waitUntil(uint64_t target, std::chrono::milliseconds timeout);
+    bool waitUntil(uint64_t target, Clock::duration timeout);
     double fps() const;                  // кадров в секунду за последние 2 с (0 — кадров нет)
+    // длительность кадра сейчас — по последним кадрам: просадка FPS видна через пару
+    // кадров, а не через 2 с. Пачки — по fps(). 0 — кадров не видно
+    Clock::duration frameTime() const;
     Status status() const;               // Live — последний кадр был меньше 1,5 с назад
     Clock::time_point lastFrame() const; // когда показан последний кадр (пусто — ещё не было)
 
