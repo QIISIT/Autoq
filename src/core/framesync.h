@@ -25,11 +25,12 @@ namespace FrameSync {
     // разброс (не меньше 0,1 кадра, если интервал не 0), круг — не короче minCycle (и кадра)
     double meanCycleFrames(const QList<ActionStep>& actions, int interval, bool simultaneous, int jitter,
                            int minCycle);
+    // Что даёт ОС — platform/*/framesync_*.cpp
     // Windows: период и момент последнего обновления экрана (DWM). Иначе false.
     bool vblank(double* periodMs, std::chrono::steady_clock::time_point* at);
     // Windows: частота монитора, на котором окно (HWND); 0 — не знаем
     double monitorHz(unsigned long long windowHandle);
-    // Linux (X11): центр окна в пикселях экрана; false — не знаем
+    // Linux и macOS: центр окна (X11 — в пикселях экрана, macOS — в точках); false — не знаем
     bool windowCenter(unsigned long long windowHandle, int* x, int* y);
 
     // Сетка кадров кликера: номер кадра -> момент времени. Без накопления ошибки:
