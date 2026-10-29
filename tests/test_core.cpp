@@ -1552,11 +1552,18 @@ static void testGroups() {
     kick.items = {stp("mouse:1", D, 30), stp("mouse:3", C, 50), stp("mouse:1", U, 0)};
     const QList<ActionStep> kr = Groups::expand({call(kick.id, 1, 0)}, {kick}, false);
     CHECK(kr.size() == 2 && kr[0].press == C && kr[1].button == 3);
-    // разгруппировать: те же шаги, что жал кликер
-    CHECK(Groups::inlineCall(call(combo.id, 2, 70), combo, false) == Groups::expand({call(combo.id, 2, 70)}, {combo}, false));
-    // удалили группу — её вызовы становятся действиями, остальное на месте
+    // разгруппировать: действия группы один раз, хоть у вызова ×3; пауза после вызова — у последнего
+    {
+        const QList<ActionStep> once = Groups::inlineCall(call(combo.id, 3, 70), combo, false);
+        CHECK(once.size() == 2 && once[0] == combo.items[0] && once[1].key == "f" && once[1].afterMs == 70);
+        CHECK(once == Groups::expand({call(combo.id, 1, 70)}, {combo}, false));
+        const QList<ActionStep> steps1 = Groups::inlineCall(call(combo.id, 3, 70), combo, true);
+        CHECK(steps1 == Groups::expand({call(combo.id, 1, 70)}, {combo}, true));
+    }
+    // удалили группу — её вызовы становятся действиями (один раз, как «Разгруппировать»), остальное на месте
     const QList<ActionStep> flat = Groups::inlineAll(chain, combo, false, kMaxActions);
-    CHECK(flat == run);
+    CHECK(flat == Groups::expand(chain, {combo}, false, true));
+    CHECK(flat.size() == 4 && flat[0] == chain[0] && flat[2].afterMs == 70 && flat[3] == chain[2]);
     CHECK(Groups::inlineAll(chain, kick, false, kMaxActions) == chain);          // чужая группа — без изменений
     CHECK(Groups::inlineAll(chain, combo, false, 3).size() == 3);
     CHECK(Groups::usedIds(chain) == QStringList{combo.id});
@@ -1654,7 +1661,7 @@ static void testGroups() {
     CHECK(Games::loadProfile("minecraft", name).actions == chain);
     QFile::remove(file);
 
-    // удалили группу в одной игре — в сохранённом ряду другой её вызовы стали действиями
+    // удалили группу в одной игре — в сохранённом ряду другой её вызовы стали действиями (один раз, хоть ×2)
     {
         GameState mc = Games::loadState(Games::get("minecraft"));
         mc.actions = {act("q", 0, 0), call(edited.id, 2, 30)};
@@ -1662,7 +1669,7 @@ static void testGroups() {
         Games::saveGroups({kick});
         Games::inlineGroupEverywhere(edited, "genshin");
         const GameState mc2 = Games::loadState(Games::get("minecraft"));
-        CHECK(mc2.actions.size() == 3 && !mc2.actions[1].isGroup() && mc2.actions[1].key == "r" && mc2.actions[2].afterMs == 30);
+        CHECK(mc2.actions.size() == 2 && !mc2.actions[1].isGroup() && mc2.actions[1].key == "r" && mc2.actions[1].afterMs == 30);
         CHECK(Games::loadState(Games::get("genshin")).actions == chain);   // открытую игру не трогает
     }
 
