@@ -74,7 +74,9 @@ int Updates::compareVersions(const QString& a, const QString& b) {
         const int p = x.value(i, 0), q = y.value(i, 0);
         if (p != q) return p < q ? -1 : 1;
     }
-    return 0;
+    static const QRegularExpression test(QStringLiteral("\\btest\\b"), QRegularExpression::CaseInsensitiveOption);
+    const bool ta = test.match(a).hasMatch(), tb = test.match(b).hasMatch();
+    return ta == tb ? 0 : (ta ? -1 : 1);
 }
 
 bool Updates::isNewer(const QString& candidate, const QString& current) {

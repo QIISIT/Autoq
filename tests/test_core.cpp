@@ -2248,6 +2248,14 @@ static void testUpdates() {
     CHECK(!isNewer("v1.17.0", "1.17.0 beta"));
     CHECK(!isNewer("v1.16.2", "1.17.0 beta"));
     CHECK(!isNewer("", "1.17.0 beta"));
+    // тестовая сборка обновляется до релиза с тем же номером, но не до старого релиза
+    CHECK(compareVersions("1.18.0 beta test", "v1.18.0") < 0);
+    CHECK(isNewer("v1.18.0", "1.18.0 beta test"));
+    CHECK(!isNewer("v1.17.1", "1.18.0 beta test"));
+    CHECK(isNewer("v1.18.1", "1.18.0 beta test"));
+    CHECK(compareVersions("1.18.0 beta test", "1.18.0 beta test") == 0);
+    CHECK(compareVersions("1.18.0 beta", "1.18.0 beta test") > 0);   // «обновлена до …» после релиза
+    CHECK(compareVersions("v1.18.0", "1.18.0 latest") == 0);          // «test» — только отдельным словом
     CHECK(latestApiUrl() == "https://api.github.com/repos/QIISIT/Autoq/releases/latest");
 
     // как отвечает GitHub (сокращённо, по релизу v1.17.0)
