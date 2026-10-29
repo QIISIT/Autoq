@@ -134,7 +134,8 @@ QString Updates::sha256OfFile(const QString& path) {
 }
 
 QString Updates::sumFor(const QByteArray& sums, const QString& fileName) {
-    static const QRegularExpression line(QStringLiteral("^([0-9a-fA-F]{64})\\s+\\*?(.+?)\\s*$"));
+    // «хеш  имя», «хеш *имя» (двоичный режим), «хеш  ./имя» (shasum ./*.dmg)
+    static const QRegularExpression line(QStringLiteral("^([0-9a-fA-F]{64})\\s+\\*?(?:\\./)?(.+?)\\s*$"));
     for (const QByteArray& raw : sums.split('\n')) {
         const auto m = line.match(QString::fromUtf8(raw));
         if (m.hasMatch() && m.captured(2) == fileName) return m.captured(1).toLower();

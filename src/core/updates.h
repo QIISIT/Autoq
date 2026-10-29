@@ -1,7 +1,7 @@
 #pragma once
 // Обновления без сети и интерфейса: разбор ответа GitHub о последнем релизе,
 // сравнение версий, выбор файла релиза под эту копию AutoQ, SHA-256.
-// Скачивание и установка — в updater.cpp.
+// Скачивание и установка — в services/updater.cpp.
 #include <QByteArray>
 #include <QList>
 #include <QString>
