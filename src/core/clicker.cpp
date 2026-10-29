@@ -6,203 +6,33 @@
 #include <algorithm>
 #include <cmath>
 
-#ifdef _WIN32
-    #ifndef NOMINMAX
-    #define NOMINMAX            // иначе макросы min/max ломают std::max
-    #endif
-    #ifndef WIN32_LEAN_AND_MEAN
-    #define WIN32_LEAN_AND_MEAN
-    #endif
-    #include <windows.h>
-    #include <mmsystem.h>       // timeBeginPeriod — точный таймер для 5 мс
-#elif defined(__APPLE__)
-    #include <ApplicationServices/ApplicationServices.h>
-    #include "platform/macos/macsupport.h"
-#else
-    #include <X11/Xlib.h>
-    #include <X11/extensions/XTest.h>
-#endif
-
 // монотонное время, мс (+1 — чтобы 0 значило «ещё не запускали»)
 static long long steadyMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch()).count() + 1;
 }
 
-// ---------------------------------------------------------------------------
-// Низкоуровневая отправка: нажать / отпустить одно действие
-// ---------------------------------------------------------------------------
-#ifdef _WIN32
-// Скан-код клавиши. Для цифрового блока MapVirtualKey возвращает 0 (эти клавиши
-// делят скан-коды со стрелками/Home/End), а без скан-кода игры с Raw Input
-// нажатие не видят — поэтому для них берём коды из таблицы (набор 1).
-static WORD scanCodeFor(unsigned short vk) {
-    static const WORD numpad[10] = {0x52, 0x4F, 0x50, 0x51, 0x4B, 0x4C, 0x4D, 0x47, 0x48, 0x49};
-    if (vk >= 0x60 && vk <= 0x69) return numpad[vk - 0x60];
-    if (vk == 0x6E) return 0x53;      // Num .
-    if (vk == 0x2C) return 0x37;      // PrintScreen (E0 37)
-    return static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
-}
-
-static bool sendAction(void*, const ActionStep& a, bool down) {
-    INPUT in = {};
-    if (a.mouse) {
-        in.type = INPUT_MOUSE;
-        switch (a.button) {
-            case 3:  in.mi.dwFlags = down ? MOUSEEVENTF_RIGHTDOWN  : MOUSEEVENTF_RIGHTUP;  break;
-            case 2:  in.mi.dwFlags = down ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP; break;
-            case 8:  in.mi.dwFlags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP; in.mi.mouseData = XBUTTON1; break;
-            case 9:  in.mi.dwFlags = down ? MOUSEEVENTF_XDOWN : MOUSEEVENTF_XUP; in.mi.mouseData = XBUTTON2; break;
-            default: in.mi.dwFlags = down ? MOUSEEVENTF_LEFTDOWN   : MOUSEEVENTF_LEFTUP;   break;
-        }
-        return SendInput(1, &in, sizeof(INPUT)) == 1;
-    }
-    const KeyDef* k = Keys::byName(a.key);
-    if (!k) return false;
-    in.type = INPUT_KEYBOARD;
-    in.ki.wVk = k->winVK;
-    // Скан-код обязателен: игры читают ввод через Raw Input/DirectInput
-    in.ki.wScan = scanCodeFor(k->winVK);
-    in.ki.dwFlags = (down ? 0 : KEYEVENTF_KEYUP) | (k->winExtended ? KEYEVENTF_EXTENDEDKEY : 0);
-    return SendInput(1, &in, sizeof(INPUT)) == 1;
-}
-#elif defined(__APPLE__)
-// macOS: события Quartz (CGEvent) в системную очередь ввода. Без разрешения
-// «Универсальный доступ» macOS их молча выбрасывает.
-static bool sendAction(void* src, const ActionStep& a, bool down) {
-    CGEventSourceRef source = static_cast<CGEventSourceRef>(src);
-    CGEventRef e = nullptr;
-    if (a.mouse) {
-        CGEventRef where = CGEventCreate(nullptr);
-        const CGPoint pt = where ? CGEventGetLocation(where) : CGPointZero;
-        if (where) CFRelease(where);
-        CGEventType type;
-        CGMouseButton btn;
-        switch (a.button) {
-            case 3:  type = down ? kCGEventRightMouseDown : kCGEventRightMouseUp; btn = kCGMouseButtonRight; break;
-            case 2:  type = down ? kCGEventOtherMouseDown : kCGEventOtherMouseUp; btn = kCGMouseButtonCenter; break;
-            // боковые: у macOS номера 3 и 4
-            case 8:  type = down ? kCGEventOtherMouseDown : kCGEventOtherMouseUp; btn = static_cast<CGMouseButton>(3); break;
-            case 9:  type = down ? kCGEventOtherMouseDown : kCGEventOtherMouseUp; btn = static_cast<CGMouseButton>(4); break;
-            default: type = down ? kCGEventLeftMouseDown  : kCGEventLeftMouseUp;  btn = kCGMouseButtonLeft;  break;
-        }
-        e = CGEventCreateMouseEvent(source, type, pt, btn);
-        if (!e) return false;
-        if (a.button == 8 || a.button == 9)
-            CGEventSetIntegerValueField(e, kCGMouseEventButtonNumber, a.button == 8 ? 3 : 4);
-        // каждый клик — одиночный (иначе быстрые клики macOS считает двойными)
-        CGEventSetIntegerValueField(e, kCGMouseEventClickState, 1);
-    } else {
-        const int code = Keys::macKeyCode(a.key);
-        if (code < 0) return false;
-        e = CGEventCreateKeyboardEvent(source, static_cast<CGKeyCode>(code), down);
-        if (!e) return false;
-        // какие модификаторы зажал сам кликер (шаги «Shift↓, F, Shift↑») — у каждого
-        // потока кликера свои; остальные клавиши идут с ними, а не с «залипшими» чужими
-        thread_local CGEventFlags held = 0;
-        const QString k = a.key.toLower();
-        if (k == "shift" || k == "ctrl" || k == "alt") {
-            // модификатор — событие «изменились флаги», иначе игра его не увидит
-            const CGEventFlags flag = k == "shift" ? kCGEventFlagMaskShift
-                                    : k == "ctrl"  ? kCGEventFlagMaskControl
-                                                   : kCGEventFlagMaskAlternate;
-            held = down ? (held | flag) : (held & ~flag);
-            CGEventSetType(e, kCGEventFlagsChanged);
-            CGEventSetFlags(e, held);
-        } else {
-            CGEventSetFlags(e, held);
-        }
-    }
-    CGEventPost(kCGHIDEventTap, e);
-    CFRelease(e);
-    return true;
-}
-#else
-static bool sendAction(void* disp, const ActionStep& a, bool down) {
-    Display* d = static_cast<Display*>(disp);
-    if (!d) return false;
-    if (a.mouse) {
-        XTestFakeButtonEvent(d, static_cast<unsigned>(a.button), down ? True : False, CurrentTime);
-    } else {
-        const KeyDef* k = Keys::byName(a.key);
-        if (!k) return false;
-        KeyCode kc = XKeysymToKeycode(d, k->x11Sym);
-        if (!kc) return false;
-        XTestFakeKeyEvent(d, kc, down ? True : False, CurrentTime);
-    }
-    XFlush(d);
-    return true;
-}
-#endif
-
-// Нажать (отпускают всегда через sendAction). Linux: менеджер окон переводит фокус X
-// раньше, чем обновляет _NET_ACTIVE_WINDOW, а XTest шлёт в фокус — в миг переключения
-// allowedFor ещё видит игру, а нажатие ушло бы в новое окно. Поэтому «клавиатура у игры? —
-// нажать» идёт под захватом сервера X: между проверкой и нажатием фокус сменить некому.
-// Windows и macOS: окно переднего плана меняется сразу, отставания нет.
-// false — не нажато; если из-за фокуса — ещё и allowedNow_ = false.
+// Нажать (отпускают через release). С привязкой — только если клавиатура у окна игры;
+// нет — ещё и allowedNow_ = false
 bool Clicker::press(const ActionStep& a, const ClickerConfig& cfg) {
-#if defined(_WIN32) || defined(__APPLE__)
-    (void)cfg;
-    return sendAction(display_, a, true);
-#else
-    Display* d = static_cast<Display*>(display_);
-    if (!cfg.lockToWindow || !d) return sendAction(display_, a, true);
-    XGrabServer(d);
-    const bool focused = x11FocusIn(d, activeWin_);
-    const bool sent = focused && sendAction(d, a, true);
-    XUngrabServer(d);
-    XFlush(d);
+    if (!cfg.lockToWindow) return input_.send(a, true);
+    bool focused = true;
+    const bool sent = input_.pressIn(a, activeWin_, focused);
     if (!focused) { pauseReason_ = 1; allowedNow_ = false; }
     return sent;
-#endif
 }
 
-// ---------------------------------------------------------------------------
-Clicker::Clicker() {
-#if defined(__APPLE__)
-    display_ = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
-#elif !defined(_WIN32)
-    display_ = XOpenDisplay(nullptr);
-#endif
-    probe_ = std::make_unique<ActiveWindowProbe>();
-}
+void Clicker::release(const ActionStep& a) { input_.send(a, false); }
 
-Clicker::~Clicker() {
-    stop();
-#if defined(__APPLE__)
-    if (display_) CFRelease(static_cast<CGEventSourceRef>(display_));
-#elif !defined(_WIN32)
-    if (display_) XCloseDisplay(static_cast<Display*>(display_));
-#endif
-}
+Clicker::Clicker() : probe_(std::make_unique<ActiveWindowProbe>()) {}
 
-bool Clicker::inputAvailable() const {
-#ifdef _WIN32
-    return true;
-#elif defined(__APPLE__)
-    return AqMac::accessibilityTrusted(false);
-#else
-    return display_ != nullptr;
-#endif
-}
+Clicker::~Clicker() { stop(); }
+
+bool Clicker::inputAvailable() const { return input_.available(); }
 
 bool Clicker::sendOnce(const ActionStep& a) {
-#ifdef _WIN32
-    return sendAction(nullptr, a, true) && sendAction(nullptr, a, false);
-#elif defined(__APPLE__)
-    CGEventSourceRef src = CGEventSourceCreate(kCGEventSourceStateHIDSystemState);
-    const bool ok = sendAction(src, a, true) && sendAction(src, a, false);
-    if (src) CFRelease(src);
-    return ok;
-#else
-    Display* d = XOpenDisplay(nullptr);
-    if (!d) return false;
-    bool ok = sendAction(d, a, true) && sendAction(d, a, false);
-    XSync(d, False);
-    XCloseDisplay(d);
-    return ok;
-#endif
+    InputSender s;
+    return s.send(a, true) && s.send(a, false);
 }
 
 void Clicker::sleepWhileRunning(int ms) {
@@ -216,29 +46,14 @@ void Clicker::sleepWhileRunning(int ms) {
     }
 }
 
-#ifdef _WIN32
-#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
-#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
-#endif
-#endif
-
-// Точное ожидание для «В такт с монитором». Windows: таймер высокой точности
-// (Windows 10 1803+, ~0,5 мс) — обычный sleep опаздывает на 1–2 мс, а при 240 Гц
-// кадр всего 4 мс. Таймер свой у потока кликера (timer_).
+// «В такт с монитором» и доли кадра: обычный sleep в Windows опаздывает на 1–2 мс
 void Clicker::sleepUntilRunning(std::chrono::steady_clock::time_point until) {
     while (running_) {
         const auto now = std::chrono::steady_clock::now();
         if (now >= until) break;
         const auto d = std::min<std::chrono::steady_clock::duration>(until - now, std::chrono::milliseconds(20));
-#ifdef _WIN32
-        LARGE_INTEGER due;
-        due.QuadPart = -std::max<long long>(1, std::chrono::duration_cast<std::chrono::nanoseconds>(d).count() / 100);
-        if (timer_ && SetWaitableTimer(static_cast<HANDLE>(timer_), &due, 0, nullptr, nullptr, FALSE)) {
-            WaitForSingleObject(static_cast<HANDLE>(timer_), 100);
-            continue;
-        }
-#endif
-        std::this_thread::sleep_for(d);
+        if (timer_) timer_->sleepFor(d);
+        else std::this_thread::sleep_for(d);
     }
 }
 
@@ -368,14 +183,15 @@ bool Clicker::doSteps(const ClickerConfig& cfg) {
         const int k = heldAt(a);
         if (a.press == ActionStep::Up) {
             if (k >= 0) {
-                sendAction(display_, a, false);
+                release(a);
                 down.erase(down.begin() + k);
             }
         } else if (a.press == ActionStep::Click) {
-            // нажать и сразу отпустить (зажатую раньше — тоже: после шага она отпущена)
-            if (k >= 0) down.erase(down.begin() + k);
+            // нажать и сразу отпустить (зажатую раньше — тоже: после шага она отпущена).
+            // Не нажалось — зажатая остаётся в down: её отпустят в конце круга
             if (press(a, cfg)) {
-                sendAction(display_, a, false);
+                release(a);
+                if (k >= 0) down.erase(down.begin() + k);
                 const int idx = Steps::inputIndex(inputs, a);
                 if (idx >= 0) countAction(idx);
                 clickCount_ += 1;
@@ -393,7 +209,7 @@ bool Clicker::doSteps(const ClickerConfig& cfg) {
             else if (!holdFor(a.afterMs, cfg)) { whole = false; break; }
         }
     }
-    for (auto it = down.rbegin(); it != down.rend(); ++it) sendAction(display_, *it, false);
+    for (auto it = down.rbegin(); it != down.rend(); ++it) release(*it);
     currentStep_ = -1;
     return whole && running_;
 }
@@ -415,7 +231,7 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
             holdMs = std::max(holdMs, a.holdMs);
         }
         const bool stayed = pressed == n && holdFor(holdMs, cfg);    // ушли из игры — отпускаем, не дожидаясь конца
-        for (int i = pressed - 1; i >= 0; --i) sendAction(display_, cfg.actions[i], false);
+        for (int i = pressed - 1; i >= 0; --i) release(cfg.actions[i]);
         if (pressed < n) return;
         clickCount_ += 1;
         for (int i = 0; i < n; ++i) countAction(i);
@@ -431,7 +247,7 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
         if (!press(a, cfg) && !allowedNow_) { whole = false; break; }   // клавиатура уже не у игры
         // «держать» — при стопе или уходе из игры отпускаем сразу
         const bool stayed = a.holdMs <= 0 || holdFor(a.holdMs, cfg);
-        sendAction(display_, a, false);
+        release(a);
         countAction(i);
         clickCount_ += 1;
         if (!stayed) { whole = false; break; }
@@ -477,17 +293,14 @@ static bool sameAction(const ActionStep& a, const ActionStep& b) {
 }
 
 void Clicker::releaseHeld() {
-    for (auto it = held_.rbegin(); it != held_.rend(); ++it) sendAction(display_, *it, false);
+    for (auto it = held_.rbegin(); it != held_.rend(); ++it) release(*it);
     held_.clear();
 }
 
 void Clicker::loop() {
     std::mt19937 rng(std::random_device{}());
     FrameSync::Grid grid;
-#ifdef _WIN32
-    timer_ = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-    if (!timer_) timer_ = CreateWaitableTimerW(nullptr, FALSE, nullptr);   // Windows постарше
-#endif
+    timer_ = std::make_unique<PreciseTimer>();
     // «старт через N мс» (или N кадров): первый цикл — не сразу после нажатия
     ClickerConfig first;
     { std::lock_guard<std::mutex> lk(configMutex_); first = config_; }
@@ -598,19 +411,12 @@ void Clicker::loop() {
         }
     }
     releaseHeld();   // стоп — ничего не остаётся зажатым
-#ifdef _WIN32
-    if (timer_) { CloseHandle(static_cast<HANDLE>(timer_)); timer_ = nullptr; }
-#endif
+    timer_.reset();
 }
 
 void Clicker::start() {
     if (running_) return;
     if (worker_.joinable()) worker_.join();
-#ifdef _WIN32
-    // По умолчанию таймер Windows тикает раз в ~15.6 мс — интервал 5 мс
-    // превратился бы в 15. Просим точность 1 мс на время работы кликера.
-    timeBeginPeriod(1);
-#endif
     clickCount_ = 0;
     cycles_ = 0;
     for (auto& c : counts_) c = 0;
@@ -627,16 +433,10 @@ void Clicker::start() {
 }
 
 void Clicker::stop() {
-    bool wasRunning = running_.exchange(false);
-    if (wasRunning) stopMs_ = steadyMs();
+    if (running_.exchange(false)) stopMs_ = steadyMs();
     { std::lock_guard<std::mutex> lk(wakeMutex_); }   // поток ждёт в napHold — разбудить
     wake_.notify_all();
     if (worker_.joinable()) worker_.join();
-#ifdef _WIN32
-    if (wasRunning) timeEndPeriod(1);
-#else
-    (void)wasRunning;
-#endif
 }
 
 long long Clicker::runMs() const {

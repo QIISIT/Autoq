@@ -12,6 +12,7 @@
 #include "core/winmatch.h"
 #include "core/games.h"
 #include "core/framewatch.h"
+#include "core/clicker_os.h"
 
 struct ClickerConfig {
     QList<ActionStep> actions{ActionStep{}};   // действия цикла (у каждого — «держать» и «пауза после»)
@@ -75,6 +76,7 @@ private:
     bool doSteps(const ClickerConfig& cfg);      // true — круг прошёл целиком
     bool allowedFor(const ClickerConfig& cfg);   // можно ли жать прямо сейчас (окно, курсор)
     bool press(const ActionStep& a, const ClickerConfig& cfg);   // нажать; с привязкой — только если клавиатура у игры
+    void release(const ActionStep& a);
     void releaseHeld();
     void sleepWhileRunning(int ms);
     bool waitHeld(int ms, const ClickerConfig& cfg);   // пауза с зажатым: false — стоп или ушли из игры
@@ -111,8 +113,8 @@ private:
     std::atomic<bool> framesCfgChanged_{false};   // setConfig() — для waitFrames
     uint64_t frameBase_ = 0;              // «По кадрам»: кадр игры, от которого идём (поток кликера)
     int framePhase_ = 0;                  // и сколько десятых кадра от него уже прошло
-    void* display_ = nullptr;             // Display* на Linux, CGEventSourceRef на macOS
-    void* timer_ = nullptr;               // Windows: таймер высокой точности потока кликера
+    InputSender input_;
+    std::unique_ptr<PreciseTimer> timer_;   // пока работает поток кликера
     std::unique_ptr<ActiveWindowProbe> probe_;
     std::chrono::steady_clock::time_point pointerAwaySince_{};   // только поток кликера
     unsigned long long activeWin_ = 0;    // окно игры, что видел allowedFor (поток кликера)
