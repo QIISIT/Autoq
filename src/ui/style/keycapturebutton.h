@@ -12,7 +12,7 @@
 // Кнопка «Своё сочетание»: нажимаешь — и жмёшь что хочешь: букву, цифру, F-клавишу,
 // сочетание с Ctrl/Alt/Shift или две клавиши («держу Tab, жму F» — Tab+F). Одна
 // клавиша записывается, когда её отпустят (пока держишь — можно нажать вторую).
-// Понимает русскую раскладку, подсказывает про мультимедиа-клавиши ноутбука.
+// Клавиша — физическая при любой раскладке; подсказывает про мультимедиа-клавиши ноутбука.
 class KeyCaptureButton : public QPushButton {
     Q_OBJECT
 public:
@@ -39,10 +39,6 @@ public:
     }
 
     bool isCapturing() const { return capturing_; }
-    void setLabels(const QString& idle, const QString& wait) {
-        idle_ = idle; wait_ = wait;
-        setText(capturing_ ? waitText() : idleText());
-    }
 
 signals:
     void captureStarted();
@@ -95,7 +91,7 @@ protected:
             return;
         }
         const bool keypad = e->modifiers() & Qt::KeypadModifier;
-        const KeyDef* k = Keys::fromKeyEvent(key, keypad, e->nativeVirtualKey());
+        const KeyDef* k = Keys::fromKeyEvent(key, keypad, e->nativeVirtualKey(), e->nativeScanCode());
         if (!k) {
             const QString name = QKeySequence(key).toString(QKeySequence::NativeText);
             if (isMediaKey(key))
@@ -180,7 +176,7 @@ protected:
         // отпустили первую, так и не нажав вторую, — это одна клавиша (Shift+Tab
         // при отпускании может прийти как Tab — сверяем и по коду клавиши)
         const bool keypad = e->modifiers() & Qt::KeypadModifier;
-        if (keyId(e) == pendingId_ || Keys::fromKeyEvent(e->key(), keypad, e->nativeVirtualKey()) == pending_)
+        if (keyId(e) == pendingId_ || Keys::fromKeyEvent(e->key(), keypad, e->nativeVirtualKey(), e->nativeScanCode()) == pending_)
             finishPending();
     }
     void focusOutEvent(QFocusEvent* e) override {
@@ -234,10 +230,9 @@ private:
                k == Qt::Key_MicMute || k == Qt::Key_TouchpadToggle ||
                k == Qt::Key_TouchpadOn || k == Qt::Key_TouchpadOff;
     }
-    QString idleText() const { return compact_ ? QString() : (idle_.isEmpty() ? T("Своё сочетание") : idle_); }
-    QString waitText() const { return compact_ ? QString("…") : (wait_.isEmpty() ? T("Нажми клавиши…") : wait_); }
+    QString idleText() const { return compact_ ? QString() : T("Своё сочетание"); }
+    QString waitText() const { return compact_ ? QString("…") : T("Нажми клавиши…"); }
     bool compact_ = false;
-    QString idle_, wait_;
     bool capturing_ = false;
     QTimer timeout_;
     const KeyDef* pending_ = nullptr;   // первая клавиша — ещё зажата
