@@ -1,6 +1,7 @@
 #include "ui/style/styles.h"
 #include "core/cardlayout.h"
 #include "core/games.h"
+#include "core/appsettings.h"
 #include "core/i18n.h"
 #include "ui/style/icons.h"
 #include "appinfo.h"
