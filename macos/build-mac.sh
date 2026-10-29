@@ -20,7 +20,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD="$ROOT/build-macos"
 DIST="$ROOT/dist-macos"
-VERSION="$(sed -n 's/^#define AQ_VERSION *"\([^"]*\)".*/\1/p' "$ROOT/appinfo.h")"   # без комментария после строки
+VERSION="$(sed -n 's/^#define AQ_VERSION_NUMBER *"\([^"]*\)".*/\1/p' "$ROOT/appinfo.h")"   # без комментария после строки
 FILEVER="${VERSION// /-}"     # «1.16.2 beta» -> «1.16.2-beta» для имени файла
 
 # Qt: из install-qt-action (QT_ROOT_DIR), иначе Homebrew
