@@ -1,4 +1,5 @@
 #include "ui/dialogs/gameeditdialog.h"
+#include "core/appsettings.h"
 #include "core/i18n.h"
 #include "ui/dialogs/windowpicker.h"
 #include <QFileInfo>
@@ -243,7 +244,7 @@ GameEditDialog::GameEditDialog(const GameDef& game, bool isNew, QWidget* parent)
         connect(def, &QPushButton::clicked, this, &GameEditDialog::resetDefaults);
         foot->addWidget(def);
     }
-    // убрать игру — здесь и по правому щелчку в списке (в шапке кнопки больше нет)
+    // убрать игру — здесь и по правому щелчку в списке
     if (!isNew) {
         auto* del = new QPushButton(T("Убрать игру…"));
         del->setObjectName("ghost");
