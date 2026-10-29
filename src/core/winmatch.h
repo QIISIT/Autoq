@@ -1,5 +1,6 @@
 #pragma once
-// Какое окно сейчас активно и принадлежит ли оно игре.
+// Какое окно сейчас активно и принадлежит ли оно игре. Реализация ActiveWindowProbe —
+// platform/*/winmatch_*.cpp.
 // Windows: заголовок + имя exe процесса.
 // Linux (X11/XWayland): заголовок + класс окна (у Wine/Proton это имя exe,
 // например "genshinimpact.exe") + процесс по _NET_WM_PID.
@@ -55,12 +56,6 @@ private:
     void* display_ = nullptr;     // Display* на Linux
     long long ownPid_ = 0;
 };
-
-#if !defined(_WIN32) && !defined(__APPLE__)
-// X11: клавиатура (фокус X) у окна handle — у него самого, его дочернего окна или рамки
-// вокруг него. display — Display* (подойдёт любое соединение: номера окон у сервера общие)
-bool x11FocusIn(void* display, unsigned long long handle);
-#endif
 
 // Имя исполняемого файла этой программы (чтобы не "захватить" саму себя)
 QString ownProcessName();
