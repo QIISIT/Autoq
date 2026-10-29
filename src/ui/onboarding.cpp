@@ -3,7 +3,7 @@
 #include "ui/style/theme.h"
 #include "ui/style/widgets.h"
 #include "ui/style/icons.h"
-#include "core/games.h"
+#include "core/appsettings.h"
 #include "appinfo.h"
 #include "ui/dialogs/colorpicker.h"
 #include "ui/style/animations.h"
