@@ -13,6 +13,8 @@
     #include <windows.h>
     #include <evntrace.h>
     #include <evntcons.h>
+    #include <tdh.h>
+    #include <climits>
     #include <cstddef>
     #include <string>
 #elif !defined(__APPLE__) && defined(AQ_XCB_PRESENT)
@@ -20,6 +22,7 @@
     #include <xcb/present.h>
     #include <poll.h>
     #include <cstdlib>
+    #include <ctime>
     #define AQ_FRAMES_X11 1
 #endif
 
@@ -35,12 +38,28 @@ bool Feed::waitUntil(uint64_t target, std::chrono::milliseconds timeout) {
     return cv_.wait_for(lk, timeout, [&] { return count_.load() >= target; });
 }
 
-void Feed::frame(Clock::time_point t) {
+namespace {
+constexpr auto kWindow = 2s;          // fps — по кадрам за 2 с до последнего
+constexpr auto kStale = 1500ms;       // кадров нет дольше — «не идут» (пачки XWayland — раз в 1 с)
+constexpr auto kSwitch = 250ms;       // источник молчит дольше — считаем другой
+}
+
+void Feed::frame(Clock::time_point t, uint64_t src) {
     {
         // счётчик — под тем же замком, что и ожидание: кадр не проскочит мимо ждущего
         std::lock_guard<std::mutex> lk(m_);
+        if (ringN_ && src != src_) {
+            // второе окно / swapchain игры: тот же кадр или свой ритм — не считаем, пока
+            // первый показывает кадры
+            if (t - srcLast_ < kSwitch) return;
+            srcLast_ = t;
+        } else {
+            srcLast_ = std::max(srcLast_, t);
+        }
+        src_ = src;
         ring_[ringN_ % kRing] = t;
         ++ringN_;
+        last_ = std::max(last_, t);
         count_.fetch_add(1);
     }
     cv_.notify_all();
@@ -48,35 +67,81 @@ void Feed::frame(Clock::time_point t) {
 
 Clock::time_point Feed::lastFrame() const {
     std::lock_guard<std::mutex> lk(m_);
-    return ringN_ ? ring_[(ringN_ - 1) % kRing] : Clock::time_point{};
+    return last_;
 }
 
 double Feed::fps() const {
-    std::lock_guard<std::mutex> lk(m_);
-    if (ringN_ < 2) return 0;
-    const Clock::time_point now = Clock::now();
-    const Clock::time_point last = ring_[(ringN_ - 1) % kRing];
-    if (now - last > 500ms) return 0;                  // кадры не идут
-    const uint64_t avail = std::min<uint64_t>(ringN_, kRing);
-    uint64_t k = 1;
-    Clock::time_point first = last;
-    while (k < avail) {
-        const Clock::time_point t = ring_[(ringN_ - 1 - k) % kRing];
-        if (now - t > 1s) break;
-        first = t;
-        ++k;
+    std::vector<Clock::time_point> t;
+    Clock::time_point now;
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        now = Clock::now();
+        if (ringN_ < 2 || now - last_ > kStale) return 0;          // кадры не идут
+        const uint64_t avail = std::min<uint64_t>(ringN_, kRing);
+        t.reserve(avail);
+        for (uint64_t k = 0; k < avail; ++k) {
+            const Clock::time_point x = ring_[(ringN_ - 1 - k) % kRing];
+            if (last_ - x <= kWindow) t.push_back(x);
+        }
     }
-    const double sec = std::chrono::duration<double>(last - first).count();
-    return k >= 2 && sec > 0 ? double(k - 1) / sec : 0;
+    if (t.size() < 2) return 0;
+    std::sort(t.begin(), t.end());
+    // Кадры приходят и пачками: XWayland за скрытым окном отдаёт их раз в секунду разом.
+    // Пачка в начале окна — точка отсчёта: её кадры показаны до неё, иначе (k-1)/(время)
+    // на краю окна — тысячи кадров в секунду. Пачка — кадры с промежутками меньше 1/8
+    // самого большого и сами короче 1/8 окна (ровный поток с рывком — не пачка)
+    Clock::duration maxGap{};
+    for (size_t i = 1; i < t.size(); ++i) maxGap = std::max(maxGap, t[i] - t[i - 1]);
+    size_t b = 0;
+    while (b + 1 < t.size() && t[b + 1] - t[b] < maxGap / 8) ++b;
+    const Clock::duration span = t.back() - t.front();
+    if (t[b] - t.front() > span / 8) b = 0;
+    // все кадры разом, а потом тишина дольше, чем они шли, — сколько их в секунду, не видно
+    if (b == 0 && now - t.back() > std::max<Clock::duration>(span, 50ms)) return 0;
+    const double sec = std::chrono::duration<double>(t.back() - t[b]).count();
+    const size_t n = t.size() - 1 - b;
+    return n && sec > 0 ? double(n) / sec : 0;
 }
 
 Status Feed::status() const {
-    if (count_.load() > 0 && Clock::now() - lastFrame() < 500ms) return Status::Live;
+    if (count_.load() > 0 && Clock::now() - lastFrame() < kStale) return Status::Live;
     const auto s = static_cast<Status>(status_.load());
     return s == Status::Live ? Status::Waiting : s;
 }
 
 void Feed::setStatus(Status s) { status_ = static_cast<int>(s); }
+
+// ---------------------------------------------------------------------------
+// Presents — вызовы Present() игры (Windows)
+// ---------------------------------------------------------------------------
+void Presents::start(uint32_t thread, Api api, uint64_t swapchain, uint32_t flags, Clock::time_point t) {
+    // прошлый вызов этого потока без конца (подписка оборвалась) и совсем старые — не копим
+    calls_.erase(std::remove_if(calls_.begin(), calls_.end(),
+                                [&](const Call& c) { return (c.thread == thread && c.api == api) || t - c.t > 2s; }),
+                 calls_.end());
+    calls_.push_back(Call{thread, api, swapchain, flags, t});
+}
+
+bool Presents::stop(uint32_t thread, Api api, uint32_t result, Shown& out) {
+    for (auto it = calls_.begin(); it != calls_.end(); ++it) {
+        if (it->thread != thread || it->api != api) continue;
+        const bool ok = shown(api, it->flags, result);
+        out.swapchain = it->swapchain;
+        out.t = it->t;                      // кадр — когда игра его отдала
+        calls_.erase(it);
+        return ok;
+    }
+    return false;                           // начало не видели — подписались посреди вызова
+}
+
+bool Presents::shown(Api api, uint32_t flags, uint32_t result) {
+    if (api == Api::Dxgi && (flags & 0x1)) return false;   // DXGI_PRESENT_TEST (у D3D9 бит 1 — DONOTWAIT)
+    if (static_cast<int32_t>(result) < 0) return false;    // ошибка: WAS_STILL_DRAWING при DO_NOT_WAIT и др.
+    if (api == Api::D3d9) return result != 0x08760878;     // S_PRESENT_OCCLUDED
+    return result != 0x087A0001                            // DXGI_STATUS_OCCLUDED
+        && result != 0x087A0005                            // DXGI_STATUS_NO_DESKTOP_ACCESS
+        && result != 0x087A0008;                           // DXGI_STATUS_MODE_CHANGE_IN_PROGRESS
+}
 
 // ---------------------------------------------------------------------------
 // Hub — один поток на все окна: подписки (X11) или сессия ETW (Windows)
@@ -97,13 +162,15 @@ const GUID kDxgKrnl = {0x802EC45A, 0x1E99, 0x4B83, {0x99, 0x20, 0x87, 0xC9, 0x82
 const wchar_t kSession[] = L"AutoQ-Frames";
 
 // Один кадр игры может прийти несколькими событиями: DXGI Present и следом DxgKrnl
-// PresentHistory. Считаем один источник — самый «высокий», что был у процесса за секунду
-enum Level { kKrnlPresent = 0, kKrnlHistory, kKrnlDetailed, kApi, kLevels };
+// PresentHistory (D3D9 — и через DXGI). Считаем один источник — самый «высокий», что был
+// у процесса за секунду
+enum Level { kKrnlPresent = 0, kKrnlHistory, kKrnlDetailed, kApiD3d9, kApiDxgi, kLevels };
 
 struct PidFeed {
     DWORD pid = 0;
     std::weak_ptr<Feed> feed;
     Clock::time_point seen[kLevels]{};
+    Presents presents;
 };
 #endif
 
@@ -216,6 +283,16 @@ static bool collect(xcb_connection_t* c, xcb_window_t top, std::vector<xcb_windo
     return true;
 }
 
+// когда кадр показан: ust события — мкс по CLOCK_MONOTONIC (так у X-сервера и XWayland).
+// Странное (0, из будущего, давнее) — время прихода
+static Clock::time_point shownAt(uint64_t ust, Clock::time_point now) {
+    timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    const int64_t ago = int64_t(ts.tv_sec) * 1000000 + ts.tv_nsec / 1000 - int64_t(ust);
+    if (ust == 0 || ago < 0 || ago > 2000000) return now;
+    return now - std::chrono::microseconds(ago);
+}
+
 static void sync(xcb_connection_t* c, const std::vector<Target>& want, std::vector<Sub>& subs) {
     for (Sub& s : subs) s.keep = false;
     for (const Target& t : want) {
@@ -289,10 +366,10 @@ void Hub::run() {
                     const auto* cn = reinterpret_cast<const xcb_present_complete_notify_event_t*>(ev);
                     // кадр (а не ответ на PresentNotifyMSC); пропущенный показ — тоже кадр игры
                     if (cn->kind == XCB_PRESENT_COMPLETE_KIND_PIXMAP) {
-                        const Clock::time_point t = Clock::now();
+                        const Clock::time_point t = shownAt(cn->ust, Clock::now());
                         for (const Sub& s : subs)
                             if (s.eid == cn->event) {
-                                if (auto f = s.feed.lock()) f->frame(t);
+                                if (auto f = s.feed.lock()) f->frame(t, s.win);   // окно — источник
                                 break;
                             }
                     }
@@ -318,6 +395,29 @@ void Hub::run() {
 #endif
 
 static void WINAPI onEtwEvent(PEVENT_RECORD r) { static_cast<Hub*>(r->UserContext)->etwEvent(r); }
+
+// когда событие случилось: время события — QueryPerformanceCounter (ClientContext = 1 и
+// PROCESS_TRACE_MODE_RAW_TIMESTAMP). Странное — время прихода
+static Clock::time_point eventTime(LONGLONG qpc, Clock::time_point now) {
+    static const LONGLONG freq = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return f.QuadPart; }();
+    LARGE_INTEGER q;
+    QueryPerformanceCounter(&q);
+    const LONGLONG ago = q.QuadPart - qpc;
+    if (freq <= 0 || ago < 0 || ago > 2 * freq) return now;
+    return now - std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(double(ago) / double(freq)));
+}
+
+// поле события по имени из манифеста поставщика (как у PresentMon); не вышло — 0
+static uint64_t field(PEVENT_RECORD r, const wchar_t* name) {
+    PROPERTY_DATA_DESCRIPTOR d{};
+    d.PropertyName = reinterpret_cast<ULONGLONG>(name);
+    d.ArrayIndex = ULONG_MAX;
+    ULONG size = 0;
+    uint64_t v = 0;
+    if (TdhGetPropertySize(r, 0, nullptr, 1, &d, &size) == ERROR_SUCCESS && size <= sizeof(v))
+        if (TdhGetProperty(r, 0, nullptr, 1, &d, size, reinterpret_cast<PBYTE>(&v)) != ERROR_SUCCESS) v = 0;
+    return v;
+}
 
 static std::vector<char> sessionProps() {
     std::vector<char> buf(sizeof(EVENT_TRACE_PROPERTIES) + sizeof(kSession) + 2048, 0);
@@ -369,34 +469,50 @@ void Hub::etwEvent(PEVENT_RECORD r) {
     const EVENT_HEADER& h = r->EventHeader;
     const USHORT id = h.EventDescriptor.Id;
     int level;
+    bool start = false, stop = false;          // начало / конец вызова Present()
+    Presents::Api api = Presents::Api::Dxgi;
     if (IsEqualGUID(h.ProviderId, kDxgi)) {
-        if (id != 42 && id != 55) return;              // Present_Start, PresentMultiplaneOverlay_Start
-        level = kApi;
+        start = id == 42 || id == 55;          // Present_Start, PresentMultiplaneOverlay_Start
+        stop = id == 43 || id == 56;           // Present_Stop, PresentMultiplaneOverlay_Stop
+        level = kApiDxgi;
     } else if (IsEqualGUID(h.ProviderId, kD3d9)) {
-        if (id != 1) return;                           // Present_Start
-        level = kApi;
+        start = id == 1;                       // Present_Start
+        stop = id == 2;                        // Present_Stop
+        level = kApiD3d9;
+        api = Presents::Api::D3d9;
     } else if (IsEqualGUID(h.ProviderId, kDxgKrnl)) {
-        if (id == 215) level = kKrnlDetailed;          // PresentHistoryDetailed_Start
-        else if (id == 171) level = kKrnlHistory;      // PresentHistory_Start
-        else if (id == 184) level = kKrnlPresent;      // Present_Info (Vulkan, OpenGL)
+        if (id == 215) level = kKrnlDetailed;  // PresentHistoryDetailed_Start
+        else if (id == 171) level = kKrnlHistory;   // PresentHistory_Start
+        else if (id == 184) level = kKrnlPresent;   // Present_Info (Vulkan, OpenGL)
         else return;
     } else {
         return;
     }
-    const Clock::time_point t = Clock::now();
+    if (level >= kApiD3d9 && !start && !stop) return;
+    const Clock::time_point now = Clock::now();
+    const Clock::time_point t = eventTime(h.TimeStamp.QuadPart, now);
     std::shared_ptr<Feed> f;
+    Presents::Shown shown;
     {
         std::lock_guard<std::mutex> lk(pm_);
-        for (PidFeed& p : pids_) {
-            if (p.pid != h.ProcessId) continue;
-            p.seen[level] = t;
+        auto p = std::find_if(pids_.begin(), pids_.end(), [&](const PidFeed& x) { return x.pid == h.ProcessId; });
+        if (p == pids_.end()) return;
+        if (!stop) {
+            p->seen[level] = now;
             for (int l = level + 1; l < kLevels; ++l)
-                if (p.seen[l] != Clock::time_point{} && t - p.seen[l] < 1s) return;   // кадр уже посчитан
-            f = p.feed.lock();
-            break;
+                if (p->seen[l] != Clock::time_point{} && now - p->seen[l] < 1s) return;   // кадр уже посчитан
         }
+        if (start) {
+            const uint64_t swapchain = field(r, api == Presents::Api::Dxgi ? L"pIDXGISwapChain" : L"pSwapchain");
+            p->presents.start(h.ThreadId, api, swapchain, static_cast<uint32_t>(field(r, L"Flags")), t);
+            return;
+        }
+        if (stop && !p->presents.stop(h.ThreadId, api, static_cast<uint32_t>(field(r, L"Result")), shown)) return;
+        f = p->feed.lock();
     }
-    if (f) f->frame(t);
+    if (!f) return;
+    if (stop) f->frame(shown.t, shown.swapchain);
+    else f->frame(t, 0);                       // события ядра — без swapchain
 }
 
 void Hub::run() {
@@ -435,13 +551,14 @@ void Hub::run() {
             std::vector<char> props = sessionProps();
             ULONG rc = StartTraceW(&session, kSession, reinterpret_cast<EVENT_TRACE_PROPERTIES*>(props.data()));
             if (rc == ERROR_SUCCESS) {
-                enableProvider(session, kDxgi, 0x2, {42, 55});
-                enableProvider(session, kD3d9, 0x2, {1});
+                enableProvider(session, kDxgi, 0x2, {42, 43, 55, 56});
+                enableProvider(session, kD3d9, 0x2, {1, 2});
                 // Base | Present: на Windows 10 у PresentHistory нет ключа Present
                 enableProvider(session, kDxgKrnl, 0x8000001, {184, 171, 215});
                 EVENT_TRACE_LOGFILEW log{};
                 log.LoggerName = const_cast<LPWSTR>(kSession);
-                log.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD;
+                log.ProcessTraceMode = PROCESS_TRACE_MODE_REAL_TIME | PROCESS_TRACE_MODE_EVENT_RECORD
+                                     | PROCESS_TRACE_MODE_RAW_TIMESTAMP;   // время — QPC, как в ClientContext
                 log.EventRecordCallback = onEtwEvent;
                 log.Context = this;
                 trace = OpenTraceW(&log);
@@ -470,9 +587,9 @@ void Hub::run() {
             for (const Target& t : want) {
                 PidFeed p;
                 p.pid = static_cast<DWORD>(t.pid);
-                p.feed = t.feed;
                 for (const PidFeed& old : pids_)
-                    if (old.pid == p.pid) std::copy(std::begin(old.seen), std::end(old.seen), std::begin(p.seen));
+                    if (old.pid == p.pid) p = old;     // что видели и начатые вызовы
+                p.feed = t.feed;
                 next.push_back(p);
             }
             pids_.swap(next);

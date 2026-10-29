@@ -99,7 +99,7 @@ qt_add_resources(AutoQ "aq_fonts"
 )
 
 if(WIN32)
-    target_link_libraries(aq_core PUBLIC winmm dwmapi advapi32)   # advapi32 — ETW («По кадрам»)
+    target_link_libraries(aq_core PUBLIC winmm dwmapi advapi32 tdh)   # advapi32, tdh — ETW («По кадрам»)
     target_compile_definitions(aq_core PUBLIC UNICODE _UNICODE)
     if(MINGW)
         # один самодостаточный exe — без libstdc++/libgcc/winpthread DLL

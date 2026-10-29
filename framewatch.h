@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <vector>
 
 namespace FrameWatch {
 
@@ -36,21 +37,43 @@ public:
     uint64_t count() const { return count_.load(); }        // кадров с начала подписки
     // ждать, пока count() >= target, не дольше timeout. true — дождались
     bool waitUntil(uint64_t target, std::chrono::milliseconds timeout);
-    double fps() const;                  // кадров в секунду за последнюю секунду (0 — кадров нет)
-    Status status() const;               // Live — последний кадр был меньше 0,5 с назад
-    Clock::time_point lastFrame() const; // когда пришёл последний кадр (пусто — ещё не было)
+    double fps() const;                  // кадров в секунду за последние 2 с (0 — кадров нет)
+    Status status() const;               // Live — последний кадр был меньше 1,5 с назад
+    Clock::time_point lastFrame() const; // когда показан последний кадр (пусто — ещё не было)
 
-    // источник кадров (и тесты)
-    void frame(Clock::time_point t = Clock::now());
+    // источник кадров (и тесты). t — когда кадр показан (время из события, а не когда
+    // событие дошло: события приходят и пачками). src — чей кадр (окно, swapchain): считаем
+    // один источник, другой — только когда этот замолк на 0,25 с
+    void frame(Clock::time_point t = Clock::now(), uint64_t src = 0);
     void setStatus(Status s);
 private:
     std::atomic<uint64_t> count_{0};
     std::atomic<int> status_{static_cast<int>(Status::Waiting)};
     mutable std::mutex m_;
     std::condition_variable cv_;
-    static constexpr int kRing = 1024;   // моменты последних кадров (fps до 1000 — за секунду)
+    static constexpr int kRing = 1024;   // моменты последних кадров (fps до 500 — за 2 с)
     Clock::time_point ring_[kRing]{};
     uint64_t ringN_ = 0;
+    Clock::time_point last_{};           // самый поздний кадр (события бывают не по порядку)
+    uint64_t src_ = 0;                   // источник, который считаем
+    Clock::time_point srcLast_{};        // его последний кадр
+};
+
+// Windows: вызовы Present() игры (события DXGI / D3D9). Начало и конец вызова — два
+// события одного потока; кадр — только показанный вызов, как у PresentMon: не
+// DXGI_PRESENT_TEST (проверка «видно ли окно»), без ошибки в ответе (DO_NOT_WAIT, пока
+// видеокарта занята, — повторы того же кадра) и не «окно не видно».
+// Без Windows — для тестов.
+class Presents {
+public:
+    enum class Api { Dxgi, D3d9 };
+    struct Shown { uint64_t swapchain = 0; Clock::time_point t{}; };
+    void start(uint32_t thread, Api api, uint64_t swapchain, uint32_t flags, Clock::time_point t);
+    bool stop(uint32_t thread, Api api, uint32_t result, Shown& out);   // true — кадр показан
+    static bool shown(Api api, uint32_t flags, uint32_t result);
+private:
+    struct Call { uint32_t thread; Api api; uint64_t swapchain; uint32_t flags; Clock::time_point t; };
+    std::vector<Call> calls_;            // начатые, ещё без конца
 };
 
 bool supported();                        // на этой ОС кадры игры видны
