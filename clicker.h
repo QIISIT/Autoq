@@ -74,6 +74,7 @@ private:
     void doCycle(const ClickerConfig& cfg);
     bool doSteps(const ClickerConfig& cfg);      // true — круг прошёл целиком
     bool allowedFor(const ClickerConfig& cfg);   // можно ли жать прямо сейчас (окно, курсор)
+    bool press(const ActionStep& a, const ClickerConfig& cfg);   // нажать; с привязкой — только если клавиатура у игры
     void releaseHeld();
     void sleepWhileRunning(int ms);
     bool waitHeld(int ms, const ClickerConfig& cfg);   // пауза с зажатым: false — стоп или ушли из игры
@@ -114,4 +115,5 @@ private:
     void* timer_ = nullptr;               // Windows: таймер высокой точности потока кликера
     std::unique_ptr<ActiveWindowProbe> probe_;
     std::chrono::steady_clock::time_point pointerAwaySince_{};   // только поток кликера
+    unsigned long long activeWin_ = 0;    // окно игры, что видел allowedFor (поток кликера)
 };

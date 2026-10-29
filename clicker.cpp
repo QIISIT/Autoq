@@ -135,6 +135,29 @@ static bool sendAction(void* disp, const ActionStep& a, bool down) {
 }
 #endif
 
+// Нажать (отпускают всегда через sendAction). Linux: менеджер окон переводит фокус X
+// раньше, чем обновляет _NET_ACTIVE_WINDOW, а XTest шлёт в фокус — в миг переключения
+// allowedFor ещё видит игру, а нажатие ушло бы в новое окно. Поэтому «клавиатура у игры? —
+// нажать» идёт под захватом сервера X: между проверкой и нажатием фокус сменить некому.
+// Windows и macOS: окно переднего плана меняется сразу, отставания нет.
+// false — не нажато; если из-за фокуса — ещё и allowedNow_ = false.
+bool Clicker::press(const ActionStep& a, const ClickerConfig& cfg) {
+#if defined(_WIN32) || defined(__APPLE__)
+    (void)cfg;
+    return sendAction(display_, a, true);
+#else
+    Display* d = static_cast<Display*>(display_);
+    if (!cfg.lockToWindow || !d) return sendAction(display_, a, true);
+    XGrabServer(d);
+    const bool focused = x11FocusIn(d, activeWin_);
+    const bool sent = focused && sendAction(d, a, true);
+    XUngrabServer(d);
+    XFlush(d);
+    if (!focused) { pauseReason_ = 1; allowedNow_ = false; }
+    return sent;
+#endif
+}
+
 // ---------------------------------------------------------------------------
 Clicker::Clicker() {
 #if defined(__APPLE__)
@@ -351,18 +374,19 @@ bool Clicker::doSteps(const ClickerConfig& cfg) {
         } else if (a.press == ActionStep::Click) {
             // нажать и сразу отпустить (зажатую раньше — тоже: после шага она отпущена)
             if (k >= 0) down.erase(down.begin() + k);
-            if (sendAction(display_, a, true)) {
+            if (press(a, cfg)) {
                 sendAction(display_, a, false);
                 const int idx = Steps::inputIndex(inputs, a);
                 if (idx >= 0) countAction(idx);
                 clickCount_ += 1;
             }
-        } else if (k < 0 && sendAction(display_, a, true)) {
+        } else if (k < 0 && press(a, cfg)) {
             down.push_back(a);
             const int idx = Steps::inputIndex(inputs, a);
             if (idx >= 0) countAction(idx);
             clickCount_ += 1;
         }
+        if (!allowedNow_) { whole = false; break; }      // клавиатура уже не у игры
         if (i + 1 < n) {
             // что-то зажато — пауза с проверкой окна: ушли из игры — отпускаем сразу
             if (down.empty()) pause(a.afterMs, cfg);
@@ -384,13 +408,15 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
     }
     if (cfg.simultaneous && n > 1) {
         // комбинация: зажать все, подержать, отпустить в обратном порядке (как F3+A)
-        int holdMs = 0;
+        int holdMs = 0, pressed = 0;
         for (const ActionStep& a : cfg.actions) {
-            sendAction(display_, a, true);
+            if (!press(a, cfg) && !allowedNow_) break;    // клавиатура уже не у игры
+            ++pressed;
             holdMs = std::max(holdMs, a.holdMs);
         }
-        const bool stayed = holdFor(holdMs, cfg);    // ушли из игры — отпускаем, не дожидаясь конца
-        for (int i = n - 1; i >= 0; --i) sendAction(display_, cfg.actions[i], false);
+        const bool stayed = pressed == n && holdFor(holdMs, cfg);    // ушли из игры — отпускаем, не дожидаясь конца
+        for (int i = pressed - 1; i >= 0; --i) sendAction(display_, cfg.actions[i], false);
+        if (pressed < n) return;
         clickCount_ += 1;
         for (int i = 0; i < n; ++i) countAction(i);
         if (stayed) cycles_ += 1;
@@ -402,7 +428,7 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
         if (i > 0 && (!running_ || !allowedFor(cfg))) { allowedNow_ = false; whole = false; break; }
         currentStep_ = i;
         const ActionStep& a = cfg.actions[i];
-        sendAction(display_, a, true);
+        if (!press(a, cfg) && !allowedNow_) { whole = false; break; }   // клавиатура уже не у игры
         // «держать» — при стопе или уходе из игры отпускаем сразу
         const bool stayed = a.holdMs <= 0 || holdFor(a.holdMs, cfg);
         sendAction(display_, a, false);
@@ -418,7 +444,9 @@ void Clicker::doCycle(const ClickerConfig& cfg) {
 bool Clicker::allowedFor(const ClickerConfig& cfg) {
     pauseReason_ = 0;
     if (!cfg.lockToWindow) return true;
-    if (!clickAllowed(cfg, probe_->query())) { pauseReason_ = 1; return false; }
+    const WindowInfo w = probe_->query();
+    if (!clickAllowed(cfg, w)) { pauseReason_ = 1; return false; }
+    activeWin_ = w.handle;
     // кнопкой мыши — только когда курсор над окном игры (иначе клик ушёл бы
     // в соседнее окно или на другой монитор и забрал бы фокус у игры)
     bool anyMouse = false;
@@ -539,7 +567,7 @@ void Clicker::loop() {
             if (changed) {
                 releaseHeld();
                 for (const ActionStep& a : want)
-                    if (sendAction(display_, a, true)) held_.push_back(a);
+                    if (press(a, cfg)) held_.push_back(a);
                 if (!held_.empty()) {
                     clickCount_ += 1;
                     for (int i = 0; i < static_cast<int>(held_.size()); ++i) countAction(i);
