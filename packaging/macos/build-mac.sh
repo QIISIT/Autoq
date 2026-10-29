@@ -63,6 +63,6 @@ cp "$ROOT/packaging/macos/README_MAC.txt" "$DIST/stage/Как открыть Aut
 hdiutil create -volname "AutoQ $VERSION" -srcfolder "$DIST/stage" -ov -format UDZO \
     "$DIST/AutoQ-$FILEVER-macOS.dmg"
 rm -rf "$DIST/stage"
-(cd "$DIST" && shasum -a 256 ./*.dmg > SHA256SUMS.txt)
+(cd "$DIST" && shasum -a 256 -- *.dmg > SHA256SUMS.txt)
 ls -la "$DIST"
 echo "Готово: $DIST/AutoQ-$FILEVER-macOS.dmg (подпись: $([ "$IDENTITY" = "-" ] && echo ad-hoc || echo "$IDENTITY"))"
