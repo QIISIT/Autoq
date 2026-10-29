@@ -1070,8 +1070,8 @@ void Board::doLayout() {
     if (!edit_)
         for (BoardCard* c : gridCards()) liveMin_[c->id()] = {blockIdsOf(c), c->minimumSizeHint().width()};
     cols_ = columnsFor(W);
-    // сетка в 12 долей: «сама» — как раньше (широкая — на всю строку, узкие делят
-    // строку поровну), своя ширина — четвертями; не влезает содержимое — шире
+    // сетка в 12 долей: «сама» — широкая на всю строку, узкие делят строку поровну;
+    // своя ширина — четвертями; не влезает содержимое — шире
     auto unitW = [W, g](int u) { return ((W + g) * u) / 12 - g; };
     struct Cell { BoardCard* c; int units; bool fixed; int height; };
     QList<QList<Cell>> rows;
