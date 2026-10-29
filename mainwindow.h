@@ -83,6 +83,7 @@ private slots:
     void notifyAdded(const GameDef& g, int profiles);   // «Игра добавлена» (и профили, если вернулись)
     void startWindowCheck();
     void checkWindowDone();
+    void pickWindowFromList();          // «Выбрать процесс…»: окно из списка, без отсчёта
     void onCaptureStarted();
     void onCaptureFinished(bool accepted, const HotkeySpec& spec);
     void onTrayActivated(QSystemTrayIcon::ActivationReason reason);
@@ -191,6 +192,9 @@ private:
     bool bound() const;
     void beginCapture();           // обратный отсчёт: в мини-окне или в главном
     void rememberWindow(const WindowInfo& w);
+    // окно выбрали (отсчётом — активное, или из списка): подходит под правила — привязать,
+    // нет — дописать процесс в правила (из отсчёта — спросив «это игра?»)
+    void useWindow(const WindowInfo& w, bool picked, bool wantStart);
 
     // --- запуск: у каждой игры свой кликер ---
     GameRunner& runner(const QString& id);
@@ -362,6 +366,7 @@ private:
     ChipEditor* titleEdit_;
     TimeChoice* timeSeg_;
     QPushButton* checkBtn_;
+    QPushButton* pickWindowBtn_;
     CaptureCountdown* countdown_;
 
     // --- 04 профиль и запуск ---

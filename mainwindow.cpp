@@ -751,8 +751,19 @@ void MainWindow::buildWindowCard() {
     countdown_->setIdleText(T("Выбрать окно"));
     capRow->addWidget(checkBtn_, 1);
     capRow->addWidget(timeSeg_);
-    capRow->addWidget(tipBadge({"window.pick", "window.rules"}), 0, Qt::AlignVCenter);
     lay->addLayout(capRow);
+    // второй способ — выбрать окно игры из списка открытых, не переключаясь в игру
+    auto* pickRow = new QHBoxLayout();
+    pickRow->setSpacing(8);
+    pickWindowBtn_ = new QPushButton(T("Выбрать процесс…"));
+    pickWindowBtn_->setObjectName("outline");
+    pickWindowBtn_->setMinimumHeight(38);
+    pickWindowBtn_->setCursor(Qt::PointingHandCursor);
+    pickWindowBtn_->setToolTip(T("Выбрать окно игры из списка открытых окон (процесс и заголовок) — переключаться в игру не нужно"));
+    pickWindowBtn_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
+    pickRow->addWidget(pickWindowBtn_, 1);
+    pickRow->addWidget(tipBadge({"window.pick", "window.rules"}), 0, Qt::AlignVCenter);
+    lay->addLayout(pickRow);
 }
 
 void MainWindow::buildProfileCard() {
@@ -1186,6 +1197,7 @@ void MainWindow::connectSignals() {
         if (countdown_->active()) { countdown_->cancel(); return; }
         startWindowCheck();
     });
+    connect(pickWindowBtn_, &QPushButton::clicked, this, &MainWindow::pickWindowFromList);
     connect(countdown_, &CaptureCountdown::finished, this, &MainWindow::checkWindowDone);
     connect(countdown_, &CaptureCountdown::cancelled, this, [this]() {
         pendingStart_ = false;
@@ -1316,6 +1328,7 @@ void MainWindow::refreshIcons() {
     if (overlay_) overlay_->update();
     actionsEdit_->refreshIcons();
     checkBtn_->setIcon(AqIcons::ui("target", t.redHi, 15));
+    pickWindowBtn_->setIcon(AqIcons::ui("window", t.muted, 15));
     captureBtn_->setIcon(AqIcons::ui("keyboard", t.muted, 16));
     profileMoreBtn_->setIcon(AqIcons::ui("more", t.muted, 16));
     newProfileBtn_->setIcon(AqIcons::ui("plus", t.muted, 13, 2.2));
@@ -2906,7 +2919,19 @@ void MainWindow::beginCapture() {
 void MainWindow::checkWindowDone() {
     const bool wantStart = pendingStart_;
     pendingStart_ = false;
-    const WindowInfo w = probe_->query();
+    useWindow(probe_->query(), false, wantStart);
+}
+
+void MainWindow::pickWindowFromList() {
+    if (!hasGame()) return;
+    if (countdown_->active()) countdown_->cancel();
+    if (mini_) mini_->cancelCapture();
+    WindowPickerPopup::openWindows(pickWindowBtn_, bound() ? bnd().handle : 0, [this](const WindowInfo& w) {
+        if (hasGame()) useWindow(w, true, false);
+    });
+}
+
+void MainWindow::useWindow(const WindowInfo& w, bool picked, bool wantStart) {
     rememberWindow(w);
     auto show = [this](const char* state, const QString& text, int miniState, const QString& miniText) {
         setStatusBox(state, text);
@@ -2957,7 +2982,14 @@ void MainWindow::checkWindowDone() {
     if (!addTitles.isEmpty() && !(noRules && !addProcs.isEmpty())) what << T("заголовок «%1»").arg(elide(addTitles.join(", "), 60));
     if (noRules && !addProcs.isEmpty()) addTitles.clear();    // процесса достаточно — заголовок меняется
     QWidget* parent = dialogParent();
-    const bool ask = !what.isEmpty() && (noRules ||
+    // из списка выбрали сами — это и есть игра, не спрашиваем
+    if (picked && what.isEmpty()) {
+        bindWindow(w);
+        show("ok", T("✓ Выбрано окно игры %1 — кликаю только в нём.").arg(who), 1, T("Окно игры выбрано"));
+        finish(true);
+        return;
+    }
+    const bool ask = !what.isEmpty() && (noRules || picked ||
         askYesNo(parent, T("Окно игры"),
             T("Окно %1 не подходит под правила «%2».\n\nЭто окно игры? AutoQ допишет в правила: %3 — и будет кликать только в этом окне.").arg(who, game_.name, what.join(T(" и "))),
             T("Да, это игра"), T("Нет"), false));
