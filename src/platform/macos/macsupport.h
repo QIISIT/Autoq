@@ -9,11 +9,6 @@ namespace AqMac {
     // «Универсальный доступ» (Accessibility): нужен, чтобы отправлять клики и
     // нажатия и чтобы ловить горячую клавишу. prompt — показать системный запрос.
     bool accessibilityTrusted(bool prompt = false);
-    // «Мониторинг ввода» (Input Monitoring): глобальное чтение клавиатуры.
-    // request — показать системный запрос (один раз; дальше — только в Настройках).
-    bool inputMonitoringAllowed(bool request = false);
-    // «Запись экрана»: без неё не видны заголовки чужих окон (процесс виден и так)
-    bool screenCaptureAllowed();
     // Открыть Настройки → Конфиденциальность и безопасность → нужный раздел:
     // "Privacy_Accessibility", "Privacy_ListenEvent", "Privacy_ScreenCapture"
     void openPrivacyPane(const char* anchor);

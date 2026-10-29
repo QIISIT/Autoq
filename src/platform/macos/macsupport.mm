@@ -37,19 +37,6 @@ bool AqMac::accessibilityTrusted(bool prompt) {
     return ok;
 }
 
-bool AqMac::inputMonitoringAllowed(bool request) {
-    if (@available(macOS 10.15, *)) {
-        if (CGPreflightListenEventAccess()) return true;
-        return request ? CGRequestListenEventAccess() : false;
-    }
-    return true;
-}
-
-bool AqMac::screenCaptureAllowed() {
-    if (@available(macOS 10.15, *)) return CGPreflightScreenCaptureAccess();
-    return true;
-}
-
 void AqMac::openPrivacyPane(const char* anchor) {
     @autoreleasepool {
         NSString* s = [NSString stringWithFormat:
