@@ -15,6 +15,7 @@
 // хуки клавиатуры и мыши, Linux — сырые события XInput2, macOS — тот же
 // CGEventTap без перехвата; нажатие при этом доходит до игры.
 // Сообщает и нажатие, и отпускание — для режима «работает, пока держишь».
+// Поток с перехватом (loop) у каждой ОС свой — platform/*/hotkey_*.cpp.
 class GlobalHotkey {
 public:
     enum class Status { Ok, Busy, Invalid, Unavailable, Suspended };
@@ -32,9 +33,9 @@ public:
     Status statusOf(const HotkeySpec& sp) const;   // Unavailable, если такой клавиши нет в списке
     bool applied() const { return !rebind_; }      // новый список уже применён потоком
 
-    // Linux: обработчик ошибок X11, который не роняет программу
-    // (по умолчанию Xlib завершает процесс при любой ошибке). Вызвать в main().
-    static void installX11ErrorHandler();
+    // Вызвать в main() сразу после QApplication (Qt ставит свой обработчик ошибок X11).
+    // Linux: обработчик ошибок X11, который не роняет программу и узнаёт, что клавиша занята
+    static void init();
 
 private:
     void loop();
