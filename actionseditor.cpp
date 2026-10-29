@@ -818,7 +818,7 @@ void ActionsEditor::ungroup(int i) {
     QList<ActionStep> part = Groups::inlineCall(actions_[i], *g, steps());
     if (actions_.size() - 1 + part.size() > maxItems()) {
         QMessageBox::information(this, T("Группа"),
-            T("Не поместится: в ряду можно до %1, а у группы с повтором — %2.").arg(maxItems()).arg(part.size()));
+            T("Не поместится: в ряду можно до %1, а с действиями группы станет %2.").arg(maxItems()).arg(actions_.size() - 1 + part.size()));
         return;
     }
     if (part.isEmpty() && actions_.size() == 1) part << newItem();

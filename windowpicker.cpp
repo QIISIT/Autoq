@@ -13,29 +13,37 @@
 
 namespace { enum { ValueRole = Qt::UserRole + 1 }; }
 
-WindowPickerPopup::WindowPickerPopup(Mode mode, const QStringList& already, QWidget* parent)
+WindowPickerPopup::WindowPickerPopup(Mode mode, const QStringList& already, QWidget* parent,
+                                     unsigned long long current)
     : QFrame(parent, Qt::Popup), mode_(mode) {
     setObjectName("popup");
     setAttribute(Qt::WA_DeleteOnClose);
-    // открытые окна: процессы без повторов (или заголовки), своё окно не предлагаем
+    // открытые окна: процессы без повторов (или заголовки, или все окна), своё окно не предлагаем
     ActiveWindowProbe probe;
     const QString own = ownProcessName();
     QSet<QString> seen;
     for (const WindowInfo& w : probe.listWindows()) {
         if (w.processKnown && processMatches({own}, w)) continue;
+        if (mode == Window) {
+            const QString name = w.processKnown && !w.process.isEmpty() ? w.process : w.title;
+            if (name.trimmed().isEmpty()) continue;
+            const QString title = w.title.isEmpty() ? T("без заголовка") : w.title;
+            entries_ << Entry{name, w.processKnown ? title : QString(), w.handle == current, w};
+            continue;
+        }
         const QString value = mode == Process ? w.process : w.title;
         if (value.trimmed().isEmpty() || seen.contains(value.toLower())) continue;
         seen.insert(value.toLower());
         bool has = false;
         for (const QString& a : already) if (a.compare(value, Qt::CaseInsensitive) == 0) has = true;
-        entries_ << Entry{value, mode == Process ? w.title : w.process, has};
+        entries_ << Entry{value, mode == Process ? w.title : w.process, has, w};
     }
 
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(8, 8, 8, 8);
     lay->setSpacing(6);
     search_ = new QLineEdit();
-    addPopupSearch(lay, this, search_, mode == Process ? T("Поиск: имя процесса или окна…") : T("Поиск по заголовку…"));
+    addPopupSearch(lay, this, search_, mode == Title ? T("Поиск по заголовку…") : T("Поиск: имя процесса или окна…"));
     list_ = new QListWidget();
     list_->setObjectName("keyList");
     list_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -53,18 +61,19 @@ void WindowPickerPopup::rebuild(const QString& filterIn) {
     const QString filter = filterIn.trimmed().toLower();
     list_->clear();
     const auto& t = Theme::t();
-    QFont mono(mode_ == Process ? Theme::monoFamily() : Theme::uiFamily());
+    QFont mono(mode_ == Title ? Theme::uiFamily() : Theme::monoFamily());
     mono.setPixelSize(13);
     mono.setWeight(QFont::DemiBold);
     QListWidgetItem* first = nullptr;
-    for (const Entry& e : entries_) {
+    for (int i = 0; i < entries_.size(); ++i) {
+        const Entry& e = entries_[i];
         if (!filter.isEmpty() && !e.value.toLower().contains(filter) && !e.sub.toLower().contains(filter)) continue;
-        const QString sub = QFontMetrics(QFont(Theme::uiFamily())).elidedText(
-            (e.already ? T("✓ уже добавлен · ") : QString()) + e.sub, Qt::ElideRight, 280);
+        const QString mark = !e.already ? QString() : mode_ == Window ? T("✓ выбрано · ") : T("✓ уже добавлен · ");
+        const QString sub = QFontMetrics(QFont(Theme::uiFamily())).elidedText(mark + e.sub, Qt::ElideRight, 280);
         auto* it = new QListWidgetItem(e.value + (sub.isEmpty() ? QString() : "\n" + sub));
-        it->setData(ValueRole, e.value);
+        it->setData(ValueRole, mode_ == Window ? QString::number(i) : e.value);
         it->setFont(mono);
-        it->setToolTip(e.already ? T("Уже в правилах игры") : e.sub);
+        it->setToolTip(!e.already ? e.sub : mode_ == Window ? T("Это окно уже выбрано") : T("Уже в правилах игры"));
         if (e.already) it->setForeground(t.faint);
         list_->addItem(it);
         if (!first && !e.already) first = it;
@@ -83,6 +92,13 @@ void WindowPickerPopup::choose(QListWidgetItem* it) {
     if (!it) return;
     const QString v = it->data(ValueRole).toString();
     if (v.isEmpty()) return;
+    if (mode_ == Window) {
+        const WindowInfo w = entries_.value(v.toInt()).win;
+        const auto f = onWindow_;
+        close();
+        if (f && w.valid) f(w);
+        return;
+    }
     emit picked(v);
     close();
 }
@@ -121,5 +137,12 @@ void WindowPickerPopup::open(QWidget* anchor, Mode mode, const QStringList& alre
                              const std::function<void(const QString&)>& onPicked) {
     auto* pop = new WindowPickerPopup(mode, already, anchor);
     QObject::connect(pop, &WindowPickerPopup::picked, anchor, [onPicked](const QString& v) { onPicked(v); });
+    pop->popupAt(anchor);
+}
+
+void WindowPickerPopup::openWindows(QWidget* anchor, unsigned long long current,
+                                    const std::function<void(const WindowInfo&)>& onPicked) {
+    auto* pop = new WindowPickerPopup(Window, {}, anchor, current);
+    pop->onWindow_ = onPicked;
     pop->popupAt(anchor);
 }
