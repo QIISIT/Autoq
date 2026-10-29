@@ -117,6 +117,17 @@ void GlobalHotkey::loop() {
     };
     std::vector<XBind> binds;
     bool rawSelected = false;
+    // Отпускание мимо нас не должно оставлять клавишу «зажатой»: XWayland, когда фокус уходит
+    // в окно Wayland (Alt+Tab, Meta в KDE), отпускает клавиши без сырых событий — и F6 потом
+    // считался бы Alt+F6. Сверяем с сервером: чего он зажатым не видит, того нет (keep — только что нажатая)
+    auto syncPressed = [&](int keep) {
+        char keys[32] = {};
+        XQueryKeymap(d, keys);
+        for (auto it = pressed.begin(); it != pressed.end();) {
+            const bool down = *it > 0 && *it < 256 && (keys[*it / 8] & (1 << (*it % 8)));
+            it = (down || *it == keep) ? std::next(it) : pressed.erase(it);
+        }
+    };
     // зажата ли клавиша по мнению сервера (видит и XTEST — поэтому только вместе с pressed)
     auto keymapDown = [&](int code) {
         char keys[32] = {};
@@ -143,13 +154,7 @@ void GlobalHotkey::loop() {
     };
     auto apply = [&]() {
         ungrab();
-        // что за время паузы отпустили — забываем (зажатое осталось зажатым)
-        {
-            char keys[32] = {};
-            XQueryKeymap(d, keys);
-            for (auto it = pressed.begin(); it != pressed.end();)
-                it = (*it > 0 && *it < 256 && (keys[*it / 8] & (1 << (*it % 8)))) ? std::next(it) : pressed.erase(it);
-        }
+        syncPressed(0);     // что за время паузы отпустили — забываем (зажатое осталось зажатым)
         const QList<HotkeySpec> specs = bindings();
         active_ = specs;
         if (suspended_) { resetStatuses(Status::Suspended); return; }
@@ -282,6 +287,7 @@ void GlobalHotkey::loop() {
                 switch (ev.xcookie.evtype) {
                     case XI_RawKeyPress: {
                         if (fake) break;
+                        syncPressed(code);
                         const bool already = pressed.count(code) > 0;
                         pressed.insert(code);
                         if (!already) rawEvent(false, code, true);
@@ -293,7 +299,9 @@ void GlobalHotkey::loop() {
                         rawEvent(false, code, false);
                         break;
                     case XI_RawButtonPress:
-                        if (!fake) rawEvent(true, code, true);
+                        if (fake) break;
+                        syncPressed(0);
+                        rawEvent(true, code, true);
                         break;
                     case XI_RawButtonRelease:
                         if (!fake) rawEvent(true, code, false);
@@ -361,6 +369,8 @@ void GlobalHotkey::loop() {
                         continue;
                     }
                 }
+                // пока клавиатура у нас, сырое отпускание не приходит — отпущена по этому событию
+                pressed.erase(static_cast<int>(ev.xkey.keycode));
                 for (XBind& b : binds)
                     if (b.grabbed && !b.mouse && ev.xkey.keycode == static_cast<unsigned>(b.code) && b.down) {
                         b.down = b.raw = false;
