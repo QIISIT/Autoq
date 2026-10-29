@@ -1,5 +1,5 @@
 #include "core/tips.h"
-#include "core/games.h"
+#include "core/appsettings.h"
 #include "core/i18n.h"
 
 // Тексты — на языке программы, поэтому собираются при каждом вызове (язык меняется
