@@ -3,19 +3,20 @@
 #include <QImage>
 #include <QPainter>
 #include <cstdio>
-#include "overlay.h"
-#include "games.h"
-#include "theme.h"
-#include "keycapturebutton.h"
-#include "styles.h"
-#include "cardlayout.h"
+#include "ui/overlay.h"
+#include "core/games.h"
+#include "core/appsettings.h"
+#include "ui/style/theme.h"
+#include "ui/style/keycapturebutton.h"
+#include "ui/style/styles.h"
+#include "core/cardlayout.h"
 #include <QKeyEvent>
 #include <QFileInfo>
 #include <QJsonObject>
 #include <QLineEdit>
 #include <QMenu>
 #include <memory>
-#include "i18n.h"
+#include "core/i18n.h"
 
 static int g_fail = 0, g_pass = 0;
 #define CHECK(cond) do { if (cond) ++g_pass; else { ++g_fail; \

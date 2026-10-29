@@ -2,24 +2,27 @@
 // Собирается и под Linux, и под Windows (проверяется в Wine).
 #include <QCoreApplication>
 #include <QDir>
+#include <QDirIterator>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QSet>
 #include <QRegularExpression>
 #include <QFile>
 #include <QtEndian>
-#include "i18n.h"
-#include "tips.h"
-#include "sounds.h"
-#include "framesync.h"
-#include "cardlayout.h"
+#include "core/i18n.h"
+#include "core/tips.h"
+#include "core/sounds.h"
+#include "core/framesync.h"
+#include "core/cardlayout.h"
 #include <thread>
 #include <cstdio>
-#include "keys.h"
-#include "winmatch.h"
-#include "games.h"
-#include "clicker.h"
-#include "updates.h"
-#include "framewatch.h"
+#include "core/keys.h"
+#include "core/winmatch.h"
+#include "core/games.h"
+#include "core/appsettings.h"
+#include "core/clicker.h"
+#include "core/updates.h"
+#include "core/framewatch.h"
 #include <atomic>
 
 static int g_fail = 0, g_pass = 0;
@@ -79,6 +82,13 @@ static void testKeys() {
     CHECK(Keys::fromKeyEvent(Qt::Key_VolumeUp, false, 0) == nullptr);
 #ifdef _WIN32
     CHECK(Keys::fromKeyEvent(0x0410, false, 0x46) == Keys::byName("f"));
+#elif !defined(__APPLE__)
+    // X11 (evdev: keycode 41 — F, 39 — S): клавиша по keycode при любой раскладке — «І» на S
+    if (!qEnvironmentVariableIsEmpty("DISPLAY") && Keys::byX11Keycode(41)) {
+        CHECK(Keys::byX11Keycode(41) == Keys::byName("f"));
+        CHECK(Keys::fromKeyEvent(0x0406, false, 0x6b6, 39) == Keys::byName("s"));
+        CHECK(Keys::fromKeyEvent(Qt::Key_F, false, 0x66, 39) == Keys::byName("f"));   // латиница — по Qt
+    }
 #endif
 }
 
@@ -665,6 +675,15 @@ static QString unescapeC(const QString& in) {
     return out;
 }
 
+// исходники во всех папках src/: пути относительно dir
+static QStringList sourceFiles(const QDir& dir, const QStringList& filters) {
+    QStringList out;
+    for (QDirIterator it(dir.path(), filters, QDir::Files, QDirIterator::Subdirectories); it.hasNext();)
+        out << dir.relativeFilePath(it.next());
+    out.sort();
+    return out;
+}
+
 static void testI18n() {
     CHECK(I18n::language() == I18n::Ru);
     CHECK(T("Старт") == QString::fromUtf8("Старт"));               // по умолчанию — как есть
@@ -682,14 +701,14 @@ static void testI18n() {
 
     // у каждой строки T("…") в исходниках есть перевод
     QDir dir(QStringLiteral(AQ_SOURCE_DIR));
-    if (!dir.exists("i18n_en.cpp")) { std::printf("  (исходники не найдены — проверка переводов пропущена)\n"); return; }
+    if (!dir.exists("core/i18n_en.cpp")) { std::printf("  (исходники не найдены — проверка переводов пропущена)\n"); return; }
     // T("…" "…") — соседние строки склеиваются, как у компилятора
     const QRegularExpression re(QStringLiteral("\\bT\\(\\s*((?:\"(?:[^\"\\\\]|\\\\.)*\"\\s*)+)\\)"));
     const QRegularExpression part(QStringLiteral("\"((?:[^\"\\\\]|\\\\.)*)\""));
     int found = 0;
     QStringList missing;
-    for (const QString& f : dir.entryList({"*.cpp", "*.h"}, QDir::Files)) {
-        if (f.startsWith("i18n")) continue;
+    for (const QString& f : sourceFiles(dir, {"*.cpp", "*.h"})) {
+        if (QFileInfo(f).fileName().startsWith("i18n")) continue;
         QFile file(dir.filePath(f));
         if (!file.open(QIODevice::ReadOnly)) continue;
         const QString src = QString::fromUtf8(file.readAll());
@@ -708,8 +727,8 @@ static void testI18n() {
     // и наоборот: в словаре нет строк, которых в исходниках уже нет (старые надписи)
     const QRegularExpression lit(QStringLiteral("((?:\"(?:[^\"\\\\\\n]|\\\\.)*\"\\s*)+)"));
     QSet<QString> literals;
-    for (const QString& f : dir.entryList({"*.cpp", "*.h", "*.mm"}, QDir::Files)) {
-        if (f.startsWith("i18n_en")) continue;
+    for (const QString& f : sourceFiles(dir, {"*.cpp", "*.h", "*.mm"})) {
+        if (QFileInfo(f).fileName().startsWith("i18n_en")) continue;
         QFile file(dir.filePath(f));
         if (!file.open(QIODevice::ReadOnly)) continue;
         const QString src = QString::fromUtf8(file.readAll());
@@ -1815,7 +1834,7 @@ static void testTips() {
     CHECK(Tips::get("groups.make").title == "Make a group from cards" && Tips::sections().first() == "Actions");
     I18n::setLanguage(I18n::Ru);
     // подсказки, на которые ссылается главное окно («?» и первое знакомство), — существуют
-    QFile mw(QDir(QStringLiteral(AQ_SOURCE_DIR)).filePath("mainwindow.cpp"));
+    QFile mw(QDir(QStringLiteral(AQ_SOURCE_DIR)).filePath("ui/mainwindow.cpp"));
     if (mw.open(QIODevice::ReadOnly)) {
         const QString src = QString::fromUtf8(mw.readAll());
         int refs = 0;
@@ -2310,10 +2329,12 @@ static void testUpdates() {
     CHECK(!parseRelease("<html>").valid());
 
     const QByteArray sums = "64cc08bf42b5e744e544ae2894000dd65402d54eec5c238e52de55875880ad05  AutoQ-1.17.1-beta-Windows-Setup.exe\n"
-                            "A7FD033F27E2ACC12F4C3529D45C066B45022768B7A9A28E5B886BBB1662A5B8 *autoq-v1171.tar.gz\r\n";
+                            "A7FD033F27E2ACC12F4C3529D45C066B45022768B7A9A28E5B886BBB1662A5B8 *autoq-v1171.tar.gz\r\n"
+                            "1111111111111111111111111111111111111111111111111111111111111111  ./AutoQ-1.17.1-macOS.dmg\n";
     CHECK(sumFor(sums, "AutoQ-1.17.1-beta-Windows-Setup.exe") == "64cc08bf42b5e744e544ae2894000dd65402d54eec5c238e52de55875880ad05");
     CHECK(sumFor(sums, "autoq-v1171.tar.gz") == "a7fd033f27e2acc12f4c3529d45c066b45022768b7a9a28e5b886bbb1662a5b8");
     CHECK(sumFor(sums, "AutoQ-Setup.exe").isEmpty());
+    CHECK(sumFor(sums, "AutoQ-1.17.1-macOS.dmg") == QString(64, '1'));        // shasum ./*.dmg
 
     QTemporaryDir tmp;
     QFile f(tmp.filePath("abc.bin"));

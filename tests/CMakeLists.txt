@@ -1,4 +1,6 @@
 # Автотесты: собираются с -DAQ_BUILD_TESTS=ON
+set(AQ_SRC ${SRC})
+
 add_executable(test_core test_core.cpp)
 target_link_libraries(test_core PRIVATE aq_core)
 
@@ -7,21 +9,16 @@ add_executable(test_icons test_icons.cpp)
 target_link_libraries(test_icons PRIVATE aq_icons aq_core)
 
 # оверлей КПС (Qt Widgets, запускается с QT_QPA_PLATFORM=offscreen)
-add_executable(test_overlay test_overlay.cpp ../overlay.cpp ../overlay.h ../theme.cpp ../theme.h ../keycapturebutton.h
-               ../styles.cpp ../styles.h)
+add_executable(test_overlay test_overlay.cpp
+               ${AQ_SRC}/ui/overlay.cpp ${AQ_SRC}/ui/overlay.h
+               ${AQ_SRC}/ui/style/theme.cpp ${AQ_SRC}/ui/style/theme.h
+               ${AQ_SRC}/ui/style/styles.cpp ${AQ_SRC}/ui/style/styles.h
+               ${AQ_SRC}/ui/style/keycapturebutton.h)
 target_link_libraries(test_overlay PRIVATE aq_icons aq_core Qt6::Widgets)
-target_include_directories(test_overlay PRIVATE ${CMAKE_SOURCE_DIR})
 qt_add_resources(test_overlay "aq_fonts_test"
     PREFIX "/"
-    BASE ../resources
-    FILES
-        ../resources/fonts/Unbounded-Bold.ttf
-        ../resources/fonts/Unbounded-Black.ttf
-        ../resources/fonts/Onest-Regular.ttf
-        ../resources/fonts/Onest-SemiBold.ttf
-        ../resources/fonts/JetBrainsMono-Medium.ttf
-        ../resources/fonts/JetBrainsMono-Bold.ttf
-)
+    BASE ${CMAKE_SOURCE_DIR}/resources
+    FILES ${AQ_FONTS})
 
 add_executable(inputtool inputtool.cpp)
 target_link_libraries(inputtool PRIVATE aq_core)
@@ -40,4 +37,4 @@ else()
 endif()
 
 # test_core проверяет, что у каждой строки интерфейса есть английский перевод
-target_compile_definitions(test_core PRIVATE AQ_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_compile_definitions(test_core PRIVATE AQ_SOURCE_DIR="${AQ_SRC}")

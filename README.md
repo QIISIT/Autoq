@@ -48,7 +48,7 @@ AutoQ — **автокликер для игр**. Работает на Windows,
 | Система | Что скачать |
 |---|---|
 | Windows 10/11 | `…-Windows-Setup.exe` — установщик, или `…-Windows-Portable.zip` — без установки |
-| macOS 12+ | `…-macOS.dmg` — одна сборка для Apple Silicon и Intel ([первый запуск](macos/README_MAC.txt)) |
+| macOS 12+ | `…-macOS.dmg` — одна сборка для Apple Silicon и Intel ([первый запуск](packaging/macos/README_MAC.txt)) |
 | Linux (X11 / XWayland) | собирается из исходников за пару минут, команда — в описании релиза |
 
 Windows может предупредить о «неизвестном издателе»: «Подробнее» → «Выполнить в любом случае».

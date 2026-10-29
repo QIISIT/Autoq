@@ -14,13 +14,13 @@
   4. Когда у проекта будет аудитория: SignPath Foundation (бесплатно для open source,
      нужна OSI-лицензия и сборка в CI).
 * Когда появится сертификат — сборка подписывает всё сама:
-  `SIGN_PFX=cert.pfx SIGN_PASS=… windows/build-from-linux.sh`
-  (или токен PKCS#11 / jsign — см. `windows/sign.sh`). Подписываются AutoQ.exe,
+  `SIGN_PFX=cert.pfx SIGN_PASS=… packaging/windows/build-from-linux.sh`
+  (или токен PKCS#11 / jsign — см. `packaging/windows/sign.sh`). Подписываются AutoQ.exe,
   деинсталлятор и AutoQ-Setup.exe, с меткой времени.
 
 ## macOS
 * Без Apple Developer ($99/год, из России сейчас почти не оплатить) окно «не удалось проверить
-  разработчика» не убрать. Инструкция для пользователей — `macos/README_MAC.txt`.
-* Сборка — `macos/build-mac.sh` на Маке или GitHub Actions (`.github/workflows/macos.yml`).
-* `macos/make-cert.sh` — бесплатный самоподписанный сертификат: с ним разрешения
+  разработчика» не убрать. Инструкция для пользователей — `packaging/macos/README_MAC.txt`.
+* Сборка — `packaging/macos/build-mac.sh` на Маке или GitHub Actions (`.github/workflows/macos.yml`).
+* `packaging/macos/make-cert.sh` — бесплатный самоподписанный сертификат: с ним разрешения
   «Универсальный доступ» не слетают после обновлений. Ключ не выкладывать в репозиторий.

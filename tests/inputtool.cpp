@@ -6,11 +6,12 @@
 #include <QCoreApplication>
 #include <QThread>
 #include <cstdio>
-#include "keys.h"
-#include "clicker.h"
-#include "winmatch.h"
-#include "games.h"
-#include "hotkey.h"
+#include "core/keys.h"
+#include "core/clicker.h"
+#include "core/winmatch.h"
+#include "core/games.h"
+#include "core/appsettings.h"
+#include "core/hotkey.h"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -41,7 +42,7 @@ static bool sendName(const QString& n) { return Clicker::sendOnce(stepOf(n)); }
 int main(int argc, char** argv) {
 #ifndef _WIN32
     XInitThreads();
-    GlobalHotkey::installX11ErrorHandler();
+    GlobalHotkey::init();
 #endif
     QCoreApplication app(argc, argv);
     const QStringList args = app.arguments().mid(1);
