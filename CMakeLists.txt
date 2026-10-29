@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.19)
-project(AutoQ VERSION 1.18.0 LANGUAGES CXX)
+project(AutoQ VERSION 1.18.1 LANGUAGES CXX)
 if(APPLE)
     enable_language(OBJCXX)     # macsupport.mm — AppKit (NSWorkspace, NSWindow)
 endif()
@@ -13,6 +13,10 @@ if(MSVC)
 endif()
 
 option(AQ_BUILD_TESTS "Собрать автотесты" OFF)
+option(AQ_TEST_BUILD "Тестовая сборка не для релиза: к версии добавляется «test»" OFF)
+if(AQ_TEST_BUILD)
+    add_compile_definitions(AQ_TEST_BUILD)
+endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
