@@ -162,17 +162,21 @@ const KeyDef* Keys::byWinVK(unsigned int vk) {
     return nullptr;
 }
 
-const KeyDef* Keys::fromKeyEvent(int qtKey, bool keypad, unsigned int nativeVirtualKey) {
+const KeyDef* Keys::fromKeyEvent(int qtKey, bool keypad, unsigned int nativeVirtualKey, unsigned int nativeScanCode) {
     if (qtKey == Qt::Key_Backtab) qtKey = Qt::Key_Tab;     // Shift+Tab приходит отдельной клавишей
     if (const KeyDef* k = byQtKey(qtKey, keypad)) return k;
 #ifdef _WIN32
     // На Windows виртуальный код не зависит от раскладки (VK 'F' и в русской)
+    Q_UNUSED(nativeScanCode);
     if (const KeyDef* k = byWinVK(nativeVirtualKey)) return k;
 #elif defined(__APPLE__)
     // На macOS nativeVirtualKey — код kVK_*: физическая клавиша, как и на Windows
+    Q_UNUSED(nativeScanCode);
     if (const KeyDef* k = byMacKeyCode(static_cast<int>(nativeVirtualKey))) return k;
 #else
+    // X11: nativeVirtualKey — символ текущей раскладки («і»), nativeScanCode — сама клавиша
     Q_UNUSED(nativeVirtualKey);
+    if (const KeyDef* k = nativeScanCode ? byX11Keycode(nativeScanCode) : nullptr) return k;
 #endif
     // Русская раскладка ЙЦУКЕН -> физическая клавиша QWERTY
     static const QHash<int, const char*> ru = {

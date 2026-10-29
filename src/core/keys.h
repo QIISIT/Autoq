@@ -22,10 +22,13 @@ namespace Keys {
     const QList<KeyDef>& all();
     const KeyDef* byName(const QString& name);           // без учёта регистра
     const KeyDef* byQtKey(int qtKey, bool keypad);       // точное совпадение
-    // Для захвата клавиши: понимает русскую раскладку (Ф -> A),
-    // Shift+цифры (! -> 1) и, на Windows, физический код клавиши.
-    const KeyDef* fromKeyEvent(int qtKey, bool keypad, unsigned int nativeVirtualKey);
+    // Для захвата клавиши: физическая клавиша при любой раскладке (Windows — VK, macOS — kVK_*,
+    // Linux — keycode X из nativeScanCode), русская раскладка (Ф -> A), Shift+цифры (! -> 1)
+    const KeyDef* fromKeyEvent(int qtKey, bool keypad, unsigned int nativeVirtualKey,
+                               unsigned int nativeScanCode = 0);
     const KeyDef* byWinVK(unsigned int vk);
+    // Linux: клавиша, которую кликер нажал бы этим keycode X (platform/linux/keys_x11.cpp)
+    const KeyDef* byX11Keycode(unsigned int keycode);
     int macKeyCode(const QString& name);                 // kVK_* на macOS, -1 — нет на Mac
     const KeyDef* byMacKeyCode(int code);
     bool available(const QString& name);                 // есть ли клавиша на этой системе
