@@ -1,4 +1,5 @@
 #include "core/games.h"
+#include "core/appsettings.h"
 #include "core/i18n.h"
 #include "core/keys.h"
 #include <QDateTime>
@@ -14,46 +15,6 @@ namespace {
 QString profileDir(const QString& gameId);        // файлы профилей — ниже, у профилей
 void dropProfileCache(const QString& gameId);
 }
-
-// ---------------------------------------------------------------------------
-
-int Prefs::captureSeconds() {
-    auto s = AppSettings::open();
-    const int v = s->value("captureSeconds", 3).toInt();
-    return (v >= 1 && v <= 120) ? v : 3;
-}
-
-void Prefs::setCaptureSeconds(int sec) {
-    if (sec < 1 || sec > 120) return;
-    auto s = AppSettings::open();
-    s->setValue("captureSeconds", sec);
-}
-
-static bool prefBool(const char* key, bool def) {
-    auto s = AppSettings::open();
-    return s->value(key, def).toBool();
-}
-static void setPrefBool(const char* key, bool on) {
-    auto s = AppSettings::open();
-    s->setValue(key, on);
-    s->sync();
-}
-bool Prefs::closeToTray() { return prefBool("closeToTray", true); }
-void Prefs::setCloseToTray(bool on) { setPrefBool("closeToTray", on); }
-bool Prefs::notifications() { return prefBool("notifications", true); }
-void Prefs::setNotifications(bool on) { setPrefBool("notifications", on); }
-bool Prefs::startMini() { return prefBool("startMini", false); }
-void Prefs::setStartMini(bool on) { setPrefBool("startMini", on); }
-bool Prefs::stopOnGameClose() { return prefBool("stopOnGameClose", true); }
-void Prefs::setStopOnGameClose(bool on) { setPrefBool("stopOnGameClose", on); }
-bool Prefs::mouseOnlyOverGame() { return prefBool("mouseOnlyOverGame", true); }
-void Prefs::setMouseOnlyOverGame(bool on) { setPrefBool("mouseOnlyOverGame", on); }
-bool Prefs::miniOnTop() { return prefBool("miniOnTop", true); }
-void Prefs::setMiniOnTop(bool on) { setPrefBool("miniOnTop", on); }
-bool Prefs::elevateAtStart() { return prefBool("elevateAtStart", true); }
-void Prefs::setElevateAtStart(bool on) { setPrefBool("elevateAtStart", on); }
-bool Prefs::onboardingDone() { return prefBool("onboardingDone", false); }
-void Prefs::setOnboardingDone(bool done) { setPrefBool("onboardingDone", done); }
 
 GameMode gameModeFromInt(int v) {
     switch (v) {
@@ -626,7 +587,7 @@ static bool hasProfiles(QSettings& s, const QString& id) {
     s.beginGroup(gkey(id, "profiles"));          // профили до 1.13 (ещё не перенесены в файлы)
     const bool any = !s.childGroups().isEmpty();
     s.endGroup();
-    return any || !QDir(AppSettings::profilesDir() + "/" + id).entryList({"*.ini"}, QDir::Files).isEmpty();
+    return any || !QDir(profileDir(id)).entryList({"*.ini"}, QDir::Files).isEmpty();
 }
 
 // Пользователь что-то менял у встроенной игры (правила, режим, значок)
@@ -1639,7 +1600,7 @@ void Games::migrate() {
         s->setValue("armedVersion", 2);
     }
     // 1.13: профили — отдельными файлами (раньше — внутри настроек)
-    for (const QString& id : s->value("games/order").toStringList() + s->value("games/knownBuiltins").toStringList()) {
+    for (const QString& id : s->value("games/order").toStringList()) {
         s->beginGroup(gkey(id, "profiles"));
         const QStringList names = s->childGroups();
         s->endGroup();
