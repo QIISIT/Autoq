@@ -176,8 +176,8 @@ void FrameUnits::swap(GameState& st) {
 
 bool FrameUnits::seed(GameState& st, double fps) {
     const double frame = 1000.0 / (fps >= 1 ? fps : 60.0);
-    // пауза есть — хотя бы кадр (иначе две клавиши слились бы в один кадр)
-    auto fr = [frame](int ms, int least) { return ms <= 0 ? 0 : qMax(least, qRound(ms / frame)); };
+    // пауза есть — хотя бы кадр (иначе две клавиши слились бы в один кадр); целыми кадрами
+    auto fr = [frame](int ms, int least) { return ms <= 0 ? 0 : qMax(least, qRound(ms / frame)) * kFrameUnit; };
     auto items = [&](QList<ActionStep>& l) {
         for (ActionStep& a : l) {
             a.holdFr = qMin(fr(a.holdMs, 1), 10000);
@@ -768,10 +768,11 @@ void Games::setCurrentId(const QString& id) {
 // шаги «По шагам» — с пятым полем: "m:1:0:150:d" (нажать) / "m:1:0:0:u" (отпустить) /
 // "m:1:0:0:c" (нажать и отпустить; шаг без поля — «нажать», как в 1.14).
 // Вызов группы: "g:<id группы>:<повторы>:<пауза после>" (версии до 1.17 его пропускают)
-// «По кадрам» — последним полем "f<держать>.<пауза после>" в кадрах, если не нули:
-// "m:1:0:120:c:f2.1", у вызова группы — "g:<id>:2:0:f0.3" (старые версии поле не читают)
+// «По кадрам» — последним полем "F<держать>.<пауза после>" в десятых кадра, если не нули:
+// "m:1:0:120:c:F20.15" (держать 2 кадра, пауза 1,5), у вызова группы — "g:<id>:2:0:F0.30".
+// В 1.18.0 — "f<держать>.<пауза после>" целыми кадрами (читаем; старые версии "F" не читают)
 static QString framesField(const ActionStep& a) {
-    return (a.holdFr > 0 || a.afterFr > 0) ? QString(":f%1.%2").arg(a.holdFr).arg(a.afterFr) : QString();
+    return (a.holdFr > 0 || a.afterFr > 0) ? QString(":F%1.%2").arg(a.holdFr).arg(a.afterFr) : QString();
 }
 
 static QString encodeStep(const ActionStep& a, bool step = false) {
@@ -790,10 +791,11 @@ static QString encodeStep(const ActionStep& a, bool step = false) {
 }
 
 static void decodeFrames(const QString& field, ActionStep* a) {
-    if (!field.startsWith('f')) return;
+    if (!field.startsWith('f') && !field.startsWith('F')) return;
+    const int unit = field.startsWith('f') ? kFrameUnit : 1;     // 1.18.0 — целые кадры
     const QStringList v = field.mid(1).split('.');
-    a->holdFr = qBound(0, v.value(0).toInt(), 10000);
-    a->afterFr = qBound(0, v.value(1).toInt(), 60000);
+    a->holdFr = qBound(0, v.value(0).toInt() * unit, 10000);
+    a->afterFr = qBound(0, v.value(1).toInt() * unit, 60000);
 }
 
 static int validButton(int b) { return MouseButtons::valid(b) ? b : 1; }
@@ -852,16 +854,18 @@ static void writeState(QSettings& s, const QString& prefix, const GameState& st)
     s.setValue(prefix + "lockWindow", st.lockWindow);
     s.setValue(prefix + "frameSync", st.frameSync);
     s.setValue(prefix + "frameHz", st.frameHz);
-    // «По кадрам» — ключи, только если режим включали или числа не по умолчанию
+    // «По кадрам» — ключи, только если режим включали или числа не по умолчанию. Числа — в
+    // десятых кадра (…Frames10); у 1.18.0 — целые кадры (…Frames: читаем, больше не пишем)
     const GameState d;
+    for (const char* k : {"startFrames", "intervalFrames", "jitterFrames"}) s.remove(prefix + k);
     if (st.byFrames || st.framesSet || st.startFr != d.startFr || st.intervalFr != d.intervalFr || st.jitterFr != d.jitterFr) {
         s.setValue(prefix + "byFrames", st.byFrames);
         s.setValue(prefix + "framesSet", st.framesSet);
-        s.setValue(prefix + "startFrames", st.startFr);
-        s.setValue(prefix + "intervalFrames", st.intervalFr);
-        s.setValue(prefix + "jitterFrames", st.jitterFr);
+        s.setValue(prefix + "startFrames10", st.startFr);
+        s.setValue(prefix + "intervalFrames10", st.intervalFr);
+        s.setValue(prefix + "jitterFrames10", st.jitterFr);
     } else {
-        for (const char* k : {"byFrames", "framesSet", "startFrames", "intervalFrames", "jitterFrames"}) s.remove(prefix + k);
+        for (const char* k : {"byFrames", "framesSet", "startFrames10", "intervalFrames10", "jitterFrames10"}) s.remove(prefix + k);
     }
     // свой звук: пусто — как в настройках (ключ не пишем)
     if (st.soundOn.isEmpty()) s.remove(prefix + "soundOn"); else s.setValue(prefix + "soundOn", st.soundOn);
@@ -921,9 +925,15 @@ static GameState readState(QSettings& s, const QString& prefix, const GameState&
     if (st.frameHz < 0 || st.frameHz > 1000) st.frameHz = 0;
     st.byFrames = s.value(prefix + "byFrames", def.byFrames).toBool();
     st.framesSet = s.value(prefix + "framesSet", def.framesSet).toBool();
-    st.startFr = qBound(0, s.value(prefix + "startFrames", def.startFr).toInt(), kMaxStartDelayMs);
-    st.intervalFr = qBound(0, s.value(prefix + "intervalFrames", def.intervalFr).toInt(), 60000);
-    st.jitterFr = qBound(0, s.value(prefix + "jitterFrames", def.jitterFr).toInt(), 1000);
+    // десятые кадра; ключ 1.18.0 — целые кадры
+    auto frames = [&](const QString& key, int def10, int hi) {
+        const QVariant v = s.contains(prefix + key + "10") ? s.value(prefix + key + "10")
+                         : s.contains(prefix + key) ? QVariant(s.value(prefix + key).toInt() * kFrameUnit) : QVariant(def10);
+        return qBound(0, v.toInt(), hi);
+    };
+    st.startFr = frames("startFrames", def.startFr, kMaxStartDelayMs);
+    st.intervalFr = frames("intervalFrames", def.intervalFr, 60000);
+    st.jitterFr = frames("jitterFrames", def.jitterFr, 1000);
     st.soundOn = s.value(prefix + "soundOn", def.soundOn).toString().left(1000);
     st.soundOff = s.value(prefix + "soundOff", def.soundOff).toString().left(1000);
     return st;
@@ -940,7 +950,7 @@ static void writeGroups(QSettings& s, const QString& prefix, const QList<ActionG
         s.setValue(k + "name", g.name.trimmed().left(40));
         s.setValue(k + "steps", g.steps);
         if (g.betweenMs >= 0) s.setValue(k + "between", g.betweenMs);
-        if (g.betweenFr >= 0) s.setValue(k + "betweenFrames", g.betweenFr);
+        if (g.betweenFr >= 0) s.setValue(k + "betweenFrames10", g.betweenFr);     // десятые кадра
         QStringList items;
         for (const ActionStep& a : g.items)
             if (!a.isGroup()) items << encodeStep(a, g.steps);
@@ -962,7 +972,9 @@ static QList<ActionGroup> readGroups(QSettings& s, const QString& prefix) {
         g.steps = s.value(k + "steps", false).toBool();
         // нет ключа — группа из 1.17.0: паузу между повторами подберёт attachGroups
         g.betweenMs = s.contains(k + "between") ? qBound(0, s.value(k + "between").toInt(), 60000) : -1;
-        g.betweenFr = s.contains(k + "betweenFrames") ? qBound(0, s.value(k + "betweenFrames").toInt(), 60000) : -1;
+        g.betweenFr = s.contains(k + "betweenFrames10") ? qBound(0, s.value(k + "betweenFrames10").toInt(), 60000)
+                    : s.contains(k + "betweenFrames") ? qBound(0, s.value(k + "betweenFrames").toInt() * kFrameUnit, 60000)
+                    : -1;                                       // 1.18.0 — целые кадры
         for (const QString& e : s.value(k + "items").toStringList()) {
             ActionStep a;
             if (!decodeStep(e, &a) || a.isGroup() || g.items.size() >= (g.steps ? kMaxSteps : kMaxActions)) continue;
