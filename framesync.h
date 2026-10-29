@@ -20,9 +20,9 @@ namespace FrameSync {
     double meanCycleMs(const QList<ActionStep>& actions, int intervalMs, bool simultaneous, int jitterMs,
                        int minCycleMs);
     int frames(double cycleMs, double frameMs);  // целое число кадров на цикл (не меньше 1)
-    // «По кадрам»: средняя длина круга в кадрах игры. В actions «держать» и паузы — кадры
-    // (FrameUnits), interval — «повтор через» в кадрах; ожидание = интервал ± разброс (не
-    // меньше кадра, если интервал не 0), круг — не короче minCycle кадров (и не короче кадра)
+    // «По кадрам»: средняя длина круга в кадрах игры. Числа — в десятых кадра (FrameUnits):
+    // в actions «держать» и паузы, interval — «повтор через», разброс; ожидание = интервал ±
+    // разброс (не меньше 0,1 кадра, если интервал не 0), круг — не короче minCycle (и кадра)
     double meanCycleFrames(const QList<ActionStep>& actions, int interval, bool simultaneous, int jitter,
                            int minCycle);
     // Windows: период и момент последнего обновления экрана (DWM). Иначе false.
