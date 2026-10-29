@@ -1,5 +1,6 @@
 #include "core/cardlayout.h"
 #include "core/games.h"
+#include "core/appsettings.h"
 #include "core/i18n.h"
 #include <QJsonArray>
 #include <QJsonDocument>
