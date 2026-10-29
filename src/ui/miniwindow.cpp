@@ -8,6 +8,7 @@
 #include "ui/dialogs/keypicker.h"
 #include "ui/style/animations.h"
 #include "core/games.h"
+#include "core/appsettings.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGridLayout>
