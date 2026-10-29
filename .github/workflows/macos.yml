@@ -3,7 +3,7 @@
 # Результат: AutoQ-<версия>-macOS.dmg во вкладке Artifacts (и в Release для тега).
 # Одна сборка работает и на Apple Silicon (M1–M4), и на Intel — «универсальная».
 #
-# Подпись самоподписанным сертификатом (необязательно, см. macos/make-cert.sh):
+# Подпись самоподписанным сертификатом (необязательно, см. packaging/macos/make-cert.sh):
 #   секреты MAC_CERT_P12 (base64) и MAC_CERT_PASSWORD. Без них — ad-hoc.
 name: macOS
 
@@ -60,7 +60,7 @@ jobs:
           ARCHS: arm64;x86_64
         run: |
           set -o pipefail
-          ./macos/build-mac.sh 2>&1 | tee build.log
+          ./packaging/macos/build-mac.sh 2>&1 | tee build.log
 
       # ошибки — аннотациями: их видно на странице запуска и через API, без скачивания логов
       - name: Ошибки сборки

@@ -2,24 +2,26 @@
 // Собирается и под Linux, и под Windows (проверяется в Wine).
 #include <QCoreApplication>
 #include <QDir>
+#include <QDirIterator>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QSet>
 #include <QRegularExpression>
 #include <QFile>
 #include <QtEndian>
-#include "i18n.h"
-#include "tips.h"
-#include "sounds.h"
-#include "framesync.h"
-#include "cardlayout.h"
+#include "core/i18n.h"
+#include "core/tips.h"
+#include "core/sounds.h"
+#include "core/framesync.h"
+#include "core/cardlayout.h"
 #include <thread>
 #include <cstdio>
-#include "keys.h"
-#include "winmatch.h"
-#include "games.h"
-#include "clicker.h"
-#include "updates.h"
-#include "framewatch.h"
+#include "core/keys.h"
+#include "core/winmatch.h"
+#include "core/games.h"
+#include "core/clicker.h"
+#include "core/updates.h"
+#include "core/framewatch.h"
 #include <atomic>
 
 static int g_fail = 0, g_pass = 0;
@@ -665,6 +667,15 @@ static QString unescapeC(const QString& in) {
     return out;
 }
 
+// исходники во всех папках src/: пути относительно dir
+static QStringList sourceFiles(const QDir& dir, const QStringList& filters) {
+    QStringList out;
+    for (QDirIterator it(dir.path(), filters, QDir::Files, QDirIterator::Subdirectories); it.hasNext();)
+        out << dir.relativeFilePath(it.next());
+    out.sort();
+    return out;
+}
+
 static void testI18n() {
     CHECK(I18n::language() == I18n::Ru);
     CHECK(T("Старт") == QString::fromUtf8("Старт"));               // по умолчанию — как есть
@@ -682,14 +693,14 @@ static void testI18n() {
 
     // у каждой строки T("…") в исходниках есть перевод
     QDir dir(QStringLiteral(AQ_SOURCE_DIR));
-    if (!dir.exists("i18n_en.cpp")) { std::printf("  (исходники не найдены — проверка переводов пропущена)\n"); return; }
+    if (!dir.exists("core/i18n_en.cpp")) { std::printf("  (исходники не найдены — проверка переводов пропущена)\n"); return; }
     // T("…" "…") — соседние строки склеиваются, как у компилятора
     const QRegularExpression re(QStringLiteral("\\bT\\(\\s*((?:\"(?:[^\"\\\\]|\\\\.)*\"\\s*)+)\\)"));
     const QRegularExpression part(QStringLiteral("\"((?:[^\"\\\\]|\\\\.)*)\""));
     int found = 0;
     QStringList missing;
-    for (const QString& f : dir.entryList({"*.cpp", "*.h"}, QDir::Files)) {
-        if (f.startsWith("i18n")) continue;
+    for (const QString& f : sourceFiles(dir, {"*.cpp", "*.h"})) {
+        if (QFileInfo(f).fileName().startsWith("i18n")) continue;
         QFile file(dir.filePath(f));
         if (!file.open(QIODevice::ReadOnly)) continue;
         const QString src = QString::fromUtf8(file.readAll());
@@ -708,8 +719,8 @@ static void testI18n() {
     // и наоборот: в словаре нет строк, которых в исходниках уже нет (старые надписи)
     const QRegularExpression lit(QStringLiteral("((?:\"(?:[^\"\\\\\\n]|\\\\.)*\"\\s*)+)"));
     QSet<QString> literals;
-    for (const QString& f : dir.entryList({"*.cpp", "*.h", "*.mm"}, QDir::Files)) {
-        if (f.startsWith("i18n_en")) continue;
+    for (const QString& f : sourceFiles(dir, {"*.cpp", "*.h", "*.mm"})) {
+        if (QFileInfo(f).fileName().startsWith("i18n_en")) continue;
         QFile file(dir.filePath(f));
         if (!file.open(QIODevice::ReadOnly)) continue;
         const QString src = QString::fromUtf8(file.readAll());
@@ -1815,7 +1826,7 @@ static void testTips() {
     CHECK(Tips::get("groups.make").title == "Make a group from cards" && Tips::sections().first() == "Actions");
     I18n::setLanguage(I18n::Ru);
     // подсказки, на которые ссылается главное окно («?» и первое знакомство), — существуют
-    QFile mw(QDir(QStringLiteral(AQ_SOURCE_DIR)).filePath("mainwindow.cpp"));
+    QFile mw(QDir(QStringLiteral(AQ_SOURCE_DIR)).filePath("ui/mainwindow.cpp"));
     if (mw.open(QIODevice::ReadOnly)) {
         const QString src = QString::fromUtf8(mw.readAll());
         int refs = 0;

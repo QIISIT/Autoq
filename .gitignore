@@ -1,5 +1,5 @@
 build/
 build-*/
 dist-*/
-macos/cert/
+packaging/macos/cert/
 packaging/winget/manifests/

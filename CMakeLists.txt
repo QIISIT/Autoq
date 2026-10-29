@@ -22,66 +22,66 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 # Ядро без интерфейса: клавиши, база игр, распознавание окна, кликер, хоткей
 set(CORE_SOURCES
-    i18n.cpp        i18n.h          i18n_en.cpp
-    keys.cpp        keys.h
-    games.cpp       games.h
-    appsettings.cpp
-    winmatch.cpp    winmatch.h
-    clicker.cpp     clicker.h
-    hotkey.cpp      hotkey.h
-    sounds.cpp      sounds.h
-    framesync.cpp   framesync.h
-    framewatch.cpp  framewatch.h
-    cardlayout.cpp  cardlayout.h
-    updates.cpp     updates.h
-    tips.cpp        tips.h
+    src/core/i18n.cpp        src/core/i18n.h          src/core/i18n_en.cpp
+    src/core/keys.cpp        src/core/keys.h
+    src/core/games.cpp       src/core/games.h
+    src/core/appsettings.cpp
+    src/core/winmatch.cpp    src/core/winmatch.h
+    src/core/clicker.cpp     src/core/clicker.h
+    src/core/hotkey.cpp      src/core/hotkey.h
+    src/core/sounds.cpp      src/core/sounds.h
+    src/core/framesync.cpp   src/core/framesync.h
+    src/core/framewatch.cpp  src/core/framewatch.h
+    src/core/cardlayout.cpp  src/core/cardlayout.h
+    src/core/updates.cpp     src/core/updates.h
+    src/core/tips.cpp        src/core/tips.h
 )
 if(APPLE)
-    list(APPEND CORE_SOURCES macsupport.mm macsupport.h)
+    list(APPEND CORE_SOURCES src/platform/macos/macsupport.mm src/platform/macos/macsupport.h)
 endif()
 add_library(aq_core STATIC ${CORE_SOURCES})
 target_link_libraries(aq_core PUBLIC Qt6::Core)
-target_include_directories(aq_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(aq_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # Значки (логотип, иконки игр, интерфейс) — рисуются кодом
-add_library(aq_icons STATIC icons.cpp icons.h)
+add_library(aq_icons STATIC src/ui/style/icons.cpp src/ui/style/icons.h)
 target_link_libraries(aq_icons PUBLIC Qt6::Gui aq_core)
-target_include_directories(aq_icons PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 set(APP_SOURCES
-    main.cpp
-    appinfo.h
-    mainwindow.cpp      mainwindow.h
-    miniwindow.cpp      miniwindow.h
-    gameeditdialog.cpp  gameeditdialog.h
-    settingsdialog.cpp  settingsdialog.h
-    colorpicker.cpp     colorpicker.h
-    keypicker.cpp       keypicker.h
-    windowpicker.cpp    windowpicker.h
-    overlay.cpp         overlay.h
-    widgets.cpp         widgets.h
-    board.cpp           board.h
-    theme.cpp           theme.h
-    styles.cpp          styles.h
-    styleui.cpp         styleui.h
-    autostart.cpp       autostart.h
-    animations.cpp      animations.h
-    actionseditor.cpp   actionseditor.h
-    groupdialog.cpp     groupdialog.h
-    onboarding.cpp      onboarding.h
-    hotkeydialog.cpp    hotkeydialog.h
-    updater.cpp         updater.h
-    keycapturebutton.h
+    src/main.cpp
+    src/appinfo.h
+    src/ui/mainwindow.cpp              src/ui/mainwindow.h
+    src/ui/miniwindow.cpp              src/ui/miniwindow.h
+    src/ui/overlay.cpp                 src/ui/overlay.h
+    src/ui/onboarding.cpp              src/ui/onboarding.h
+    src/ui/actionseditor.cpp           src/ui/actionseditor.h
+    src/ui/board.cpp                   src/ui/board.h
+    src/ui/dialogs/settingsdialog.cpp  src/ui/dialogs/settingsdialog.h
+    src/ui/dialogs/gameeditdialog.cpp  src/ui/dialogs/gameeditdialog.h
+    src/ui/dialogs/groupdialog.cpp     src/ui/dialogs/groupdialog.h
+    src/ui/dialogs/hotkeydialog.cpp    src/ui/dialogs/hotkeydialog.h
+    src/ui/dialogs/keypicker.cpp       src/ui/dialogs/keypicker.h
+    src/ui/dialogs/windowpicker.cpp    src/ui/dialogs/windowpicker.h
+    src/ui/dialogs/colorpicker.cpp     src/ui/dialogs/colorpicker.h
+    src/ui/style/theme.cpp             src/ui/style/theme.h
+    src/ui/style/styles.cpp            src/ui/style/styles.h
+    src/ui/style/styleui.cpp           src/ui/style/styleui.h
+    src/ui/style/animations.cpp        src/ui/style/animations.h
+    src/ui/style/widgets.cpp           src/ui/style/widgets.h
+    src/ui/style/keycapturebutton.h
+    src/services/updater.cpp           src/services/updater.h
+    src/services/autostart.cpp         src/services/autostart.h
 )
 if(WIN32)
     enable_language(RC)
     # иконка exe, манифест (права администратора) и сведения о версии
-    list(APPEND APP_SOURCES windows/app.rc)
+    list(APPEND APP_SOURCES packaging/windows/app.rc)
 endif()
 if(APPLE)
     # окно с разрешениями macOS и значок программы (.icns в Contents/Resources)
-    list(APPEND APP_SOURCES macperm.cpp macperm.h macos/AutoQ.icns)
-    set_source_files_properties(macos/AutoQ.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    list(APPEND APP_SOURCES src/platform/macos/macperm.cpp src/platform/macos/macperm.h
+                            packaging/macos/AutoQ.icns)
+    set_source_files_properties(packaging/macos/AutoQ.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 endif()
 
 # WIN32 = GUI-приложение без чёрного окна консоли, MACOSX_BUNDLE = AutoQ.app
@@ -90,17 +90,18 @@ qt_add_executable(AutoQ WIN32 MACOSX_BUNDLE ${APP_SOURCES})
 target_link_libraries(AutoQ PRIVATE aq_core aq_icons Qt6::Widgets)
 
 # Встроенные шрифты (лицензия SIL OFL — тексты лицензий в resources/fonts)
+set(AQ_FONTS
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/Unbounded-Bold.ttf
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/Unbounded-Black.ttf
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/Onest-Regular.ttf
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/Onest-SemiBold.ttf
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/JetBrainsMono-Medium.ttf
+    ${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts/JetBrainsMono-Bold.ttf
+)
 qt_add_resources(AutoQ "aq_fonts"
     PREFIX "/"
-    BASE resources
-    FILES
-        resources/fonts/Unbounded-Bold.ttf
-        resources/fonts/Unbounded-Black.ttf
-        resources/fonts/Onest-Regular.ttf
-        resources/fonts/Onest-SemiBold.ttf
-        resources/fonts/JetBrainsMono-Medium.ttf
-        resources/fonts/JetBrainsMono-Bold.ttf
-)
+    BASE ${CMAKE_CURRENT_SOURCE_DIR}/resources
+    FILES ${AQ_FONTS})
 
 if(WIN32)
     target_link_libraries(aq_core PUBLIC winmm dwmapi advapi32 tdh)   # advapi32, tdh — ETW («По кадрам»)
@@ -114,7 +115,7 @@ elseif(APPLE)
                                          "-framework CoreFoundation")
     set_target_properties(AutoQ PROPERTIES
         OUTPUT_NAME AutoQ
-        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/macos/Info.plist.in
+        MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/packaging/macos/Info.plist.in
         MACOSX_BUNDLE_GUI_IDENTIFIER com.qisit.autoq
         MACOSX_BUNDLE_BUNDLE_NAME AutoQ
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}

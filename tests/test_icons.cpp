@@ -7,7 +7,7 @@
 #include <QCryptographicHash>
 #include <QBuffer>
 #include <cstdio>
-#include "icons.h"
+#include "ui/style/icons.h"
 
 static int g_fail = 0, g_pass = 0;
 #define CHECK(cond) do { if (cond) ++g_pass; else { ++g_fail; \

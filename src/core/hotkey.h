@@ -1,0 +1,53 @@
+#pragma once
+#include <atomic>
+#include <thread>
+#include <functional>
+#include <mutex>
+#include <vector>
+#include <QList>
+#include <QString>
+#include "core/keys.h"
+
+// Глобальные клавиши (работают, когда окно программы не в фокусе). Их может быть
+// несколько: у каждой игры своя клавиша старт/стоп, клавиши профилей и т.д.
+// Windows — RegisterHotKey, Linux — XGrabKey (X11/XWayland), macOS — CGEventTap.
+// Буквы, цифры, знаки и кнопки мыши (СКМ, Mouse 4/5) — «сквозные»: Windows —
+// хуки клавиатуры и мыши, Linux — сырые события XInput2, macOS — тот же
+// CGEventTap без перехвата; нажатие при этом доходит до игры.
+// Сообщает и нажатие, и отпускание — для режима «работает, пока держишь».
+class GlobalHotkey {
+public:
+    enum class Status { Ok, Busy, Invalid, Unavailable, Suspended };
+    // spec — какая клавиша из списка setBindings, down — нажата / отпущена
+    using Callback = std::function<void(const HotkeySpec& spec, bool down)>;
+
+    explicit GlobalHotkey(Callback cb, const QList<HotkeySpec>& bindings = {});
+    ~GlobalHotkey();
+
+    void setBindings(const QList<HotkeySpec>& specs);   // сменить на лету
+    QList<HotkeySpec> bindings() const;
+    void setSuspended(bool s);              // временно снять (пока ловим новую клавишу)
+    bool suspended() const { return suspended_; }
+    Status status(int id) const;
+    Status statusOf(const HotkeySpec& sp) const;   // Unavailable, если такой клавиши нет в списке
+    bool applied() const { return !rebind_; }      // новый список уже применён потоком
+
+    // Linux: обработчик ошибок X11, который не роняет программу
+    // (по умолчанию Xlib завершает процесс при любой ошибке). Вызвать в main().
+    static void installX11ErrorHandler();
+
+private:
+    void loop();
+    void fire(int id, bool down);
+    void setStatus(int id, Status s);
+    void resetStatuses(Status s);
+    Callback callback_;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> rebind_{true};
+    std::atomic<bool> suspended_{false};
+    std::thread worker_;
+    mutable std::mutex mutex_;
+    QList<HotkeySpec> specs_;
+    std::vector<Status> statuses_;
+    QList<HotkeySpec> active_;      // список, по которому сейчас стоят перехваты (только поток)
+};

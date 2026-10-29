@@ -6,11 +6,11 @@
 #include <QCoreApplication>
 #include <QThread>
 #include <cstdio>
-#include "keys.h"
-#include "clicker.h"
-#include "winmatch.h"
-#include "games.h"
-#include "hotkey.h"
+#include "core/keys.h"
+#include "core/clicker.h"
+#include "core/winmatch.h"
+#include "core/games.h"
+#include "core/hotkey.h"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
