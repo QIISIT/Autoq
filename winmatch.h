@@ -56,5 +56,11 @@ private:
     long long ownPid_ = 0;
 };
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+// X11: клавиатура (фокус X) у окна handle — у него самого, его дочернего окна или рамки
+// вокруг него. display — Display* (подойдёт любое соединение: номера окон у сервера общие)
+bool x11FocusIn(void* display, unsigned long long handle);
+#endif
+
 // Имя исполняемого файла этой программы (чтобы не "захватить" саму себя)
 QString ownProcessName();

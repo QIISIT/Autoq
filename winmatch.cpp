@@ -347,6 +347,34 @@ bool ActiveWindowProbe::exists(unsigned long long handle) {
     return XGetWindowAttributes(d, static_cast<Window>(handle), &wa) != 0;
 }
 
+// Верхнее окно над w: рамка менеджера окон вокруг него (или само окно, если рамки нет)
+static Window topLevelOf(Display* d, Window w) {
+    for (int guard = 0; guard < 16; ++guard) {
+        Window rr = 0, parent = 0, *kids = nullptr;
+        unsigned int n = 0;
+        if (!XQueryTree(d, w, &rr, &parent, &kids, &n)) break;
+        if (kids) XFree(kids);
+        if (!parent || parent == rr) break;
+        w = parent;
+    }
+    return w;
+}
+
+bool x11FocusIn(void* display, unsigned long long handle) {
+    Display* d = static_cast<Display*>(display);
+    if (!d) return true;
+    if (!handle) return false;
+    Window focus = None;
+    int revert = 0;
+    XGetInputFocus(d, &focus, &revert);
+    if (focus == static_cast<Window>(handle)) return true;
+    if (focus == None) return false;                  // клавиатура сейчас ни у кого
+    // PointerRoot или корень: клавиши идут окну под курсором — не знаем, не мешаем
+    if (focus == PointerRoot || focus == DefaultRootWindow(d)) return true;
+    // фокус в дочернем окне игры или в рамке вокруг неё
+    return topLevelOf(d, focus) == topLevelOf(d, static_cast<Window>(handle));
+}
+
 bool ActiveWindowProbe::pointerOver(unsigned long long handle) {
     Display* d = static_cast<Display*>(display_);
     if (!d || !handle) return false;
@@ -363,18 +391,7 @@ bool ActiveWindowProbe::pointerOver(unsigned long long handle) {
     if (!(x >= 0 && y >= 0 && x < wa.width && y < wa.height)) return false;
     // поверх игры под курсором другое окно (мини-окно AutoQ и т.п.) — клик ушёл бы в него.
     // Окна, прозрачные для мыши (оверлей КПС), сервер здесь не возвращает.
-    if (c) {
-        Window top = static_cast<Window>(handle);
-        for (int guard = 0; guard < 16; ++guard) {
-            Window rr = 0, parent = 0, *kids = nullptr;
-            unsigned int n = 0;
-            if (!XQueryTree(d, top, &rr, &parent, &kids, &n)) break;
-            if (kids) XFree(kids);
-            if (!parent || parent == rr) break;
-            top = parent;
-        }
-        if (top != c) return false;
-    }
+    if (c && topLevelOf(d, static_cast<Window>(handle)) != c) return false;
     return true;
 }
 
