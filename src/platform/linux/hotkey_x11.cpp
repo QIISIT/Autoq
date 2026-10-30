@@ -111,12 +111,30 @@ void GlobalHotkey::loop() {
         int hold = 0;          // KeyCode клавиши, которую держат («Tab+F»), 0 — обычный хоткей
         bool grabbed = false;  // XGrabKey / XGrabButton (иначе — сырые события)
         unsigned xmods = 0;
+        std::vector<unsigned> extra;   // те же перехваты с лишними модификаторами (GlobalHotkey::anyMods)
         bool down = false;
         bool fired = false;
         bool raw = false;      // нажал человек: решено по сырому событию, KeyPress/ButtonPress перехвата — не в счёт
     };
     std::vector<XBind> binds;
     bool rawSelected = false;
+    bool grabbedAny = anyMods();    // с какой настройкой «лишних модификаторов» стоят перехваты
+    // модификаторы подходят привязке: точно или с лишними — по настройке, и только когда на той
+    // же клавише нет привязки точнее (GlobalHotkey::modsMatch)
+    auto modsOk = [&](const XBind& b, int held) {
+        std::vector<int> sameKey;
+        for (const XBind& o : binds)
+            if (o.mouse == b.mouse && o.code == b.code && o.hold == b.hold) sameKey.push_back(o.mods);
+        return modsMatch(held, b.mods, sameKey);
+    };
+    auto xToMods = [&](unsigned state) {
+        int m = 0;
+        if (state & ControlMask) m |= ModCtrl;
+        if (state & Mod1Mask)    m |= ModAlt;
+        if (state & ShiftMask)   m |= ModShift;
+        if (state & Mod4Mask)    m |= ModWin;
+        return m;
+    };
     // Отпускание мимо нас не должно оставлять клавишу «зажатой»: XWayland, когда фокус уходит
     // в окно Wayland (Alt+Tab, Meta в KDE), отпускает клавиши без сырых событий — и F6 потом
     // считался бы Alt+F6. Сверяем с сервером: чего он зажатым не видит, того нет (keep — только что нажатая)
@@ -140,11 +158,15 @@ void GlobalHotkey::loop() {
 
     auto ungrab = [&]() {
         for (const XBind& b : binds) {
-            if (b.grabbed)
-                for (unsigned int v : lockVariants) {
-                    if (b.mouse) XUngrabButton(d, static_cast<unsigned>(b.code), b.xmods | v, root);
-                    else XUngrabKey(d, static_cast<KeyCode>(b.code), b.xmods | v, root);
-                }
+            if (b.grabbed) {
+                std::vector<unsigned> all = b.extra;
+                all.push_back(b.xmods);
+                for (unsigned x : all)
+                    for (unsigned int v : lockVariants) {
+                        if (b.mouse) XUngrabButton(d, static_cast<unsigned>(b.code), x | v, root);
+                        else XUngrabKey(d, static_cast<KeyCode>(b.code), x | v, root);
+                    }
+            }
             if (b.fired) fire(b.id, false);
         }
         binds.clear();
@@ -157,18 +179,56 @@ void GlobalHotkey::loop() {
         syncPressed(0);     // что за время паузы отпустили — забываем (зажатое осталось зажатым)
         const QList<HotkeySpec> specs = bindings();
         active_ = specs;
+        grabbedAny = anyMods();
         if (suspended_) { resetStatuses(Status::Suspended); return; }
         bool needButtons = false;
+        // перехваты: (кнопка мыши — со сдвигом, клавиша) + модификаторы X
+        auto grabKey = [](bool mouse, int code) { return (mouse ? 0x10000 : 0) | code; };
+        auto toX = [](int mods) {
+            unsigned x = 0;
+            if (mods & ModCtrl)  x |= ControlMask;
+            if (mods & ModAlt)   x |= Mod1Mask;
+            if (mods & ModShift) x |= ShiftMask;
+            if (mods & ModWin)   x |= Mod4Mask;
+            return x;
+        };
+        // свои сочетания других привязок (Shift+F6 у соседней) — их перехватит она сама
+        std::set<std::pair<int, unsigned>> own;
+        for (const HotkeySpec& sp : specs) {
+            if (!sp.isValid() || !sp.isGlobalSafe() || sp.passthrough()) continue;
+            if (sp.isMouse()) { own.insert({grabKey(true, sp.mouseButton()), toX(sp.mods)}); continue; }
+            const KeyDef* k = Keys::byName(sp.key);
+            if (const KeyCode kc = k ? XKeysymToKeycode(d, k->x11Sym) : 0) own.insert({grabKey(false, kc), toX(sp.mods)});
+        }
+        std::set<std::pair<int, unsigned>> taken;   // уже перехвачено с лишними модификаторами
+        // Shift+F6, Ctrl+F6… для привязки F6: без этого X отдал бы их игре, а Windows и macOS
+        // такое нажатие забирают. Занято другой программой — не беда, F6 видно и по сырому событию
+        auto grabExtra = [&](XBind& b) {
+            if (!grabbedAny) return;
+            const unsigned freeMods = relevant & ~b.xmods;
+            for (unsigned e = 1; e <= relevant; ++e) {
+                if ((e & freeMods) != e) continue;
+                const std::pair<int, unsigned> combo{grabKey(b.mouse, b.code), b.xmods | e};
+                if (own.count(combo) || !taken.insert(combo).second) continue;
+                for (unsigned int v : lockVariants) {
+                    if (b.mouse)
+                        XGrabButton(d, static_cast<unsigned>(b.code), combo.second | v, root, False,
+                                    ButtonPressMask | ButtonReleaseMask, GrabModeAsync, GrabModeAsync, None, None);
+                    else
+                        XGrabKey(d, static_cast<KeyCode>(b.code), combo.second | v, root, True, GrabModeAsync, GrabModeAsync);
+                }
+                b.extra.push_back(combo.second);
+            }
+            XSync(d, False);
+            g_grabFailed = false;
+        };
         for (int id = 0; id < specs.size(); ++id) {
             const HotkeySpec& sp = specs[id];
             if (!sp.isValid() || !sp.isGlobalSafe()) { setStatus(id, Status::Invalid); continue; }
             XBind b;
             b.id = id;
             b.mods = sp.mods;
-            if (sp.mods & ModCtrl)  b.xmods |= ControlMask;
-            if (sp.mods & ModAlt)   b.xmods |= Mod1Mask;
-            if (sp.mods & ModShift) b.xmods |= ShiftMask;
-            if (sp.mods & ModWin)   b.xmods |= Mod4Mask;
+            b.xmods = toX(sp.mods);
             if (sp.isMouse()) {
                 if (!xi2) { setStatus(id, Status::Unavailable); continue; }
                 b.mouse = true;
@@ -189,6 +249,7 @@ void GlobalHotkey::loop() {
                         continue;
                     }
                     b.grabbed = true;
+                    grabExtra(b);
                 }
                 binds.push_back(b);
                 setStatus(id, Status::Ok);
@@ -220,6 +281,7 @@ void GlobalHotkey::loop() {
                 continue;
             }
             b.grabbed = true;
+            grabExtra(b);
             // зажатое через переустановку — уже нажато: его автоповтор не новое нажатие (иначе клавиша
             // «используется», если её держать, переключала бы туда-сюда с частотой повтора)
             b.down = pressed.count(b.code) > 0;
@@ -233,7 +295,7 @@ void GlobalHotkey::loop() {
     // «держу A, жму B»: сработало ли сочетание на B (для обычного хоткея на той же клавише)
     auto chordOn = [&](int code) {
         for (const XBind& b : binds)
-            if (b.hold && !b.mouse && b.code == code && holdOk(b.hold) && modsNow() == b.mods) return true;
+            if (b.hold && !b.mouse && b.code == code && holdOk(b.hold) && modsOk(b, modsNow())) return true;
         return false;
     };
     auto rawEvent = [&](bool mouse, int code, bool down) {
@@ -243,7 +305,7 @@ void GlobalHotkey::loop() {
                 if (!b.hold || b.mouse || b.code != code) continue;
                 if (b.down) { chord = chord || b.fired; continue; }
                 b.down = true;
-                if (holdOk(b.hold) && modsNow() == b.mods) { b.fired = chord = true; fire(b.id, true); }
+                if (holdOk(b.hold) && modsOk(b, modsNow())) { b.fired = chord = true; fire(b.id, true); }
             }
         for (XBind& b : binds) {
             if (!down && !mouse && b.hold && b.hold == code && b.fired) {
@@ -260,7 +322,7 @@ void GlobalHotkey::loop() {
                 // прошлое нажатие (через XTEST) отпустили мимо нас — сначала «отпущено»
                 if (b.down && b.fired) fire(b.id, false);
                 b.down = b.raw = true;
-                b.fired = !chord && modsNow() == b.mods;
+                b.fired = !chord && modsOk(b, modsNow());
                 if (b.fired) fire(b.id, true);
             } else {
                 b.raw = false;
@@ -273,7 +335,7 @@ void GlobalHotkey::loop() {
 
     const bool debugHk = qEnvironmentVariableIsSet("AQ_DEBUG_HK");   // сырые события в stderr
     while (running_) {
-        if (rebind_.exchange(false)) apply();
+        if (rebind_.exchange(false) || grabbedAny != anyMods()) apply();
         while (XPending(d)) {
             XEvent ev;
             XNextEvent(d, &ev);
@@ -315,9 +377,9 @@ void GlobalHotkey::loop() {
             if (ev.type == ButtonPress) {
                 bool ours = false;
                 for (XBind& b : binds)
-                    if (b.grabbed && b.mouse && ev.xbutton.button == static_cast<unsigned>(b.code) &&
-                        (ev.xbutton.state & relevant) == b.xmods) {
-                        ours = true;
+                    if (b.grabbed && b.mouse && ev.xbutton.button == static_cast<unsigned>(b.code)) {
+                        ours = true;                    // перехват наш — мышь отпускаем в любом случае
+                        if (!modsOk(b, xToMods(ev.xbutton.state))) continue;
                         if (b.raw) continue;            // нажатие человека — уже по сырому событию (оно раньше)
                         // перехват срабатывает только на новое нажатие: если отпускание прошло
                         // мимо нас — сначала «отпущено», иначе клавиша срабатывала бы через раз
@@ -345,9 +407,9 @@ void GlobalHotkey::loop() {
                 // клавиша — вторая в сочетании, и первая зажата: сработало сочетание
                 const bool chord = chordOn(static_cast<int>(ev.xkey.keycode));
                 for (XBind& b : binds)
-                    if (b.grabbed && !b.mouse && ev.xkey.keycode == static_cast<unsigned>(b.code) &&
-                        (ev.xkey.state & relevant) == b.xmods) {
-                        ours = true;
+                    if (b.grabbed && !b.mouse && ev.xkey.keycode == static_cast<unsigned>(b.code)) {
+                        ours = true;                    // перехват наш — клавиатуру отпускаем в любом случае
+                        if (!modsOk(b, xToMods(ev.xkey.state))) continue;
                         if (b.down) continue;           // нажатие человека — уже по сырому событию (оно раньше) / автоповтор
                         b.down = true;
                         b.fired = !chord;
