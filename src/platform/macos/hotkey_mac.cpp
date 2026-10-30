@@ -52,6 +52,15 @@ int macMods(CGEventFlags f) {
     return m;
 }
 
+// модификаторы подходят привязке: точно или с лишними — по настройке, и только когда на той
+// же клавише нет привязки точнее (GlobalHotkey::modsMatch)
+bool macModsOk(const MacTap* t, const MacBind& b, int held) {
+    std::vector<int> sameKey;
+    for (const MacBind& o : t->binds)
+        if (o.mouse == b.mouse && o.code == b.code && o.hold == b.hold) sameKey.push_back(o.mods);
+    return GlobalHotkey::modsMatch(held, b.mods, sameKey);
+}
+
 CGEventRef macTapCallback(CGEventTapProxy, CGEventType type, CGEventRef ev, void* refcon) {
     auto* t = static_cast<MacTap*>(refcon);
     if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
@@ -81,7 +90,7 @@ CGEventRef macTapCallback(CGEventTapProxy, CGEventType type, CGEventRef ev, void
     bool chord = false;
     if (down && key)
         for (MacBind& b : t->binds) {
-            if (b.hold < 0 || b.mouse || b.code != code || mods != b.mods) continue;
+            if (b.hold < 0 || b.mouse || b.code != code || !macModsOk(t, b, mods)) continue;
             if (b.down || repeat) { chord = chord || b.fired; continue; }
             b.down = true;
             if (macHoldOk(t, b.hold)) {
@@ -102,7 +111,7 @@ CGEventRef macTapCallback(CGEventTapProxy, CGEventType type, CGEventRef ev, void
             // повтор нажатия: как решили при нажатии, какие бы модификаторы ни были сейчас
             // (Ctrl отпустили раньше Q — повторы Q всё равно наши, раз наше и отпускание)
             if (b.down || repeat) { if (b.swallowUp) swallow = true; continue; }
-            if (mods != b.mods) continue;
+            if (!macModsOk(t, b, mods)) continue;
             b.down = true;
             b.fired = !chord;
             if (b.fired && t->fire) t->fire(b.id, true);

@@ -14,6 +14,7 @@
 #include "ui/style/styleui.h"
 #include "services/updater.h"
 #include "core/tips.h"
+#include "core/hotkey.h"
 #include <QMenu>
 #include <QApplication>
 #include <QGuiApplication>
@@ -309,6 +310,12 @@ QWidget* SettingsDialog::buildGeneralPage() {
         Prefs::mouseOnlyOverGame(), [](bool v) { Prefs::setMouseOnlyOverGame(v); });
     row(T("Выключать кликер, когда окно игры закрылось"), T("Игру закрыли или она вылетела — кликер останавливается сам"),
         Prefs::stopOnGameClose(), [](bool v) { Prefs::setStopOnGameClose(v); });
+    row(T("Клавиша старт/стоп работает, даже если зажат Shift, Ctrl или Alt"),
+        T("Например, в Minecraft держишь Shift или Ctrl и жмёшь F6 — кликер всё равно включится.\nТо же для клавиш профилей. Если есть и своё сочетание (Shift+F6), сработает оно.\nВыключи — клавиша будет срабатывать, только когда больше ничего не зажато."),
+        Prefs::hotkeyAnyMods(), [](bool v) {
+            Prefs::setHotkeyAnyMods(v);
+            GlobalHotkey::setAnyMods(v);
+        });
 
     // --- звук при включении и выключении кликера: свой для «вкл» и для «выкл»
     lay->addWidget(mkLabel(T("Звук"), "fieldLabel"));

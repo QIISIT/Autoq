@@ -17,6 +17,7 @@
 #include <thread>
 #include <cstdio>
 #include "core/keys.h"
+#include "core/hotkey.h"
 #include "core/winmatch.h"
 #include "core/games.h"
 #include "core/appsettings.h"
@@ -137,6 +138,28 @@ static void testHotkeys() {
         CHECK(!m4.passthrough() && !z.passthrough() && !f6.passthrough());
         CHECK(chord.passthrough());                                  // сочетание — всегда сквозное
         CHECK(m4 == HotkeySpec::parse("mouse:8") && m4.toString() == "mouse:8");   // в == и строке block нет
+    }
+    // 1.18.3: лишние модификаторы (Shift — присесть в Minecraft) не мешают; точное сочетание важнее
+    {
+        CHECK(GlobalHotkey::anyMods());                                          // по умолчанию — включено
+        CHECK(GlobalHotkey::modsMatch(0, 0) && GlobalHotkey::modsMatch(ModShift, 0));
+        CHECK(GlobalHotkey::modsMatch(ModShift | ModCtrl, 0, {0}));
+        CHECK(GlobalHotkey::modsMatch(ModShift | ModCtrl, ModCtrl));
+        CHECK(!GlobalHotkey::modsMatch(0, ModCtrl) && !GlobalHotkey::modsMatch(ModShift, ModCtrl));
+        // F6 и Shift+F6: Shift+F6 — только своё, Ctrl+F6 — у F6, Ctrl+Shift+F6 — у Shift+F6
+        const std::vector<int> f6{0, ModShift};
+        CHECK(!GlobalHotkey::modsMatch(ModShift, 0, f6) && GlobalHotkey::modsMatch(ModShift, ModShift, f6));
+        CHECK(GlobalHotkey::modsMatch(ModCtrl, 0, f6) && !GlobalHotkey::modsMatch(ModCtrl, ModShift, f6));
+        CHECK(!GlobalHotkey::modsMatch(ModCtrl | ModShift, 0, f6) && GlobalHotkey::modsMatch(ModCtrl | ModShift, ModShift, f6));
+        CHECK(GlobalHotkey::modsMatch(0, 0, f6) && !GlobalHotkey::modsMatch(0, ModShift, f6));
+        // две одинаковые (у двух игр F6) — срабатывают обе, как раньше
+        CHECK(GlobalHotkey::modsMatch(ModAlt, 0, {0, 0}));
+        // выключено — только точное совпадение
+        GlobalHotkey::setAnyMods(false);
+        CHECK(!GlobalHotkey::anyMods());
+        CHECK(GlobalHotkey::modsMatch(0, 0) && !GlobalHotkey::modsMatch(ModShift, 0));
+        CHECK(GlobalHotkey::modsMatch(ModShift, ModShift, f6) && !GlobalHotkey::modsMatch(ModShift | ModCtrl, ModShift, f6));
+        GlobalHotkey::setAnyMods(true);
     }
     // вся клавиатура для выбора: без Shift/Ctrl/Alt, все годятся, у всех есть группа
     const QStringList all = Keys::hotkeyKeyNames();
@@ -426,6 +449,10 @@ static void testV15() {
     Prefs::setMouseOnlyOverGame(false);
     CHECK(!Prefs::mouseOnlyOverGame());
     Prefs::setMouseOnlyOverGame(true);
+    CHECK(Prefs::hotkeyAnyMods());                     // 1.18.3: по умолчанию — включено
+    Prefs::setHotkeyAnyMods(false);
+    CHECK(!Prefs::hotkeyAnyMods());
+    Prefs::setHotkeyAnyMods(true);
     { auto s = AppSettings::open(); s->setValue("captureSeconds", 999); s->sync(); }
     CHECK(Prefs::captureSeconds() == 3);
     { auto s = AppSettings::open(); s->setValue("captureSeconds", "abc"); s->sync(); }

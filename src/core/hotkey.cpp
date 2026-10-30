@@ -2,6 +2,18 @@
 #include <chrono>
 #include <algorithm>
 #include <iterator>
+#include <bitset>
+
+std::atomic<bool> GlobalHotkey::anyMods_{true};
+
+bool GlobalHotkey::modsMatch(int held, int need, const std::vector<int>& sameKey) {
+    auto fits = [held](int m) { return anyMods_ ? (held & m) == m : held == m; };
+    if (!fits(need)) return false;
+    auto count = [](int m) { return std::bitset<8>(static_cast<unsigned>(m) & 0xFFu).count(); };
+    for (int other : sameKey)
+        if (fits(other) && count(other) > count(need)) return false;
+    return true;
+}
 
 GlobalHotkey::GlobalHotkey(Callback cb, const QList<HotkeySpec>& bindings) : callback_(std::move(cb)) {
     specs_ = bindings;

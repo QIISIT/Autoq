@@ -57,6 +57,19 @@ int currentMods() {
     return m;
 }
 
+// модификаторы подходят привязке: точно или с лишними — по настройке, и только когда на той
+// же клавише нет привязки точнее (GlobalHotkey::modsMatch). Клавиши — из обоих списков: «E»
+// (хук) молчит, когда нажали Ctrl+E и он есть у RegisterHotKey
+bool modsOk(const LLBind& b, bool mouse, int held) {
+    std::vector<int> sameKey;
+    for (const auto* list : {&g_llKeys, &g_llReg, &g_llMouse}) {
+        if ((list == &g_llMouse) != mouse) continue;
+        for (const LLBind& o : *list)
+            if (o.code == b.code && o.hold == b.hold) sameKey.push_back(o.mods);
+    }
+    return GlobalHotkey::modsMatch(held, b.mods, sameKey);
+}
+
 // true — нажатие забираем себе (не отдаём игре и системе)
 bool llEvent(std::vector<LLBind>& binds, unsigned code, bool down) {
     bool swallow = false;
@@ -67,7 +80,7 @@ bool llEvent(std::vector<LLBind>& binds, unsigned code, bool down) {
             if (!b.hold || b.code != code) continue;
             if (b.down) { chord = chord || b.fired; continue; }    // автоповтор
             b.down = true;
-            if (holdOk(b.hold) && currentMods() == b.mods) {
+            if (holdOk(b.hold) && modsOk(b, &binds == &g_llMouse, currentMods())) {
                 b.fired = chord = true;
                 g_llEvents.push_back({b.id, true});
             }
@@ -76,7 +89,7 @@ bool llEvent(std::vector<LLBind>& binds, unsigned code, bool down) {
             if (b.hold || b.code != code) continue;
             if (b.down) { swallow = swallow || b.swallowUp; continue; }    // автоповтор — как само нажатие
             b.down = true;
-            if (!chord && currentMods() == b.mods) { b.fired = true; g_llEvents.push_back({b.id, true}); }
+            if (!chord && modsOk(b, &binds == &g_llMouse, currentMods())) { b.fired = true; g_llEvents.push_back({b.id, true}); }
             b.swallowUp = b.block && b.fired;
             swallow = swallow || b.swallowUp;
         }
@@ -115,7 +128,9 @@ bool llRegistered(unsigned code, bool down) {
         }
         if (b.down) { swallow = swallow || b.swallowUp; continue; }    // автоповтор — как само нажатие
         b.down = true;
-        const bool human = currentMods() == b.mods, system = systemMods() == b.mods;
+        // RegisterHotKey сверяет модификаторы точно; человек — как в настройке (лишние Shift/Ctrl
+        // не мешают — тогда F6 при зажатом Shift ловим отсюда)
+        const bool human = modsOk(b, false, currentMods()), system = systemMods() == b.mods;
         if (human == system) continue;                                 // решит RegisterHotKey
         b.swallowUp = true;
         b.fired = human;
@@ -263,7 +278,7 @@ void GlobalHotkey::loop() {
                 if (id >= 0 && id < static_cast<int>(regVk.size()))
                     for (const LLBind& b : g_llKeys)
                         already = already || (b.hold && b.code == regVk[static_cast<size_t>(id)] &&
-                                              holdOk(b.hold) && currentMods() == b.mods);
+                                              holdOk(b.hold) && modsOk(b, false, currentMods()));
                 if (!already && id >= 0 && id < static_cast<int>(regVk.size())) {
                     held.push_back({id, regVk[static_cast<size_t>(id)]});
                     fire(id, true);

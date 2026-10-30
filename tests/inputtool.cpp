@@ -125,10 +125,14 @@ int main(int argc, char** argv) {
         QThread::msleep(args.value(2, "10").toInt() * 1000);
         return 0;
     }
-    // listen <секунд> <хоткей> [хоткей…] — печатать, какие хоткеи нажаты / отпущены
+    // listen <секунд> [--strict] <хоткей> [хоткей…] — печатать, какие хоткеи нажаты / отпущены
+    // (--strict — лишние Shift/Ctrl/Alt мешают, как при выключенной настройке)
     if (args[0] == "listen") {
         QList<HotkeySpec> specs;
-        for (int i = 2; i < args.size(); ++i) specs << HotkeySpec::parse(args[i]);
+        for (int i = 2; i < args.size(); ++i) {
+            if (args[i] == "--strict") GlobalHotkey::setAnyMods(false);
+            else specs << HotkeySpec::parse(args[i]);
+        }
         GlobalHotkey hk([](const HotkeySpec& sp, bool down) {
             std::printf("%s %s\n", qPrintable(sp.toString()), down ? "down" : "up");
             std::fflush(stdout);

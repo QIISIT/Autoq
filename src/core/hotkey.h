@@ -37,6 +37,15 @@ public:
     // Linux: обработчик ошибок X11, который не роняет программу и узнаёт, что клавиша занята
     static void init();
 
+    // Лишние модификаторы: в игре держат Shift (присесть) или Ctrl (бег) и жмут F6 — включено,
+    // F6 срабатывает и так; выключено — только когда, кроме F6, ничего не зажато.
+    static void setAnyMods(bool on) { anyMods_ = on; }
+    static bool anyMods() { return anyMods_; }
+    // Подходят ли зажатые модификаторы held привязке с mods need. sameKey — модификаторы всех
+    // привязок на той же клавише (можно и её саму): из подходящих срабатывает самая точная —
+    // при F6 и Shift+F6 нажатие Shift+F6 включит только Shift+F6.
+    static bool modsMatch(int held, int need, const std::vector<int>& sameKey = {});
+
 private:
     void loop();
     void fire(int id, bool down);
@@ -51,4 +60,5 @@ private:
     QList<HotkeySpec> specs_;
     std::vector<Status> statuses_;
     QList<HotkeySpec> active_;      // список, по которому сейчас стоят перехваты (только поток)
+    static std::atomic<bool> anyMods_;
 };
