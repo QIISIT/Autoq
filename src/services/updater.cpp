@@ -260,7 +260,11 @@ void Updater::download(bool installAfter) {
     const Updates::Asset asset = *a;
     const QString part = dir + "/" + asset.name + ".part";
     setState(State::Downloading);
-    run(curl, {"-fsSL", "--retry", "2", "--max-time", "900", "-o", QDir::toNativeSeparators(part), asset.url}, 960000,
+    // Связь с GitHub бывает, а данные не идут (соединение повисло): не ждём до конца --max-time, а
+    // обрываем через 15 с без соединения или 30 с почти без данных (меньше 1 КБ/с) — и curl
+    // начинает загрузку заново (--retry: обрыв по времени для него временная ошибка)
+    run(curl, {"-fsSL", "--retry", "3", "--connect-timeout", "15", "--speed-limit", "1024", "--speed-time", "30",
+               "--max-time", "900", "-o", QDir::toNativeSeparators(part), asset.url}, 960000,
         [this, part, asset, installAfter](bool ok, const QByteArray&) {
             if (!ok) { QFile::remove(part); fail(T("Не удалось скачать обновление — нет связи с GitHub.")); return; }
             downloaded(part, asset, installAfter);
