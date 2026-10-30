@@ -291,6 +291,8 @@ bool Prefs::stopOnGameClose() { return prefBool("stopOnGameClose", true); }
 void Prefs::setStopOnGameClose(bool on) { setPrefBool("stopOnGameClose", on); }
 bool Prefs::mouseOnlyOverGame() { return prefBool("mouseOnlyOverGame", true); }
 void Prefs::setMouseOnlyOverGame(bool on) { setPrefBool("mouseOnlyOverGame", on); }
+bool Prefs::hotkeyAnyMods() { return prefBool("hotkeyAnyMods", true); }
+void Prefs::setHotkeyAnyMods(bool on) { setPrefBool("hotkeyAnyMods", on); }
 bool Prefs::miniOnTop() { return prefBool("miniOnTop", true); }
 void Prefs::setMiniOnTop(bool on) { setPrefBool("miniOnTop", on); }
 bool Prefs::elevateAtStart() { return prefBool("elevateAtStart", true); }

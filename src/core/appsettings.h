@@ -48,6 +48,8 @@ namespace Prefs {
     void setStopOnGameClose(bool on);
     bool mouseOnlyOverGame();             // мышью — только когда курсор над окном игры
     void setMouseOnlyOverGame(bool on);
+    bool hotkeyAnyMods();                 // клавиши AutoQ срабатывают и при зажатом Shift/Ctrl/Alt
+    void setHotkeyAnyMods(bool on);
     bool miniOnTop();                     // мини-окно поверх всех окон
     void setMiniOnTop(bool on);
     bool elevateAtStart();                // Windows: просить права администратора при запуске (окно UAC)
