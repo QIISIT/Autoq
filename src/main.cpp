@@ -139,6 +139,7 @@ int main(int argc, char** argv) {
     MainWindow w;
 
     // глобальные клавиши: какие именно — решает главное окно (у каждой игры своя)
+    GlobalHotkey::setAnyMods(Prefs::hotkeyAnyMods());
     GlobalHotkey hk([&w](const HotkeySpec& sp, bool down) {
         const QString spec = sp.toString();
         QMetaObject::invokeMethod(&w, [&w, spec, down]() { w.onHotkeyEvent(spec, down); }, Qt::QueuedConnection);
