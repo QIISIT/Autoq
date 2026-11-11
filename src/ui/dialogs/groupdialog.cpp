@@ -77,8 +77,9 @@ GroupDialog::Result GroupDialog::edit(QWidget* parent, ActionGroup& g, int uses,
     splitNote->setWordWrap(true);
     splitNote->setVisible(split);
     lay->addWidget(splitNote);
-    auto* pauses = mkLabel(T("«Повтор через» — пауза между повторами (×N на карточке группы). Пауза после группы в ряду "
-                             "ждёт один раз, после последнего повтора, и скорость группы не меняет."), "small");
+    auto* pauses = mkLabel(T("«Повтор через» — пауза между повторами (×N на карточке группы); она же — «повтор через» "
+                             "на самой карточке. Пауза после группы в ряду ждёт один раз, после последнего повтора, "
+                             "и скорость группы не меняет."), "small");
     pauses->setWordWrap(true);
     lay->addWidget(pauses);
     auto* note = mkLabel(isNew

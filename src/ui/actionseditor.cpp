@@ -215,8 +215,10 @@ void ActionsEditor::rebuild() {
     // у действия рядом с клавишей — «держать»; «Уже» / «Шире» — вид шагов в редакторе
     const int slotSize = Theme::element("slot").size;
     const int slotW = (steps() || hold ? 176 : 206) + (slotSize == 0 ? -20 : slotSize == 2 ? 36 : 0);
-    // вызов группы — не уже карточки действия: имени и «×N» нужно место и в ряду шагов
-    const int callW = qMax(slotW, 206 + (slotSize == 0 ? -20 : slotSize == 2 ? 36 : 0));
+    // вызов группы — не уже карточки действия: имени и «×N» нужно место и в ряду шагов;
+    // с «повтор через» — шире на его поле («1,5 кадр.» длиннее, чем «100 мс»)
+    const int everyW = frames_ ? 86 : 76;
+    const int callW = qMax(slotW, 206 + (slotSize == 0 ? -20 : slotSize == 2 ? 36 : 0)) + (repeats ? everyW + 6 : 0);
     builtLook_ = lookKey();
 
     // старт через N мс (у группы — нет: она начинается там, где стоит в ряду)
@@ -267,6 +269,12 @@ void ActionsEditor::rebuild() {
             ui.caption->setObjectName("small");
             ui.caption->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
             g->addWidget(ui.caption, 0, 1, Qt::AlignVCenter);
+            if (repeats) {
+                // подпись над паузой между повторами — как «держать» у действия
+                ui.everyCap = new QLabel(T("повтор через"));
+                ui.everyCap->setObjectName("small");
+                g->addWidget(ui.everyCap, 0, 2, Qt::AlignRight | Qt::AlignVCenter);
+            }
         } else if (hold) {
             ui.caption = new QLabel(T("зажать"));
             ui.caption->setObjectName("small");
@@ -311,12 +319,18 @@ void ActionsEditor::rebuild() {
             vr->addWidget(ui.groupName, 1);
             if (repeats) {
                 ui.repeat = new QSpinBox();
+                ui.repeat->setObjectName("groupRepeat");
                 ui.repeat->setRange(1, kMaxRepeat);
                 ui.repeat->setPrefix(QStringLiteral("×"));
                 ui.repeat->setFixedWidth(64);
-                ui.repeat->setToolTip(T("Сколько раз подряд выполнить группу"));
+                ui.repeat->setToolTip(T("Сколько раз подряд выполнить группу. Пауза между повторами — «повтор через» рядом"));
                 ui.repeat->setAccessibleName(ui.repeat->toolTip());
                 vr->addWidget(ui.repeat);
+                // пауза между повторами — тут же, а не только в окне группы (подсказка — в updateRepeat)
+                ui.every = smallSpin(0, 60000, QString());
+                ui.every->setObjectName("groupEvery");
+                ui.every->setFixedWidth(everyW);
+                vr->addWidget(ui.every);
             }
         } else {
             ui.value = new KeyPicker();
@@ -349,7 +363,7 @@ void ActionsEditor::rebuild() {
             if (paused) {
                 ui.after = smallSpin(0, 60000, call
                     ? T("Пауза после группы — после её последнего повтора, перед следующим в ряду. Скорость самой группы не меняет: "
-                        "паузу между повторами задаёт «повтор через» в окне группы")
+                        "паузу между повторами задаёт «повтор через» на её карточке")
                     : steps()
                     ? T("Пауза после шага %1 перед шагом %2 (щёлкни по полю — и колёсиком быстро менять)").arg(i + 1).arg(i + 2)
                     : T("Пауза после действия %1 перед действием %2 (щёлкни по полю — и колёсиком быстро менять)").arg(i + 1).arg(i + 2));
@@ -430,6 +444,8 @@ void ActionsEditor::rebuild() {
             connect(ui.after, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, i](int v) {
                 if (loading_ || i >= actions_.size()) return;
                 actions_[i].afterMs = v;
+                // группа из 1.17.0 без своей паузы: между повторами — эта же пауза
+                if (i < slots_.size() && slots_[i].every) updateRepeat(slots_[i], actions_[i]);
                 edited();
             });
         if (ui.groupName)
@@ -438,16 +454,22 @@ void ActionsEditor::rebuild() {
             connect(ui.repeat, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, i](int v) {
                 if (loading_ || i >= actions_.size()) return;
                 actions_[i].repeat = v;
+                if (i < slots_.size()) updateRepeat(slots_[i], actions_[i]);    // ×1 — «повтор через» не нужен
                 if (repeatSpin_ && repeatSpin_->minimum() != repeatMin()) {
                     QSignalBlocker b(repeatSpin_);
                     repeatSpin_->setMinimum(repeatMin());
                 }
                 edited();
             });
+        if (ui.every)
+            connect(ui.every, QOverload<int>::of(&QSpinBox::valueChanged), this, [this, i](int v) {
+                if (!loading_) setEvery(i, v);
+            });
         if (ui.remove)
             connect(ui.remove, &QToolButton::clicked, this, [this, i]() { later([this, i]() { removeAt(i); }); });
     }
-    if (n < maxItems()) {
+    const bool full = n >= maxItems();
+    {
         add_ = new SizedButton(QSize(n == 1 ? slotW : 96, slotH_));
         add_->setObjectName("addSecond");
         add_->setProperty("aqEl", "add");
@@ -460,9 +482,19 @@ void ActionsEditor::rebuild() {
         connect(add_, &QPushButton::clicked, this, [this]() {
             later([this]() { insertAt(actions_.size(), newItem()); });
         });
+        if (full) {
+            // ряд полон: кнопка остаётся на месте и говорит почему (пропала бы молча — непонятно,
+            // куда делась и что делать дальше)
+            add_->setEnabled(false);
+            QString why = steps() ? T("Шагов уже %1 — больше в ряд не добавить.").arg(n)
+                                  : T("Действий уже %1 — больше в ряд не добавить.").arg(n);
+            if (canGroup())
+                why += ' ' + T("Часть карточек можно собрать в группу (Ctrl + щелчок): группа в ряду — одна карточка, и её можно повторять ×N.");
+            add_->setToolTip(why);
+        }
         flow_->addWidget(add_);
-        // группы — рядом с «добавить», всегда: создать новую или поставить готовую (из любой игры)
-        if (canGroup()) {
+        // группы — рядом с «добавить»: создать новую или поставить готовую (из любой игры)
+        if (canGroup() && !full) {
             groupAdd_ = new SizedButton(QSize(96, slotH_));
             groupAdd_->setObjectName("addSecond");
             groupAdd_->setProperty("aqEl", "add");
@@ -1178,6 +1210,41 @@ void ActionsEditor::openModePlate(int i) {
     });
 }
 
+// Карточка группы: «×N» и «повтор через» — пауза между повторами. При ×1 повторов нет:
+// поле паузы на месте (видно, где она задаётся), но серое
+void ActionsEditor::updateRepeat(SlotUi& ui, const ActionStep& a) {
+    if (ui.repeat && ui.repeat->value() != a.repeat) { QSignalBlocker b(ui.repeat); ui.repeat->setValue(a.repeat); }
+    if (!ui.every) return;
+    const ActionGroup* g = Groups::find(groups_, a.group);
+    const int between = g ? Groups::betweenMs(*g, a) : 0;
+    if (ui.every->value() != between) { QSignalBlocker b(ui.every); ui.every->setValue(between); }
+    const bool on = g && a.repeat > 1;
+    ui.every->setEnabled(on);
+    const QString tip = !g ? QString()
+        : on ? T("Пауза между повторами группы — через сколько её повторять. Это пауза самой группы: "
+                 "то же число на всех её карточках, и в других играх тоже")
+             : T("Пауза между повторами группы. Сейчас ×1 — повторов нет: поставь ×2 или больше");
+    if (ui.every->toolTip() != tip) {
+        ui.every->setToolTip(tip);
+        ui.every->setAccessibleName(tip);
+    }
+}
+
+// «Повтор через» на карточке группы — пауза самой группы (та же, что «повтор через» в её
+// окне): одна на все её карточки — здесь и в других играх. Поменяли на одной карточке —
+// то же число на остальных карточках этой группы
+void ActionsEditor::setEvery(int i, int v) {
+    if (i < 0 || i >= actions_.size() || !actions_[i].isGroup()) return;
+    const QString id = actions_[i].group;
+    bool found = false;
+    for (ActionGroup& g : groups_)
+        if (g.id == id) { g.betweenMs = qBound(0, v, 60000); found = true; break; }
+    if (!found) return;
+    for (int k = 0; k < slots_.size() && k < actions_.size(); ++k)
+        if (k != i && actions_[k].group == id) updateRepeat(slots_[k], actions_[k]);
+    edited();
+}
+
 void ActionsEditor::updateValues() {
     loading_ = true;
     // «отпустить» без «нажать» — по тому, что жмёт кликер (внутри групп тоже), на карточке-хозяине
@@ -1199,17 +1266,11 @@ void ActionsEditor::updateValues() {
             const QString pv = g ? Groups::preview(view, 6) : QString();
             // кнопка и подпись сами не сокращают текст — по ширине карточки
             const int cardW = ui.frame->width();
-            const int nameW = cardW - 16 - (ui.repeat ? 70 : 0) - 40;
+            const int nameW = cardW - 16 - (ui.repeat ? 70 : 0) - (ui.every ? ui.every->maximumWidth() + 6 : 0) - 40;
             ui.groupName->setText(ui.groupName->fontMetrics().elidedText(name, Qt::ElideRight, qMax(30, nameW)));
-            ui.caption->setText(ui.caption->fontMetrics().elidedText(pv.isEmpty() ? T("пусто") : pv, Qt::ElideRight,
-                                                                     qMax(30, cardW - 16 - 14 - 22 - 12)));
-            if (ui.repeat && ui.repeat->value() != a.repeat) { QSignalBlocker b(ui.repeat); ui.repeat->setValue(a.repeat); }
-            if (ui.repeat && g) {
-                const QString tip = T("Сколько раз подряд выполнить группу. Между повторами — %1 мс (меняется в окне группы)")
-                                        .arg(Groups::betweenMs(*g, a));
-                ui.repeat->setToolTip(tip);
-                ui.repeat->setAccessibleName(tip);
-            }
+            const int capW = cardW - 16 - 14 - 22 - 12 - (ui.everyCap ? ui.everyCap->sizeHint().width() + 4 : 0);
+            ui.caption->setText(ui.caption->fontMetrics().elidedText(pv.isEmpty() ? T("пусто") : pv, Qt::ElideRight, qMax(30, capW)));
+            updateRepeat(ui, a);
             if (ui.after && ui.after->value() != a.afterMs) { QSignalBlocker b(ui.after); ui.after->setValue(a.afterMs); }
             const bool warn = stray.contains(i);
             if (ui.frame->property("warn").toBool() != warn) {

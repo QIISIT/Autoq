@@ -1107,16 +1107,21 @@ struct ProfileFile { QString name, path; };
 
 // Список файлов профилей игры. Читается заново, если папку меняли (или прошло 2 с —
 // файлы могли поправить руками); свои записи сбрасывают кэш сразу.
+// Время изменения папки идёт шагами (у ext4 и NTFS — до ~10 мс): файл, убранный в тот же
+// шаг, что и прошлая правка, его не меняет. Поэтому список, прочитанный сразу после правки
+// папки, не запоминается (at = 0) — следующий вызов прочтёт её снова. Время из будущего
+// (часы перевели назад) — не «только что»: новая правка поставит нынешнее, и это будет видно
 struct ProfileCache { QString dir; QDateTime mtime; qint64 at = 0; QList<ProfileFile> list; };
 QHash<QString, ProfileCache>& profileCache() { static QHash<QString, ProfileCache> c; return c; }
 void dropProfileCache(const QString& gameId) { profileCache().remove(gameId); }
 
 QList<ProfileFile> profileFiles(const QString& gameId) {
     const QString dirPath = profileDir(gameId);
-    const QFileInfo di(dirPath);
+    // время папки — до её чтения: что поменяют, пока читаем, заметит следующий вызов
+    const QDateTime mtime = QFileInfo(dirPath).lastModified();
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     ProfileCache& c = profileCache()[gameId];
-    if (c.dir == dirPath && c.at && now - c.at < 2000 && c.mtime == di.lastModified()) return c.list;
+    if (c.dir == dirPath && c.at && now - c.at < 2000 && c.mtime == mtime) return c.list;
     QList<ProfileFile> out;
     QDir dir(dirPath);
     for (const QFileInfo& fi : dir.entryInfoList({"*.ini"}, QDir::Files, QDir::Name)) {
@@ -1135,7 +1140,8 @@ QList<ProfileFile> profileFiles(const QString& gameId) {
         for (int i = 2; taken(n); ++i) n = QString("%1 (%2)").arg(base).arg(i);
         out << ProfileFile{n, fi.absoluteFilePath()};
     }
-    c = ProfileCache{dirPath, di.lastModified(), now, out};
+    const bool settled = !mtime.isValid() || qAbs(now - mtime.toMSecsSinceEpoch()) > 50;
+    c = ProfileCache{dirPath, mtime, settled ? now : 0, out};
     return out;
 }
 

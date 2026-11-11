@@ -81,7 +81,7 @@ struct ActionGroup {
 };
 constexpr int kMaxGroups = 200;       // на все игры вместе
 constexpr int kMaxRepeat = 99;
-constexpr int kMaxRun = 4096;         // круг с развёрнутыми группами — не длиннее (шагов)
+constexpr int kMaxRun = 16384;        // круг с развёрнутыми группами — не длиннее (шагов)
 
 namespace Groups {
     bool validId(const QString& id);
@@ -158,8 +158,11 @@ int repeatMinMs(GameMode m, int count, int gameMinMs);
 // 1 мс (только чтобы кликер не крутился вхолостую), иначе — минимум игры. Следит кликер
 // (ClickerConfig::minCycleMs)
 int minCycleMs(GameMode m, int count, int gameMinMs);
-constexpr int kMaxActions = 64;
-constexpr int kMaxSteps = 128;
+// Сколько карточек в ряду (и в группе). До 1.18.4 — 64 и 128: длинная цепочка клавиш в них
+// упиралась. Больше — группами: группа в ряду — одна карточка. Шагов вдвое больше, чем
+// действий: действие — это два шага, «нажать» и «отпустить» (Steps::fromActions)
+constexpr int kMaxActions = 256;
+constexpr int kMaxSteps = 2 * kMaxActions;
 
 // «По кадрам»: редактор действий и кликер работают с полями «мс» (holdMs, afterMs, intervalMs…),
 // поэтому в режиме кадров им дают вид, где в этих полях — кадры: мс и кадры меняются местами.
