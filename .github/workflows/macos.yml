@@ -1,6 +1,8 @@
 # Сборка AutoQ для macOS в GitHub Actions (бесплатно для публичных репозиториев).
 # Запуск: вкладка Actions → «macOS» → Run workflow, или push тега v1.9.0.
 # Результат: AutoQ-<версия>-macOS.dmg во вкладке Artifacts (и в Release для тега).
+# Run workflow с тегом релиза (v1.18.4) собирает этот тег и кладёт dmg в его релиз —
+# так dmg пересобирается, если сборка по тегу не прошла.
 # Одна сборка работает и на Apple Silicon (M1–M4), и на Intel — «универсальная».
 #
 # Подпись самоподписанным сертификатом (необязательно, см. packaging/macos/make-cert.sh):
@@ -9,6 +11,11 @@ name: macOS
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Тег релиза (v1.18.4): собрать его и положить dmg в этот релиз. Пусто — собрать ветку, dmg только в Artifacts'
+        required: false
+        default: ''
   push:
     tags: ['v*']
 
@@ -17,9 +24,13 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    # образ с номером, а не macos-latest: смена образа — отдельная правка. macos-14 GitHub
+    # убрал 2 ноября 2026 («The configuration 'macos-14-…' is not supported»)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Qt 6.8 (официальный, универсальный arm64 + x86_64)
         uses: jurplel/install-qt-action@v4
@@ -79,7 +90,8 @@ jobs:
             dist-macos/SHA256SUMS.txt
 
       - name: Релиз (для тега)
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           files: dist-macos/*.dmg

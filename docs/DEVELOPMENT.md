@@ -34,7 +34,7 @@ Exe и установщик собираются из Linux: `packaging/windows/
 
 Собирается на Маке (`packaging/macos/build-mac.sh`, нужен `brew install cmake ninja qt`) или
 в GitHub Actions (`.github/workflows/macos.yml` — одна сборка для Apple Silicon и Intel,
-для тега `v*` dmg сам попадает в релиз). Как открыть без платной подписи Apple и
+для тега `v*` dmg сам попадает в релиз; Run workflow с тегом пересобирает dmg вышедшего релиза). Как открыть без платной подписи Apple и
 какие разрешения дать — `packaging/macos/README_MAC.txt`. Про подпись Windows и macOS — [SIGNING.md](../SIGNING.md).
 
 ## Как устроено
