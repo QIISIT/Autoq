@@ -76,7 +76,7 @@ tests/                  автотесты и inputtool
 | `platform/macos/macsupport.mm`, `macperm` | macOS: активное приложение, окна поверх полноэкранных игр, разрешения | |
 | `ui/mainwindow`, `ui/miniwindow` | главное и мини-окно, трей | |
 | `ui/board` | редактор интерфейса: карточки, блоки, ширина, вид, отмена, боковая панель | |
-| `ui/actionseditor` | действия игры: «держать», паузы, группы (×N, общие для всех игр) | |
+| `ui/actionseditor` | действия игры: «держать», паузы, группы (×N и «повтор через», общие для всех игр) | |
 | `ui/overlay` | оверлей КПС поверх игры (прозрачный для мыши) и его образец в настройках | |
 | `ui/onboarding` | первый запуск: выбор стиля и анимаций | |
 | `ui/dialogs/*` | настройки, игра, группа, клавиша, выбор клавиши, окна и процесса, цвет | |
@@ -92,8 +92,15 @@ cmake -S . -B build -G Ninja -DAQ_BUILD_TESTS=ON && cmake --build build
 ./build/tests/test_core                              # ядро
 QT_QPA_PLATFORM=offscreen ./build/tests/test_icons   # значки
 QT_QPA_PLATFORM=offscreen ./build/tests/test_overlay # оверлей КПС, вид элементов, стили
+QT_QPA_PLATFORM=offscreen ./build/tests/test_editor  # ряд действий: карточка группы, предел ряда
 ./build/tests/inputtool probe                        # какое окно активно и какой игре подходит
 ```
+
+`test_core` на Linux настоящих нажатий не шлёт: после проверки клавиш он убирает `DISPLAY`,
+и кликер в тестах только считает нажатия (иначе на рабочем столе клики ушли бы в окно под
+курсором). С экраном — `AQ_TEST_REAL_INPUT=1 ./build/tests/test_core`, только на отдельном
+стенде. На Windows и macOS тесты кликера жмут по-настоящему — запускайте их в Wine или
+в виртуальной машине.
 
 `inputtool probe` полезен, если игра не распознаётся: запустите
 `sleep 3; ./build/tests/inputtool probe`, переключитесь в игру и посмотрите
