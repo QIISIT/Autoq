@@ -265,9 +265,7 @@ bool Clicker::allowedFor(const ClickerConfig& cfg) {
     activeWin_ = w.handle;
     // кнопкой мыши — только когда курсор над окном игры (иначе клик ушёл бы
     // в соседнее окно или на другой монитор и забрал бы фокус у игры)
-    bool anyMouse = false;
-    for (const ActionStep& a : cfg.actions) anyMouse = anyMouse || a.mouse;
-    const bool mouseUsed = cfg.mouseOnlyOverGame && anyMouse;
+    const bool mouseUsed = cfg.mouseOnlyOverGame && anyMouse_;
     if (!(cfg.boundHandle && mouseUsed)) return true;
     // Курсор «ушёл» с игры — пауза не сразу, а если так ~0,3 с подряд: под
     // XWayland и в играх, ловящих мышь, проверка иногда ошибается на миг
@@ -287,6 +285,10 @@ bool clickAllowed(const ClickerConfig& cfg, const WindowInfo& w) {
     return cfg.boundPid > 0 && w.pid == cfg.boundPid && matchesRule(cfg.rule, w);
 }
 
+static bool usesMouse(const ClickerConfig& cfg) {
+    return std::any_of(cfg.actions.begin(), cfg.actions.end(), [](const ActionStep& a) { return a.mouse; });
+}
+
 static bool sameAction(const ActionStep& a, const ActionStep& b) {
     return a.mouse == b.mouse && (a.mouse ? a.button == b.button
                                           : a.key.compare(b.key, Qt::CaseInsensitive) == 0);
@@ -304,6 +306,7 @@ void Clicker::loop() {
     // «старт через N мс» (или N кадров): первый цикл — не сразу после нажатия
     ClickerConfig first;
     { std::lock_guard<std::mutex> lk(configMutex_); first = config_; }
+    anyMouse_ = usesMouse(first);
     bool aligned = false;                 // «По кадрам»: круг начнётся сразу после кадра игры
     if (first.startDelayMs > 0) {
         waitingStart_ = true;
@@ -315,6 +318,7 @@ void Clicker::loop() {
     while (running_) {
         ClickerConfig cfg;
         { std::lock_guard<std::mutex> lk(configMutex_); cfg = config_; }
+        anyMouse_ = usesMouse(cfg);
 
         // «По кадрам»: круг — сразу после кадра игры, «держать» и паузы — кадрами (и долями кадра)
         if (!cfg.hold && cfg.byFrames) {

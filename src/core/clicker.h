@@ -118,4 +118,7 @@ private:
     std::unique_ptr<ActiveWindowProbe> probe_;
     std::chrono::steady_clock::time_point pointerAwaySince_{};   // только поток кликера
     unsigned long long activeWin_ = 0;    // окно игры, что видел allowedFor (поток кликера)
+    // в круге есть кнопка мыши — считается раз, когда поток берёт настройки, а не перед каждым
+    // действием: круг с группами — до kMaxRun шагов
+    bool anyMouse_ = false;
 };
