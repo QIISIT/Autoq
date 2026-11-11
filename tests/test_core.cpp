@@ -1527,6 +1527,39 @@ static void testV114() {
     CHECK(Games::startKey("genshin") == tf);
     Games::setProfileKey("genshin", "Кик 2", stf);
     CHECK(Games::profileKey("genshin", "Кик 2") == stf);
+
+    // 1.18.4: ряд длиннее 64 действий (прежний предел) не обрезается — ни в настройках, ни в профиле
+    {
+        GameState longRow = Games::defaultState(Games::get("genshin"));
+        longRow.actions.clear();
+        longRow.steps.clear();
+        for (int i = 0; i < 200; ++i) {
+            ActionStep a = ActionStep::fromItem(i % 2 ? "j" : "c");
+            a.holdMs = 5;
+            a.afterMs = 360 + i;
+            longRow.actions << a;
+        }
+        Games::saveState("genshin", longRow);
+        CHECK(Games::loadState(Games::get("genshin")).actions == longRow.actions);
+        // «По шагам» из такого ряда — все 400 шагов, и обратно — те же действия
+        const QList<ActionStep> asSteps = Steps::fromActions(longRow.actions);
+        bool exact = false;
+        CHECK(asSteps.size() == 400 && Steps::toActions(asSteps, &exact) == longRow.actions && exact);
+        // предел шагов — вдвое больше предела действий: полный ряд действий раскладывается на шаги целиком
+        CHECK(kMaxSteps == 2 * kMaxActions);
+        CHECK(Steps::fromActions(QList<ActionStep>(kMaxActions, longRow.actions[0])).size() == kMaxSteps);
+        Games::saveProfile("genshin", "Длинный", longRow, static_cast<int>(GameMode::Sequence));
+        CHECK(Games::loadProfile("genshin", "Длинный").actions == longRow.actions);
+        const QString file = AppSettings::dataDir() + "/long.ini";
+        CHECK(Games::exportProfile("genshin", "Длинный", file));
+        const QString again = Games::importProfile("genshin", file);
+        CHECK(!again.isEmpty() && Games::loadProfile("genshin", again).actions == longRow.actions);
+        // больше kMaxActions — обрезается (и файл, поправленный руками, тоже)
+        QStringList many;
+        for (int i = 0; i < kMaxActions + 10; ++i) many << "k:f:0:1";
+        { auto s = AppSettings::open(); s->setValue("games/genshin/state/actions", many); s->sync(); }
+        CHECK(Games::loadState(Games::get("genshin")).actions.size() == kMaxActions);
+    }
     { auto s = AppSettings::open(); s->clear(); s->sync(); }
 }
 
@@ -1598,6 +1631,18 @@ static void testGroups() {
     kick.items = {stp("mouse:1", D, 30), stp("mouse:3", C, 50), stp("mouse:1", U, 0)};
     const QList<ActionStep> kr = Groups::expand({call(kick.id, 1, 0)}, {kick}, false);
     CHECK(kr.size() == 2 && kr[0].press == C && kr[1].button == 3);
+    {   // круг с развёрнутыми группами — не длиннее kMaxRun: лишнее не жмётся, owner — той же длины
+        ActionGroup big; big.id = "0b0b0b0b"; big.name = "Много";
+        for (int i = 0; i < kMaxActions; ++i) big.items << act("f", 0, 1);
+        QList<ActionStep> calls;
+        for (int i = 0; i < kMaxActions; ++i) calls << call(big.id, kMaxRepeat, 0);
+        QList<int> own;
+        CHECK(Groups::expand(calls, {big}, false, false, &own).size() == kMaxRun && own.size() == kMaxRun);
+        CHECK(own.last() == kMaxRun / (kMaxActions * kMaxRepeat));     // на какой карточке круг оборвался
+        // ряд до предела без групп — целиком; полная группа ×N — тоже
+        CHECK(Groups::expand(big.items, {}, false).size() == kMaxActions);
+        CHECK(Groups::expand({call(big.id, 3, 0)}, {big}, false).size() == 3 * kMaxActions);
+    }
     // разгруппировать: действия группы один раз, хоть у вызова ×3; пауза после вызова — у последнего
     {
         const QList<ActionStep> once = Groups::inlineCall(call(combo.id, 3, 70), combo, false);
@@ -2374,6 +2419,15 @@ static void testUpdates() {
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     testKeys();
+#if !defined(_WIN32) && !defined(__APPLE__)
+    // Дальше — без экрана: тесты кликера жмут по-настоящему (ЛКМ через XTest), и на рабочем
+    // столе клики ушли бы в окно под курсором. Без DISPLAY кликер считает нажатия, но никуда
+    // их не шлёт. AQ_TEST_REAL_INPUT=1 — оставить экран (проверка на отдельном стенде)
+    if (qEnvironmentVariableIsEmpty("AQ_TEST_REAL_INPUT")) {
+        qunsetenv("DISPLAY");
+        CHECK(!Clicker().inputAvailable());
+    }
+#endif
     testHotkeys();
     testMatching();
     testGames();

@@ -20,6 +20,22 @@ qt_add_resources(test_overlay "aq_fonts_test"
     BASE ${CMAKE_SOURCE_DIR}/resources
     FILES ${AQ_FONTS})
 
+# редактор действий: карточка группы, предел ряда (Qt Widgets, запускается с QT_QPA_PLATFORM=offscreen)
+add_executable(test_editor test_editor.cpp
+               ${AQ_SRC}/ui/actionseditor.cpp ${AQ_SRC}/ui/actionseditor.h
+               ${AQ_SRC}/ui/dialogs/groupdialog.cpp ${AQ_SRC}/ui/dialogs/groupdialog.h
+               ${AQ_SRC}/ui/dialogs/keypicker.cpp ${AQ_SRC}/ui/dialogs/keypicker.h
+               ${AQ_SRC}/ui/style/widgets.cpp ${AQ_SRC}/ui/style/widgets.h
+               ${AQ_SRC}/ui/style/animations.cpp ${AQ_SRC}/ui/style/animations.h
+               ${AQ_SRC}/ui/style/theme.cpp ${AQ_SRC}/ui/style/theme.h
+               ${AQ_SRC}/ui/style/styles.cpp ${AQ_SRC}/ui/style/styles.h
+               ${AQ_SRC}/ui/style/keycapturebutton.h)
+target_link_libraries(test_editor PRIVATE aq_icons aq_core Qt6::Widgets)
+qt_add_resources(test_editor "aq_fonts_editor"
+    PREFIX "/"
+    BASE ${CMAKE_SOURCE_DIR}/resources
+    FILES ${AQ_FONTS})
+
 add_executable(inputtool inputtool.cpp)
 target_link_libraries(inputtool PRIVATE aq_core)
 
@@ -27,7 +43,7 @@ if(WIN32)
     add_executable(keylogger_win keylogger_win.cpp)
     target_link_libraries(keylogger_win PRIVATE user32)
     if(MINGW)
-        foreach(t test_core test_icons test_overlay inputtool keylogger_win)
+        foreach(t test_core test_icons test_overlay test_editor inputtool keylogger_win)
             target_link_options(${t} PRIVATE -static -static-libgcc -static-libstdc++)
         endforeach()
     endif()
