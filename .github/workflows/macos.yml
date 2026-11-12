@@ -90,8 +90,17 @@ jobs:
             dist-macos/SHA256SUMS.txt
 
       - name: Релиз (для тега)
-        if: startsWith(github.ref, 'refs/tags/') || inputs.tag != ''
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag || github.ref_name }}
           files: dist-macos/*.dmg
+
+      # Run workflow с тегом: только добавить dmg к уже вышедшему релизу. Сам релиз не трогаем:
+      # action-gh-release его «обновляет», а токену запуска с ветки, где файлы workflow уже
+      # другие, чем в коммите тега, GitHub этого не даёт («Resource not accessible by integration»)
+      - name: dmg в вышедший релиз (Run workflow с тегом)
+        if: github.event_name == 'workflow_dispatch' && inputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release upload "$TAG" dist-macos/*.dmg --clobber --repo "$GITHUB_REPOSITORY"
